@@ -2,9 +2,14 @@ import sensible from "@fastify/sensible";
 import fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 
 import { handler as registerHealthRoute } from "@/http/routes/health.js";
+import {
+  handler as registerWebhookRoute,
+  type HandlerInput as WebhookHandlerInput,
+} from "@/http/routes/webhooks.js";
 
 export interface ExecuteInput {
   logger?: FastifyServerOptions["logger"];
+  webhook?: WebhookHandlerInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -20,6 +25,19 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
   server.register(async (instance) => {
     await registerHealthRoute(instance);
   });
+  const webhookInput = input.webhook;
+  if (webhookInput) {
+    server.register(async (instance) => {
+      instance.addContentTypeParser(
+        "application/json",
+        { parseAs: "string" },
+        (_request, body, done) => {
+          done(null, body);
+        },
+      );
+      await registerWebhookRoute(instance, webhookInput);
+    });
+  }
 
   return server;
 };

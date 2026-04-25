@@ -15,3 +15,5 @@ export const execute = (input: ExecuteInput = {}) => {
 
   return { client, db };
 };
+
+export type Database = ReturnType<typeof execute>["db"];
