@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import { execute as loadEnv } from "@/config/env.js";
 import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
