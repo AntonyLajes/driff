@@ -86,6 +86,13 @@ docs(agents): add phase 4 specification
 - Use the body to explain *why*, not *what* (the diff shows what).
 - Breaking changes get a `!` after the type/scope and a `BREAKING CHANGE:` footer.
 
+### Commit granularity (mandatory)
+
+- **Create separate commits for separate implementations.**
+- One logical change per commit. Do not mix feature logic, refactors, tests, docs, and tooling updates in the same commit unless they are inseparable.
+- For each production logic change, include a dedicated `test(...)` commit in the same PR whenever possible.
+- Keep commits reviewable and reversible: small, focused, and with a clear intent.
+
 ### General coding rules
 
 - **TypeScript strict mode**, with `noUncheckedIndexedAccess: true`.
@@ -96,7 +103,28 @@ docs(agents): add phase 4 specification
 - **Pure functions when possible**. Concentrate side effects in outer layers (HTTP, DB, integrations).
 - **Absolute imports** via the `@/` path alias pointing to `src/`.
 - **File names in kebab-case** — always. `github-source.ts`, not `GitHubSource.ts` or `githubSource.ts`. This applies to every file in the project, including TypeScript modules, prompts, configs, and docs. Exported symbols inside the file keep their natural casing (PascalCase for classes/types, camelCase for functions/variables) — only the file name itself is kebab-case.
+- **Use SOLID principles** as design defaults (especially single responsibility and dependency inversion).
+- **Each logic file must expose a single primary entrypoint function named `execute` or `handler`** (pick the name that best matches the context and keep consistency inside the module).
+- **Keep transport/framework code thin** and delegate business logic to dedicated modules.
+- **Prefer constructor/function dependency injection** to keep modules testable and avoid hidden global coupling.
+- **Do not add new logic without unit tests** in the same implementation stream.
 - **Don't add features that aren't in the current phase** without flagging it first.
+
+### Testing standards (mandatory)
+
+- Testing framework is **Vitest** (`vitest` + `@vitest/coverage-v8`).
+- Every logic module must have a corresponding unit test file (`*.test.ts`) covering success path, relevant edge cases, and failure path.
+- Use clear test names in behavioral style: `should <expected behavior> when <condition>`.
+- Mock external side effects (GitHub, Notion, DB, LLM, HTTP) and keep unit tests deterministic.
+- Coverage targets:
+  - lines: **90%**
+  - functions: **90%**
+  - statements: **90%**
+  - branches: **85%**
+- Minimum quality gate before merge:
+  - `npm run typecheck`
+  - `npm run test`
+  - `npm run test:coverage`
 
 ---
 
@@ -164,6 +192,9 @@ npm start                  # node dist/index.js
 
 # Quality
 npm run typecheck          # tsc --noEmit
+npm run test               # Runs unit tests with Vitest
+npm run test:watch         # Runs Vitest in watch mode
+npm run test:coverage      # Runs tests with coverage thresholds
 npm run lint               # eslint
 npm run format             # prettier --write
 ```
@@ -350,7 +381,7 @@ Mark job as done
 #### 1. Initial setup (~30min)
 - `npm init -y` and `npm install` deps:
   - prod: `fastify`, `@fastify/sensible`, `pino`, `pino-pretty`, `dotenv`, `zod`, `drizzle-orm`, `postgres`, `@octokit/rest`, `@octokit/webhooks`, `@anthropic-ai/sdk`, `@notionhq/client`, `uuid`
-  - dev: `typescript`, `tsx`, `@types/node`, `@types/uuid`, `drizzle-kit`, `eslint`, `prettier`
+  - dev: `typescript`, `tsx`, `@types/node`, `@types/uuid`, `drizzle-kit`, `eslint`, `prettier`, `vitest`, `@vitest/coverage-v8`
 - `tsconfig.json` with `strict: true`, target ES2022, module NodeNext.
 - `drizzle.config.ts` pointing to `src/db/schema.ts`.
 - `.env.example` with all the vars listed above.
