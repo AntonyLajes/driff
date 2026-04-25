@@ -1,52 +1,180 @@
+import { execute as loadEnv } from "@/config/env.js";
+import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
+import { execute as createProcessPrJob } from "@/jobs/process-pr.js";
+import { execute as createSummarizer, type Summarizer } from "@/llm/summarizer.js";
+import { execute as createQueue, type QueueAdapter } from "@/queue/queue.js";
+import { execute as createWorker, type WorkerAdapter } from "@/queue/worker.js";
+import { execute as createGithubSource } from "@/sources/github/github-source.js";
+import type { Source } from "@/sources/source.js";
+import type { Destination } from "@/destinations/destination.js";
+import type { Database } from "@/db/client.js";
+import type { JobHandler } from "@/queue/worker.js";
 
 export interface ServerLike {
   listen: (options: { port: number; host: string }) => Promise<string>;
+  close?: () => Promise<void>;
+}
+
+export interface DbClientLike {
+  end?: () => Promise<unknown>;
 }
 
 export interface ExecuteInput {
   server?: ServerLike;
+  db?: Database;
+  dbClient?: DbClientLike;
   port?: number;
   host?: string;
   webhook?: WebhookHandlerInput;
+  queue?: QueueAdapter;
+  worker?: WorkerAdapter;
+  source?: Source;
+  summarizer?: Summarizer;
+  destination?: Destination;
+  processPrHandler?: JobHandler;
+  promptVersion?: number;
+  startWorker?: boolean;
+  registerSignalHandlers?: boolean;
 }
+
+interface RuntimeDependencies {
+  dbClient: DbClientLike;
+  server: ServerLike;
+  worker: WorkerAdapter;
+}
+
+const createNoopDbClient = (): DbClientLike => ({
+  end: async () => undefined,
+});
 
 const buildWebhookInput = (
   input: ExecuteInput,
-): WebhookHandlerInput | undefined => {
+  webhookSecret: string,
+  db: Database,
+): WebhookHandlerInput => {
   if (input.webhook) {
     return input.webhook;
   }
 
-  const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
-  const databaseUrl = process.env.DATABASE_URL;
-
-  if (!webhookSecret || !databaseUrl) {
-    return undefined;
-  }
-
-  const { db } = createDbClient({ databaseUrl });
   return {
     webhookSecret,
     ...createWebhookDependencies({ db }),
   };
 };
 
+const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDependencies> => {
+  const env = loadEnv();
+  const dbBundle =
+    input.db && input.dbClient
+      ? { db: input.db, client: input.dbClient }
+      : createDbClient({ databaseUrl: env.DATABASE_URL });
+  const db = input.db ?? dbBundle.db;
+  const dbClient = input.dbClient ?? dbBundle.client ?? createNoopDbClient();
+
+  const webhook = buildWebhookInput(input, env.GITHUB_WEBHOOK_SECRET, db);
+  const server = input.server ?? createServer({ webhook });
+  const worker = await (async (): Promise<WorkerAdapter> => {
+    if (input.worker) {
+      return input.worker;
+    }
+
+    const queue = input.queue ?? createQueue({ db });
+    const processPrHandler =
+      input.processPrHandler ??
+      createProcessPrJob({
+        db,
+        source:
+          input.source ??
+          createGithubSource({
+            appId: env.GITHUB_APP_ID,
+            privateKey: env.GITHUB_APP_PRIVATE_KEY,
+          }),
+        summarizer:
+          input.summarizer ?? (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY })),
+        destination:
+          input.destination ??
+          createNotionDestination({
+            token: env.NOTION_TOKEN,
+            databaseId: env.NOTION_DATABASE_ID,
+          }),
+        promptVersion: input.promptVersion ?? 1,
+      });
+
+    return createWorker({
+      queue,
+      handlers: {
+        process_pr: processPrHandler,
+      },
+    });
+  })();
+
+  return {
+    dbClient,
+    server,
+    worker,
+  };
+};
+
+const registerShutdownSignals = (shutdown: () => Promise<void>): void => {
+  process.once("SIGINT", () => {
+    void shutdown();
+  });
+  process.once("SIGTERM", () => {
+    void shutdown();
+  });
+};
+
 export const execute = async (
   input: ExecuteInput = {},
-): Promise<{ address: string; server: ServerLike }> => {
-  const server = input.server ?? createServer({ webhook: buildWebhookInput(input) });
-  const port = input.port ?? Number(process.env.PORT ?? 3000);
+): Promise<{ address: string; server: ServerLike; worker: WorkerAdapter; shutdown: () => Promise<void> }> => {
+  const env = loadEnv();
+  const runtime = await buildRuntimeDependencies(input);
+  const workerRunPromise =
+    input.startWorker === false ? undefined : runtime.worker.run().catch(() => undefined);
+  const port = input.port ?? env.PORT;
   const host = input.host ?? "0.0.0.0";
-  const address = await server.listen({ port, host });
+  const address = await runtime.server.listen({ port, host });
 
-  return { address, server };
+  let isShuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (isShuttingDown) {
+      return;
+    }
+    isShuttingDown = true;
+
+    runtime.worker.stop();
+
+    const closeOperations: Array<Promise<unknown>> = [];
+    if (workerRunPromise) {
+      closeOperations.push(workerRunPromise);
+    }
+    if (runtime.server.close) {
+      closeOperations.push(runtime.server.close());
+    }
+    if (runtime.dbClient.end) {
+      closeOperations.push(runtime.dbClient.end());
+    }
+
+    await Promise.allSettled(closeOperations);
+  };
+
+  if (input.registerSignalHandlers) {
+    registerShutdownSignals(shutdown);
+  }
+
+  return {
+    address,
+    server: runtime.server,
+    worker: runtime.worker,
+    shutdown,
+  };
 };
 
 /* c8 ignore next 3 */
 if (import.meta.url === `file://${process.argv[1]}`) {
-  void execute();
+  void execute({ registerSignalHandlers: true });
 }
