@@ -93,6 +93,15 @@ docs(agents): add phase 4 specification
 - For each production logic change, include a dedicated `test(...)` commit in the same PR whenever possible.
 - Keep commits reviewable and reversible: small, focused, and with a clear intent.
 
+### Scope drift governance (mandatory)
+
+- If a new implementation, tool, dependency, infra component, or workflow is introduced and it is **not explicitly documented** in this file, update `AGENTS.md` in the same workstream.
+- The `AGENTS.md` update must include:
+  - what was added;
+  - why it was added;
+  - how it should be used (commands, constraints, or conventions).
+- Do not defer documentation updates to "later". New behavior without updated agent guidance is considered incomplete work.
+
 ### General coding rules
 
 - **TypeScript strict mode**, with `noUncheckedIndexedAccess: true`.
@@ -169,6 +178,7 @@ package.json
 tsconfig.json
 .env.example
 README.md
+docker-compose.yml
 ```
 
 ---
@@ -185,6 +195,12 @@ npm run dev                # Runs src/index.ts with tsx --watch
 npm run db:generate        # Generates migration from schema
 npm run db:migrate         # Applies migrations to the DB
 npm run db:studio          # Drizzle UI for inspecting data
+
+# Local infrastructure (Docker)
+npm run docker:up          # Starts local services (Postgres + Adminer)
+npm run docker:down        # Stops local services
+npm run docker:ps          # Shows running local services
+npm run docker:logs        # Follows local services logs
 
 # Build / production
 npm run build              # tsc → dist/
