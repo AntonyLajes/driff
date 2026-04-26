@@ -6,7 +6,7 @@
   "main": "dist/src/index.js",
   "scripts": {
     "dev": "tsx --watch src/index.ts",
-    "build": "tsc --project tsconfig.json",
+    "build": "tsc --project tsconfig.json && tsc-alias --project tsconfig.json && mkdir -p dist/src/llm/prompts && cp src/llm/prompts/pr-summary.md dist/src/llm/prompts/pr-summary.md",
     "start": "node dist/src/index.js",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
@@ -43,12 +43,13 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "^4.1.5",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.2.1",
     "prettier": "^3.8.3",
+    "tsc-alias": "^1.8.16",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.5",
-    "@vitest/coverage-v8": "^4.1.5"
+    "vitest": "^4.1.5"
   }
 }
