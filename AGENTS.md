@@ -251,7 +251,7 @@ The project is divided into phases. Each phase is a coherent, shippable unit of 
 
 | Phase | Name                            | Status      |
 |-------|---------------------------------|-------------|
-| 1     | Core PR ingestion               | In progress |
+| 1     | Core PR ingestion               | Completed   |
 | 2     | Version bump detection          | Planned     |
 | 3     | Slack digest                    | Planned     |
 | 4     | Multi-PR thematic threads       | Planned     |
