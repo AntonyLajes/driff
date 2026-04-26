@@ -6,7 +6,7 @@ import { z } from "zod";
 import { execute as loadEnv } from "@/config/env.js";
 import type { PullRequestEvent } from "@/sources/source.js";
 
-const DEFAULT_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 900;
 const MAX_RETRIES = 1;
 const DEFAULT_PROMPT_PATH = new URL("./prompts/pr-summary.md", import.meta.url);
