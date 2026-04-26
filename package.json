@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Automated release notes and PR documentation for mobile teams",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "dev": "tsx --watch src/index.ts",
     "build": "tsc --project tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
