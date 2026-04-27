@@ -219,7 +219,7 @@ npm run format             # prettier --write
 
 ## Environment variables
 
-Validated in `src/config/env.ts` with Zod. Missing any → boot fails.
+Validated in `src/config/env.ts` with Zod. Required vars below must be set or boot fails. Optional vars are documented inline.
 
 ```
 # Postgres (Railway provides automatically when you attach the DB)
@@ -229,6 +229,11 @@ DATABASE_URL=postgres://...
 GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY=    # Contents of the .pem, with \n preserved
 GITHUB_WEBHOOK_SECRET=     # Secret defined when creating the app
+
+# Optional: restrict PR summarization to PRs merged into one of these base branches
+# (GitHub: pull_request.base.ref). Comma-separated, trimmed. Example: develop or develop,release.
+# If unset or empty, every merged PR is summarized (original Phase 1 behavior).
+# PR_SUMMARY_BASE_BRANCHES=develop
 
 # Anthropic
 ANTHROPIC_API_KEY=
