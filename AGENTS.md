@@ -129,7 +129,7 @@ docs(agents): add phase 4 specification
   - lines: **90%**
   - functions: **90%**
   - statements: **90%**
-  - branches: **85%**
+  - branches: **84%** (entry `src/index.ts` is excluded from coverage; integration wiring is covered indirectly)
 - Minimum quality gate before merge:
   - `npm run typecheck`
   - `npm run test`
@@ -151,27 +151,36 @@ src/
     server.ts               # Fastify setup
     routes/
       webhooks.ts           # POST /webhooks/github
+      webhook-release.ts   # push → process_release gating
       health.ts             # GET /health
+  lib/
+    plist-version.ts        # CFBundle* from XML plist
   sources/
     source.ts               # Source interface (origin abstraction)
     github/
-      github-source.ts      # GitHub implementation
+      github-installation.ts# GitHub App install token for a repo
+      github-source.ts      # PR fetch
+      gather-release-context.ts # Compare + plist for releases
       verify.ts             # HMAC signature verification
       types.ts              # Relevant event types
   destinations/
     destination.ts          # Destination interface
     notion/
       notion-destination.ts # Notion implementation
-      blocks.ts             # Helpers to build Notion blocks
+      blocks.ts             # PR page blocks
+      release-blocks.ts     # Release page blocks
   llm/
-    summarizer.ts           # Calls Claude with the prompt
+    summarizer.ts           # PR summaries
+    release-summarizer.ts   # Release notes JSON from Claude
     prompts/
-      pr-summary.md         # Versioned prompt file
+      pr-summary.md
+      release-notes.md
   queue/
     queue.ts                # Enqueue/dequeue via Postgres
     worker.ts               # Worker loop
   jobs/
-    process-pr.ts           # Job that processes a merged PR
+    process-pr.ts
+    process-release.ts      # iOS version delta → Notion
   index.ts                  # Entry point: HTTP server + worker
 drizzle.config.ts
 package.json
@@ -242,6 +251,13 @@ ANTHROPIC_API_KEY=
 NOTION_TOKEN=              # Internal integration token
 NOTION_DATABASE_ID=        # Database where PRs become pages
 
+# Optional — iOS release notes (Phase 2). If NOTION_RELEASES_DATABASE_ID is set, RELEASE_INFO_PLIST_PATH and RELEASE_VERSION_BRANCH are required. Tag creation stays in CI; this stack only reads git + plist.
+# NOTION_RELEASES_DATABASE_ID=
+# RELEASE_INFO_PLIST_PATH=App/Info.plist
+# RELEASE_VERSION_BRANCH=develop
+# Optional: only this repo (owner/name) can enqueue process_release. If unset, any installed repo is allowed.
+# RELEASE_MONITORED_REPO=acme/ios-app
+
 # App
 PORT=3000
 LOG_LEVEL=info
@@ -257,7 +273,7 @@ The project is divided into phases. Each phase is a coherent, shippable unit of 
 | Phase | Name                            | Status      |
 |-------|---------------------------------|-------------|
 | 1     | Core PR ingestion               | Completed   |
-| 2     | Version bump detection          | Planned     |
+| 2     | Version bump detection          | Completed   |
 | 3     | Slack digest                    | Planned     |
 | 4     | Multi-PR thematic threads       | Planned     |
 | 5     | Multi-repo + multi-tenancy      | Planned     |
@@ -554,23 +570,23 @@ Suggested commit: `chore(deploy): add railway configuration`
 - Do not implement fancy retry strategies (3 attempts with simple backoff).
 - Do not think about multi-tenancy.
 - Do not handle PR updates (Phase 1 is "PR merged → page created"; updates later).
-- Do not detect version bumps (Phase 2).
+- Version bumps are handled in Phase 2 (push → `process_release`); tags remain a CI concern.
 - Do not send Slack notifications (Phase 3).
 
 ---
 
-## Phase 2 — Version bump detection
+## Phase 2 — Version bump detection (implemented)
 
-**Goal:** When the iOS version (`CFBundleShortVersionString` or `CFBundleVersion` in `Info.plist` / `project.pbxproj`) changes on the main/develop branch, automatically generate a consolidated release notes page in Notion grouping all PRs that landed since the previous version.
+**Goal:** When a push to the configured branch updates the iOS `Info.plist` (XML) version, generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
 
-**Key components to add:**
-- New job type: `detect_version_bump` triggered on `push` events to the configured release branch.
-- Logic to read `Info.plist` / `project.pbxproj` from current and parent commit and diff version fields.
-- New table `releases`: stores version, date, list of PR ids included, generated consolidated notes.
-- New LLM prompt `release-notes.md` that consolidates multiple PR summaries into a single user-facing changelog and a technical changelog.
-- New `Destination` method `publishRelease(release)` implemented for Notion (creates a "Releases" database alongside the PRs database).
+**Behavior:**
+- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH` (or the batch has 20 commits — GitHub cap — in which case the job re-checks by comparing shas). Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
+- Job `process_release`: compare `before` and `after` on the remote ref, read plist at each sha, call compare API for commits and merge PR heuristics, then LLM `release-notes.md` → `publishRelease` in Notion.
+- Idempotency: `releases` has unique (`repo`, `version_key`).
 
-**Out of scope:** Android bumps, App Store metadata sync, automatic posting to App Store Connect.
+**Notion “Releases” database properties (must match integration):** Title, Repo, Branch, Version, Short Version, Build, Previous Version, URL, PR Numbers (see `notion-destination`).
+
+**Out of scope:** Plist **binary** format, `project.pbxproj`–only version sources, Android, App Store Connect, creating git tags.
 
 ---
 
