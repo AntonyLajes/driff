@@ -26,7 +26,34 @@ const envSchema = z.object({
         .filter((b) => b.length > 0);
       return branches.length === 0 ? null : branches;
     }),
-});
+  NOTION_RELEASES_DATABASE_ID: z.string().min(1).optional(),
+  RELEASE_INFO_PLIST_PATH: z.string().min(1).optional(),
+  RELEASE_VERSION_BRANCH: z.string().min(1).optional(),
+  /** When set, only this `owner/name` repo triggers release notes (push handler). */
+  RELEASE_MONITORED_REPO: z.string().min(1).optional(),
+})
+  .superRefine((data, ctx) => {
+    const hasReleasesDb = Boolean(data.NOTION_RELEASES_DATABASE_ID);
+    if (!hasReleasesDb) {
+      return;
+    }
+    if (!data.RELEASE_INFO_PLIST_PATH) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "When NOTION_RELEASES_DATABASE_ID is set, RELEASE_INFO_PLIST_PATH is required (path to Info.plist in the app repo).",
+        path: ["RELEASE_INFO_PLIST_PATH"],
+      });
+    }
+    if (!data.RELEASE_VERSION_BRANCH) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "When NOTION_RELEASES_DATABASE_ID is set, RELEASE_VERSION_BRANCH is required (e.g. develop).",
+        path: ["RELEASE_VERSION_BRANCH"],
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

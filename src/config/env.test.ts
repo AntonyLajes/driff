@@ -56,4 +56,20 @@ describe("config/env execute", () => {
     const onlyCommas = execute({ ...buildValidEnv(), PR_SUMMARY_BASE_BRANCHES: " ,  , " });
     expect(onlyCommas.PR_SUMMARY_BASE_BRANCHES).toBeNull();
   });
+
+  it("should require plist path and branch when NOTION_RELEASES_DATABASE_ID is set", () => {
+    expect(() =>
+      execute({
+        ...buildValidEnv(),
+        NOTION_RELEASES_DATABASE_ID: "rel-db",
+      }),
+    ).toThrowError();
+    expect(() =>
+      execute({
+        ...buildValidEnv(),
+        NOTION_RELEASES_DATABASE_ID: "rel-db",
+        RELEASE_INFO_PLIST_PATH: "App/Info.plist",
+      }),
+    ).toThrowError();
+  });
 });
