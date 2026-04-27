@@ -1,0 +1,69 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { execute } from "@/llm/release-summarizer.js";
+import type { ReleaseContext } from "@/sources/github/gather-release-context.js";
+
+const baseContext: ReleaseContext = {
+  beforeVersion: { short: "1.0.0", build: "1" },
+  afterVersion: { short: "1.0.1", build: "2" },
+  previousVersionKey: "1.0.0+1",
+  newVersionKey: "1.0.1+2",
+  commitMessages: ["Merge pull request #3 from o/f"],
+  prNumbers: [3],
+  totalCommits: 1,
+  compareUrl: "https://github.com/o/r/compare/1.0.0...1.0.1",
+  fileChangeSummary: "M: a.swift",
+};
+
+describe("llm/release-summarizer execute", () => {
+  it("should return parsed release notes from model response", async () => {
+    const json =
+      '{"title":"1.0.1 (2)","userFacing":"Bug fixes.","technical":"Bumped build.","sections":[{"label":"Fixed","items":["#3"]}]}';
+    const create = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: json }],
+    }));
+    const summarizer = await execute({
+      apiKey: "test-key",
+      readPrompt: async () => "You are a release writer.",
+      anthropicClientFactory: () => ({
+        messages: { create },
+      }),
+    });
+    const result = await summarizer.summarizeRelease({
+      context: baseContext,
+      repo: "o/r",
+      branch: "develop",
+    });
+    expect(result.title).toBe("1.0.1 (2)");
+    expect(result.sections[0]?.label).toBe("Fixed");
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("should retry once when first response is not valid JSON", async () => {
+    const badThenGood = vi
+      .fn()
+      .mockResolvedValueOnce({ content: [{ type: "text" as const, text: "not json" }] })
+      .mockResolvedValueOnce({
+        content: [
+          {
+            type: "text" as const,
+            text: '{"title":"ok","userFacing":"u","technical":"t","sections":[]}',
+          },
+        ],
+      });
+    const summarizer = await execute({
+      apiKey: "k",
+      readPrompt: async () => "sys",
+      anthropicClientFactory: () => ({
+        messages: { create: badThenGood },
+      }),
+    });
+    const result = await summarizer.summarizeRelease({
+      context: baseContext,
+      repo: "o/r",
+      branch: "develop",
+    });
+    expect(result.title).toBe("ok");
+    expect(badThenGood).toHaveBeenCalledTimes(2);
+  });
+});
