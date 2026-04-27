@@ -36,4 +36,24 @@ describe("config/env execute", () => {
 
     expect(() => execute(invalidEnv)).toThrowError();
   });
+
+  it("should parse PR_SUMMARY_BASE_BRANCHES as a trimmed comma-separated list", () => {
+    const result = execute({
+      ...buildValidEnv(),
+      PR_SUMMARY_BASE_BRANCHES: " develop , release",
+    });
+
+    expect(result.PR_SUMMARY_BASE_BRANCHES).toEqual(["develop", "release"]);
+  });
+
+  it("should return null for PR_SUMMARY_BASE_BRANCHES when empty or only whitespace", () => {
+    const unset = execute({ ...buildValidEnv() });
+    expect(unset.PR_SUMMARY_BASE_BRANCHES).toBeNull();
+
+    const empty = execute({ ...buildValidEnv(), PR_SUMMARY_BASE_BRANCHES: "" });
+    expect(empty.PR_SUMMARY_BASE_BRANCHES).toBeNull();
+
+    const onlyCommas = execute({ ...buildValidEnv(), PR_SUMMARY_BASE_BRANCHES: " ,  , " });
+    expect(onlyCommas.PR_SUMMARY_BASE_BRANCHES).toBeNull();
+  });
 });

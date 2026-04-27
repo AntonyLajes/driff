@@ -13,6 +13,19 @@ const envSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PR_SUMMARY_BASE_BRANCHES: z
+    .string()
+    .optional()
+    .transform((raw) => {
+      if (raw === undefined) {
+        return null;
+      }
+      const branches = raw
+        .split(",")
+        .map((b) => b.trim())
+        .filter((b) => b.length > 0);
+      return branches.length === 0 ? null : branches;
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;
