@@ -13,6 +13,22 @@ export interface PRSummary {
   prUrl: string;
 }
 
+export interface ReleaseNotesSummary {
+  title: string;
+  repo: string;
+  branch: string;
+  newVersionKey: string;
+  previousVersionKey: string | null;
+  shortVersion: string;
+  buildVersion: string;
+  compareUrl: string;
+  prNumbers: number[];
+  userFacing: string;
+  technical: string;
+  sections: Array<{ label: string; items: string[] }>;
+}
+
 export interface Destination {
   publishPR: (summary: PRSummary) => Promise<{ pageId: string }>;
+  publishRelease: (summary: ReleaseNotesSummary) => Promise<{ pageId: string }>;
 }

@@ -43,7 +43,7 @@ describe("jobs/process-pr execute", () => {
       promptVersion: 1,
       source: { fetchPullRequest },
       summarizer: { summarizePR, prompt: "prompt" },
-      destination: { publishPR },
+      destination: { publishPR, publishRelease: vi.fn() },
     });
 
     await handler.execute({
@@ -88,6 +88,7 @@ describe("jobs/process-pr execute", () => {
       },
       destination: {
         publishPR: vi.fn(async () => ({ pageId: "notion-page-1" })),
+        publishRelease: vi.fn(),
       },
     });
 
