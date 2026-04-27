@@ -76,15 +76,18 @@ describe("http/server execute", () => {
     const findWebhookEventByDeliveryId = async () => false;
     const insertWebhookEvent = async () => undefined;
     const enqueueProcessPrJob = async () => undefined;
+    const enqueueProcessReleaseJob = async () => undefined;
 
     const server = execute({
       logger: false,
       webhook: {
         webhookSecret: secret,
         prSummaryBaseBranches: null,
+        releaseConfig: null,
         findWebhookEventByDeliveryId,
         insertWebhookEvent,
         enqueueProcessPrJob,
+        enqueueProcessReleaseJob,
       },
     });
     servers.push(server);

@@ -18,10 +18,18 @@ export interface ProcessPrJobInput {
   prNumber: number;
 }
 
+export interface ProcessReleaseJobInput {
+  repo: string;
+  beforeSha: string;
+  afterSha: string;
+  branch: string;
+}
+
 export interface WebhookDependencies {
   findWebhookEventByDeliveryId: (deliveryId: string) => Promise<boolean>;
   insertWebhookEvent: (input: WebhookEventInput) => Promise<void>;
   enqueueProcessPrJob: (input: ProcessPrJobInput) => Promise<void>;
+  enqueueProcessReleaseJob: (input: ProcessReleaseJobInput) => Promise<void>;
 }
 
 export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
@@ -46,6 +54,13 @@ export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
       await db.insert(jobsTable).values({
         type: "process_pr",
         payload: { repo, prNumber },
+        status: "pending",
+      });
+    },
+    enqueueProcessReleaseJob: async ({ repo, beforeSha, afterSha, branch }) => {
+      await db.insert(jobsTable).values({
+        type: "process_release",
+        payload: { repo, beforeSha, afterSha, branch },
         status: "pending",
       });
     },

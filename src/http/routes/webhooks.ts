@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
+import { buildProcessReleaseJobInput, type ReleaseWebhookConfig } from "@/http/routes/webhook-release.js";
 import {
   type ProcessPrJobInput,
   type WebhookDependencies,
@@ -35,6 +36,10 @@ export interface HandlerInput extends WebhookDependencies {
    * (`pull_request.base.ref`) are summarized. Omitted or `null` means any base branch.
    */
   prSummaryBaseBranches?: string[] | null;
+  /**
+   * When set, a `push` to `branch` that touches the plist can enqueue `process_release`.
+   */
+  releaseConfig?: ReleaseWebhookConfig | null;
 }
 
 const getHeaderValue = (value: string | string[] | undefined): string | undefined => {
@@ -174,6 +179,15 @@ export const execute = async (
   );
   if (processPrJobInput) {
     await input.enqueueProcessPrJob(processPrJobInput);
+  }
+
+  const processReleaseInput = buildProcessReleaseJobInput(
+    parsedHeaders.eventType,
+    payload,
+    input.releaseConfig,
+  );
+  if (processReleaseInput) {
+    await input.enqueueProcessReleaseJob(processReleaseInput);
   }
 
   reply.status(200).send({ ok: true });

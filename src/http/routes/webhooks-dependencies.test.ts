@@ -69,4 +69,30 @@ describe("http/routes/webhooks-dependencies execute", () => {
       }),
     );
   });
+
+  it("should enqueue process_release job as pending", async () => {
+    const { db, insert, values } = buildDbMock([]);
+    const dependencies = execute({ db });
+
+    await dependencies.enqueueProcessReleaseJob({
+      repo: "acme/ios",
+      beforeSha: "a".repeat(40),
+      afterSha: "b".repeat(40),
+      branch: "develop",
+    });
+
+    expect(insert).toHaveBeenCalledOnce();
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "process_release",
+        status: "pending",
+        payload: {
+          repo: "acme/ios",
+          beforeSha: "a".repeat(40),
+          afterSha: "b".repeat(40),
+          branch: "develop",
+        },
+      }),
+    );
+  });
 });
