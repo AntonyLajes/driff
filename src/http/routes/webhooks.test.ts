@@ -36,6 +36,7 @@ describe("http/routes/webhooks handler", () => {
 
     await handler(server, {
       webhookSecret: secret,
+      prSummaryBaseBranches: null,
       findWebhookEventByDeliveryId,
       insertWebhookEvent,
       enqueueProcessPrJob,
@@ -140,6 +141,7 @@ describe("http/routes/webhooks handler", () => {
       pull_request: {
         merged: true,
         number: 42,
+        base: { ref: "main" },
       },
       repository: {
         full_name: "acme/mobile-app",
@@ -195,5 +197,112 @@ describe("http/routes/webhooks handler", () => {
     expect(response.statusCode).toBe(200);
     expect(insertWebhookEvent).toHaveBeenCalledOnce();
     expect(enqueueProcessPrJob).not.toHaveBeenCalled();
+  });
+
+  it("should persist event but skip process_pr when base branch is not in allow list", async () => {
+    const secret = "webhook-secret";
+    const serverWithFilter = fastify({ logger: false });
+    servers.push(serverWithFilter);
+    serverWithFilter.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+    const findWebhookEventByDeliveryId = vi.fn(async () => false);
+    const insertWebhookEventForFilter = vi.fn(async () => undefined);
+    const enqueueProcessPrJobForFilter = vi.fn(async () => undefined);
+    await handler(serverWithFilter, {
+      webhookSecret: secret,
+      prSummaryBaseBranches: ["develop"],
+      findWebhookEventByDeliveryId,
+      insertWebhookEvent: insertWebhookEventForFilter,
+      enqueueProcessPrJob: enqueueProcessPrJobForFilter,
+    });
+    await serverWithFilter.ready();
+
+    const payload = JSON.stringify({
+      action: "closed",
+      pull_request: {
+        merged: true,
+        number: 99,
+        base: { ref: "main" },
+      },
+      repository: {
+        full_name: "acme/mobile-app",
+      },
+    });
+
+    const response = await serverWithFilter.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        "x-github-delivery": "delivery-wrong-branch",
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": buildSignature(payload, secret),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(insertWebhookEventForFilter).toHaveBeenCalledOnce();
+    expect(enqueueProcessPrJobForFilter).not.toHaveBeenCalled();
+  });
+
+  it("should enqueue process_pr when base branch is in allow list", async () => {
+    const secret = "webhook-secret";
+    const serverWithFilter = fastify({ logger: false });
+    servers.push(serverWithFilter);
+    serverWithFilter.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+    const findWebhookEventByDeliveryId = vi.fn(async () => false);
+    const insertWebhookEventForFilter = vi.fn(async () => undefined);
+    const enqueueProcessPrJobForFilter = vi.fn(async () => undefined);
+    await handler(serverWithFilter, {
+      webhookSecret: secret,
+      prSummaryBaseBranches: ["develop", "release"],
+      findWebhookEventByDeliveryId,
+      insertWebhookEvent: insertWebhookEventForFilter,
+      enqueueProcessPrJob: enqueueProcessPrJobForFilter,
+    });
+    await serverWithFilter.ready();
+
+    const payload = JSON.stringify({
+      action: "closed",
+      pull_request: {
+        merged: true,
+        number: 100,
+        base: { ref: "develop" },
+      },
+      repository: {
+        full_name: "acme/mobile-app",
+      },
+    });
+
+    const response = await serverWithFilter.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        "x-github-delivery": "delivery-develop",
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": buildSignature(payload, secret),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(insertWebhookEventForFilter).toHaveBeenCalledOnce();
+    expect(enqueueProcessPrJobForFilter).toHaveBeenCalledWith({
+      repo: "acme/mobile-app",
+      prNumber: 100,
+    });
   });
 });

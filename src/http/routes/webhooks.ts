@@ -16,6 +16,9 @@ const mergedPullRequestPayloadSchema = z.object({
   pull_request: z.object({
     merged: z.literal(true),
     number: z.number().int().positive(),
+    base: z.object({
+      ref: z.string().min(1),
+    }),
   }),
 });
 
@@ -27,6 +30,11 @@ interface HeaderInput {
 
 export interface HandlerInput extends WebhookDependencies {
   webhookSecret: string;
+  /**
+   * When set to a non-empty list, only merged PRs targeting one of these base branches
+   * (`pull_request.base.ref`) are summarized. Omitted or `null` means any base branch.
+   */
+  prSummaryBaseBranches?: string[] | null;
 }
 
 const getHeaderValue = (value: string | string[] | undefined): string | undefined => {
@@ -74,9 +82,23 @@ const parsePayload = (body: unknown): Record<string, unknown> | null => {
   }
 };
 
+const shouldSummarizeByBaseBranch = (
+  baseRef: string,
+  allowedBranches: string[] | null | undefined,
+): boolean => {
+  if (allowedBranches === null || allowedBranches === undefined) {
+    return true;
+  }
+  if (allowedBranches.length === 0) {
+    return true;
+  }
+  return allowedBranches.includes(baseRef);
+};
+
 const buildProcessPrJobInput = (
   eventType: string,
   payload: Record<string, unknown>,
+  prSummaryBaseBranches: string[] | null | undefined,
 ): ProcessPrJobInput | null => {
   if (eventType !== "pull_request") {
     return null;
@@ -84,6 +106,11 @@ const buildProcessPrJobInput = (
 
   const parsed = mergedPullRequestPayloadSchema.safeParse(payload);
   if (!parsed.success) {
+    return null;
+  }
+
+  const baseRef = parsed.data.pull_request.base.ref;
+  if (!shouldSummarizeByBaseBranch(baseRef, prSummaryBaseBranches)) {
     return null;
   }
 
@@ -140,7 +167,11 @@ export const execute = async (
 
   await input.insertWebhookEvent(buildWebhookEventInput(parsedHeaders, payload));
 
-  const processPrJobInput = buildProcessPrJobInput(parsedHeaders.eventType, payload);
+  const processPrJobInput = buildProcessPrJobInput(
+    parsedHeaders.eventType,
+    payload,
+    input.prSummaryBaseBranches,
+  );
   if (processPrJobInput) {
     await input.enqueueProcessPrJob(processPrJobInput);
   }

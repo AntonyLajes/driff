@@ -69,7 +69,7 @@ describe("http/server execute", () => {
     const payload = JSON.stringify({
       action: "closed",
       repository: { full_name: "acme/mobile-app" },
-      pull_request: { merged: true, number: 7 },
+      pull_request: { merged: true, number: 7, base: { ref: "main" } },
     });
     const signature =
       "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
@@ -81,6 +81,7 @@ describe("http/server execute", () => {
       logger: false,
       webhook: {
         webhookSecret: secret,
+        prSummaryBaseBranches: null,
         findWebhookEventByDeliveryId,
         insertWebhookEvent,
         enqueueProcessPrJob,
