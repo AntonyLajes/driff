@@ -56,14 +56,19 @@ const createNoopDbClient = (): DbClientLike => ({
 const buildWebhookInput = (
   input: ExecuteInput,
   webhookSecret: string,
+  prSummaryBaseBranches: string[] | null,
   db: Database,
 ): WebhookHandlerInput => {
   if (input.webhook) {
-    return input.webhook;
+    return {
+      ...input.webhook,
+      prSummaryBaseBranches: input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
+    };
   }
 
   return {
     webhookSecret,
+    prSummaryBaseBranches,
     ...createWebhookDependencies({ db }),
   };
 };
@@ -77,7 +82,12 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   const db = input.db ?? dbBundle.db;
   const dbClient = input.dbClient ?? dbBundle.client ?? createNoopDbClient();
 
-  const webhook = buildWebhookInput(input, env.GITHUB_WEBHOOK_SECRET, db);
+  const webhook = buildWebhookInput(
+    input,
+    env.GITHUB_WEBHOOK_SECRET,
+    env.PR_SUMMARY_BASE_BRANCHES,
+    db,
+  );
   const server = input.server ?? createServer({ webhook });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {

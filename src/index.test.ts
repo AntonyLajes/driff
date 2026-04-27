@@ -35,6 +35,7 @@ describe("index execute", () => {
       dbClient: { end },
       webhook: {
         webhookSecret: "webhook-secret",
+        prSummaryBaseBranches: null,
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
@@ -72,6 +73,7 @@ describe("index execute", () => {
       dbClient: { end: vi.fn(async () => undefined) },
       webhook: {
         webhookSecret: "webhook-secret",
+        prSummaryBaseBranches: null,
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
@@ -109,6 +111,7 @@ describe("index execute", () => {
       dbClient: { end: vi.fn(async () => undefined) },
       webhook: {
         webhookSecret: "webhook-secret",
+        prSummaryBaseBranches: null,
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,

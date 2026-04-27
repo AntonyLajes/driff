@@ -123,6 +123,7 @@ describe("index execute runtime wiring", () => {
     expect(mocks.createServer).toHaveBeenCalledWith({
       webhook: expect.objectContaining({
         webhookSecret: "webhook-secret",
+        prSummaryBaseBranches: null,
       }),
     });
     expect(mocks.createGithubSource).toHaveBeenCalledWith({
