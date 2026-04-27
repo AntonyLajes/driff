@@ -17,7 +17,7 @@ const buildPrivateKey = (): string => {
 };
 
 const buildAppOctokitMock = (installationId: number, token: string): OctokitLike => {
-  const request: OctokitLike["request"] = async (route) => {
+  const request = (async (route) => {
     if (route === "GET /repos/{owner}/{repo}/installation") {
       return { data: { id: installationId } as unknown };
     }
@@ -25,7 +25,7 @@ const buildAppOctokitMock = (installationId: number, token: string): OctokitLike
       return { data: { token } as unknown };
     }
     throw new Error(`Unexpected app route: ${String(route)}`);
-  };
+  }) as OctokitLike["request"];
   return { request, pulls: { get: vi.fn(), listFiles: vi.fn() } };
 };
 
@@ -43,9 +43,9 @@ describe("sources/github/gather-release-context extractPrNumbersFromCommitMessag
 describe("sources/github/gather-release-context execute", () => {
   it("should build context from plists and compare", async () => {
     const appOctokit = buildAppOctokitMock(7, "inst-token");
-    const installationRequest: OctokitLike["request"] = async (route, parameters) => {
+    const installationRequest = (async (route, parameters) => {
       if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
-        const ref = (parameters as { ref?: string })?.ref;
+        const ref = (parameters as { ref?: string } | undefined)?.ref;
         const text =
           ref === "beforebbb"
             ? plistForBuild("1")
@@ -71,7 +71,7 @@ describe("sources/github/gather-release-context execute", () => {
         };
       }
       throw new Error(`Unexpected installation route: ${String(route)}`);
-    };
+    }) as OctokitLike["request"];
     const installationOctokit: OctokitLike = {
       request: installationRequest,
       pulls: { get: vi.fn(), listFiles: vi.fn() },
@@ -113,7 +113,7 @@ describe("sources/github/gather-release-context execute", () => {
 
   it("execute should throw when contents response is not a file", async () => {
     const appOctokit = buildAppOctokitMock(1, "t");
-    const badContent: OctokitLike["request"] = async (route) => {
+    const badContent = (async (route) => {
       if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
         return { data: { type: "dir" } };
       }
@@ -128,7 +128,7 @@ describe("sources/github/gather-release-context execute", () => {
         };
       }
       throw new Error(route);
-    };
+    }) as OctokitLike["request"];
     const installationOctokit: OctokitLike = {
       request: badContent,
       pulls: { get: vi.fn(), listFiles: vi.fn() },
