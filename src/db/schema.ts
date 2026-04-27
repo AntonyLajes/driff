@@ -87,6 +87,39 @@ export const jobsTable = pgTable(
   }),
 );
 
+export const releasesTable = pgTable(
+  "releases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repo: text("repo").notNull(),
+    versionKey: text("version_key").notNull(),
+    shortVersion: text("short_version").notNull(),
+    buildVersion: text("build_version").notNull(),
+    previousVersionKey: text("previous_version_key"),
+    branch: text("branch").notNull(),
+    headSha: text("head_sha").notNull(),
+    beforeSha: text("before_sha").notNull(),
+    prNumbers: jsonb("pr_numbers").$type<number[]>().notNull(),
+    userFacing: text("user_facing").notNull(),
+    technical: text("technical").notNull(),
+    sections: jsonb("sections").$type<Record<string, unknown>>(),
+    notionPageId: text("notion_page_id"),
+    promptVersion: integer("prompt_version"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    repoVersionKeyUnique: unique("releases_repo_version_key_unique").on(
+      table.repo,
+      table.versionKey,
+    ),
+  }),
+);
+
 export const promptsTable = pgTable(
   "prompts",
   {

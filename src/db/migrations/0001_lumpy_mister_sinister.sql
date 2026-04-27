@@ -1,0 +1,20 @@
+CREATE TABLE "releases" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"repo" text NOT NULL,
+	"version_key" text NOT NULL,
+	"short_version" text NOT NULL,
+	"build_version" text NOT NULL,
+	"previous_version_key" text,
+	"branch" text NOT NULL,
+	"head_sha" text NOT NULL,
+	"before_sha" text NOT NULL,
+	"pr_numbers" jsonb NOT NULL,
+	"user_facing" text NOT NULL,
+	"technical" text NOT NULL,
+	"sections" jsonb,
+	"notion_page_id" text,
+	"prompt_version" integer,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "releases_repo_version_key_unique" UNIQUE("repo","version_key")
+);
