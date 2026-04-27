@@ -7,6 +7,8 @@ import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
 import { execute as createProcessPrJob } from "@/jobs/process-pr.js";
+import { execute as createProcessReleaseJob } from "@/jobs/process-release.js";
+import { execute as createReleaseSummarizer, type ReleaseSummarizer } from "@/llm/release-summarizer.js";
 import { execute as createSummarizer, type Summarizer } from "@/llm/summarizer.js";
 import { execute as createQueue, type QueueAdapter } from "@/queue/queue.js";
 import { execute as createWorker, type WorkerAdapter } from "@/queue/worker.js";
@@ -36,9 +38,12 @@ export interface ExecuteInput {
   worker?: WorkerAdapter;
   source?: Source;
   summarizer?: Summarizer;
+  releaseSummarizer?: ReleaseSummarizer;
   destination?: Destination;
   processPrHandler?: JobHandler;
+  processReleaseHandler?: JobHandler;
   promptVersion?: number;
+  releasePromptVersion?: number;
   startWorker?: boolean;
   registerSignalHandlers?: boolean;
 }
@@ -53,22 +58,38 @@ const createNoopDbClient = (): DbClientLike => ({
   end: async () => undefined,
 });
 
+const buildReleaseConfig = (
+  env: ReturnType<typeof loadEnv>,
+): import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null => {
+  if (!env.NOTION_RELEASES_DATABASE_ID) {
+    return null;
+  }
+  return {
+    branch: env.RELEASE_VERSION_BRANCH ?? "",
+    plistPath: env.RELEASE_INFO_PLIST_PATH ?? "",
+    monitoredRepo: env.RELEASE_MONITORED_REPO ?? null,
+  };
+};
+
 const buildWebhookInput = (
   input: ExecuteInput,
   webhookSecret: string,
   prSummaryBaseBranches: string[] | null,
+  releaseConfig: import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null,
   db: Database,
 ): WebhookHandlerInput => {
   if (input.webhook) {
     return {
       ...input.webhook,
       prSummaryBaseBranches: input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
+      releaseConfig: input.webhook.releaseConfig !== undefined ? input.webhook.releaseConfig : releaseConfig,
     };
   }
 
   return {
     webhookSecret,
     prSummaryBaseBranches,
+    releaseConfig,
     ...createWebhookDependencies({ db }),
   };
 };
@@ -82,10 +103,12 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   const db = input.db ?? dbBundle.db;
   const dbClient = input.dbClient ?? dbBundle.client ?? createNoopDbClient();
 
+  const releaseNotesEnabled = Boolean(env.NOTION_RELEASES_DATABASE_ID);
   const webhook = buildWebhookInput(
     input,
     env.GITHUB_WEBHOOK_SECRET,
     env.PR_SUMMARY_BASE_BRANCHES,
+    releaseNotesEnabled ? buildReleaseConfig(env) : null,
     db,
   );
   const server = input.server ?? createServer({ webhook });
@@ -112,14 +135,38 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
           createNotionDestination({
             token: env.NOTION_TOKEN,
             databaseId: env.NOTION_DATABASE_ID,
+            releasesDatabaseId: env.NOTION_RELEASES_DATABASE_ID,
           }),
         promptVersion: input.promptVersion ?? 1,
       });
+
+    const processReleaseHandler =
+      input.processReleaseHandler ??
+      (releaseNotesEnabled
+        ? createProcessReleaseJob({
+            db,
+            appId: env.GITHUB_APP_ID,
+            privateKey: env.GITHUB_APP_PRIVATE_KEY,
+            infoPlistPath: env.RELEASE_INFO_PLIST_PATH ?? "",
+            releaseSummarizer:
+              input.releaseSummarizer ??
+              (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY })),
+            destination:
+              input.destination ??
+              createNotionDestination({
+                token: env.NOTION_TOKEN,
+                databaseId: env.NOTION_DATABASE_ID,
+                releasesDatabaseId: env.NOTION_RELEASES_DATABASE_ID,
+              }),
+            promptVersion: input.releasePromptVersion ?? 1,
+          })
+        : { execute: async () => undefined });
 
     return createWorker({
       queue,
       handlers: {
         process_pr: processPrHandler,
+        process_release: processReleaseHandler,
       },
     });
   })();

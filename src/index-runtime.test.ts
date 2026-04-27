@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     findWebhookEventByDeliveryId: async () => false,
     insertWebhookEvent: async () => undefined,
     enqueueProcessPrJob: async () => undefined,
+    enqueueProcessReleaseJob: async () => undefined,
   }));
   const queue = {
     enqueue: vi.fn(async () => "job-1"),
@@ -33,11 +34,16 @@ const mocks = vi.hoisted(() => {
     execute: vi.fn(async () => undefined),
   };
   const createProcessPr = vi.fn(() => processPrHandler);
+  const processReleaseHandler = { execute: vi.fn(async () => undefined) };
+  const createProcessRelease = vi.fn(() => processReleaseHandler);
   const source = { fetchPullRequest: vi.fn(async () => ({})) };
   const createGithubSource = vi.fn(() => source);
   const summarizer = { summarizePR: vi.fn(async () => ({})), prompt: "prompt" };
   const createSummarizer = vi.fn(async () => summarizer);
-  const destination = { publishPR: vi.fn(async () => ({ pageId: "page-id" })) };
+  const destination = {
+    publishPR: vi.fn(async () => ({ pageId: "page-id" })),
+    publishRelease: vi.fn(async () => ({ pageId: "rel-id" })),
+  };
   const createNotionDestination = vi.fn(() => destination);
 
   return {
@@ -46,6 +52,7 @@ const mocks = vi.hoisted(() => {
     createDbClient,
     createNotionDestination,
     createProcessPr,
+    createProcessRelease,
     createQueue,
     createServer,
     createSummarizer,
@@ -81,6 +88,17 @@ vi.mock("@/queue/worker.js", () => ({
 
 vi.mock("@/jobs/process-pr.js", () => ({
   execute: mocks.createProcessPr,
+}));
+
+vi.mock("@/jobs/process-release.js", () => ({
+  execute: mocks.createProcessRelease,
+}));
+
+vi.mock("@/llm/release-summarizer.js", () => ({
+  execute: async () => ({
+    prompt: "release-prompt",
+    summarizeRelease: vi.fn(),
+  }),
 }));
 
 vi.mock("@/sources/github/github-source.js", () => ({
@@ -185,6 +203,7 @@ describe("index execute runtime wiring", () => {
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
+        enqueueProcessReleaseJob: async () => undefined,
       },
     });
 

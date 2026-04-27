@@ -36,9 +36,11 @@ describe("index execute", () => {
       webhook: {
         webhookSecret: "webhook-secret",
         prSummaryBaseBranches: null,
+        releaseConfig: null,
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
+        enqueueProcessReleaseJob: async () => undefined,
       },
     });
 
@@ -74,9 +76,11 @@ describe("index execute", () => {
       webhook: {
         webhookSecret: "webhook-secret",
         prSummaryBaseBranches: null,
+        releaseConfig: null,
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
+        enqueueProcessReleaseJob: async () => undefined,
       },
       host: "127.0.0.1",
       port: 4000,
@@ -112,9 +116,11 @@ describe("index execute", () => {
       webhook: {
         webhookSecret: "webhook-secret",
         prSummaryBaseBranches: null,
+        releaseConfig: null,
         findWebhookEventByDeliveryId: async () => false,
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
+        enqueueProcessReleaseJob: async () => undefined,
       },
       registerSignalHandlers: true,
       startWorker: false,
