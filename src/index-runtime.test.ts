@@ -129,6 +129,11 @@ describe("index execute runtime wiring", () => {
     process.env.PORT = "3000";
     process.env.LOG_LEVEL = "info";
     process.env.NODE_ENV = "test";
+    delete process.env.NOTION_RELEASES_DATABASE_ID;
+    delete process.env.RELEASE_INFO_PLIST_PATH;
+    delete process.env.RELEASE_VERSION_BRANCH;
+    delete process.env.RELEASE_PROJECT_PBXPROJ_PATH;
+    delete process.env.RELEASE_MONITORED_REPO;
   });
 
   it("should wire default runtime dependencies from env", async () => {
