@@ -46,6 +46,11 @@ const parsePayload = (payload: Record<string, unknown>): ProcessReleaseJobPayloa
   return { repo, beforeSha, afterSha, branch };
 };
 
+/** Números de PR únicos no intervalo da release (ordem ordenada estável para query e texto). */
+export const normalizeReleasePrNumbers = (prNumbers: number[]): number[] => {
+  return [...new Set(prNumbers)].sort((a, b) => a - b);
+};
+
 export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
@@ -86,14 +91,19 @@ export const execute = (input: ExecuteInput) => {
         return;
       }
 
-      const prNumbers = context.prNumbers;
+      const releasePrNumbers = normalizeReleasePrNumbers(context.prNumbers);
+      const summarizerContext =
+        releasePrNumbers.length === context.prNumbers.length
+          ? context
+          : { ...context, prNumbers: releasePrNumbers };
+
       let prContributions: Array<{
         prNumber: number;
         summaryUserFacing: string | null;
         category: string | null;
         title: string | null;
       }> = [];
-      if (prNumbers.length > 0) {
+      if (releasePrNumbers.length > 0) {
         const rows = await input.db
           .select({
             prNumber: pullRequestsTable.prNumber,
@@ -103,10 +113,13 @@ export const execute = (input: ExecuteInput) => {
           })
           .from(pullRequestsTable)
           .where(
-            and(eq(pullRequestsTable.repo, job.repo), inArray(pullRequestsTable.prNumber, prNumbers)),
+            and(
+              eq(pullRequestsTable.repo, job.repo),
+              inArray(pullRequestsTable.prNumber, releasePrNumbers),
+            ),
           );
         const byNum = new Map(rows.map((r) => [r.prNumber, r]));
-        prContributions = prNumbers.map((n) => {
+        prContributions = releasePrNumbers.map((n) => {
           const row = byNum.get(n);
           return {
             prNumber: n,
@@ -120,7 +133,7 @@ export const execute = (input: ExecuteInput) => {
       const standaloneCommitHints = buildStandaloneHints(context.compareCommits);
 
       const notes = await input.releaseSummarizer.summarizeRelease({
-        context,
+        context: summarizerContext,
         repo: job.repo,
         branch: job.branch,
         prContributions,
@@ -135,7 +148,7 @@ export const execute = (input: ExecuteInput) => {
         shortVersion: context.afterVersion.short,
         buildVersion: context.afterVersion.build,
         compareUrl: context.compareUrl,
-        prNumbers: context.prNumbers,
+        prNumbers: releasePrNumbers,
         changelog: notes.changelog,
         sections: notes.sections,
       });
@@ -149,7 +162,7 @@ export const execute = (input: ExecuteInput) => {
         branch: job.branch,
         headSha: job.afterSha,
         beforeSha: job.beforeSha,
-        prNumbers: context.prNumbers,
+        prNumbers: releasePrNumbers,
         changelog: notes.changelog,
         sections: { sections: notes.sections, title: notes.title } as unknown as Record<
           string,
