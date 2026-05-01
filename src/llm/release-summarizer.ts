@@ -9,14 +9,13 @@ import type { ReleaseContext } from "@/sources/github/gather-release-context.js"
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 4_096;
 const MAX_RETRIES = 1;
-const DEFAULT_PROMPT_PATH = new URL("./prompts/release-notes.md", import.meta.url);
+const DEFAULT_PROMPT_PATH = new URL("./prompts/release-changelog.md", import.meta.url);
 const MAX_COMMIT_MESSAGES = 120;
 const MAX_MSG_CHARS = 800;
 
-const releaseNotesSchema = z.object({
+const releaseChangelogSchema = z.object({
   title: z.string().min(1),
-  userFacing: z.string().min(1),
-  technical: z.string().min(1),
+  changelog: z.string().min(1),
   sections: z.array(
     z.object({
       label: z.string().min(1),
@@ -25,7 +24,7 @@ const releaseNotesSchema = z.object({
   ),
 });
 
-export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
+export type ReleaseChangelogNotes = z.infer<typeof releaseChangelogSchema>;
 
 interface AnthropicMessageResponse {
   content: Array<{ type: string; text?: string }>;
@@ -40,6 +39,21 @@ export interface AnthropicClientLike {
       messages: Array<{ role: "user"; content: string }>;
     }) => Promise<AnthropicMessageResponse>;
   };
+}
+
+export interface PrContributionForRelease {
+  prNumber: number;
+  summaryUserFacing: string | null;
+  category: string | null;
+  title: string | null;
+}
+
+export interface SummarizeReleaseInput {
+  context: ReleaseContext;
+  repo: string;
+  branch: string;
+  prContributions: PrContributionForRelease[];
+  standaloneCommitHints: Array<{ sha: string; messageLine: string }>;
 }
 
 const extractTextFromResponse = (response: AnthropicMessageResponse): string => {
@@ -67,10 +81,10 @@ const extractJsonObject = (text: string): string => {
   return text.slice(start, end + 1);
 };
 
-const parseReleaseNotes = (text: string): ReleaseNotes => {
+const parseReleaseChangelogNotes = (text: string): ReleaseChangelogNotes => {
   const jsonCandidate = extractJsonObject(text);
   const parsed = JSON.parse(jsonCandidate) as unknown;
-  return releaseNotesSchema.parse(parsed);
+  return releaseChangelogSchema.parse(parsed);
 };
 
 const trimCommitMessages = (messages: string[]): string[] => {
@@ -79,11 +93,12 @@ const trimCommitMessages = (messages: string[]): string[] => {
     .map((m) => (m.length > MAX_MSG_CHARS ? `${m.slice(0, MAX_MSG_CHARS)}…` : m));
 };
 
-const buildUserMessage = (context: ReleaseContext, repo: string, branch: string): string => {
+const buildUserMessage = (input: SummarizeReleaseInput): string => {
+  const { context } = input;
   return JSON.stringify(
     {
-      repo,
-      branch,
+      repo: input.repo,
+      branch: input.branch,
       previousVersionKey: context.previousVersionKey,
       newVersionKey: context.newVersionKey,
       shortVersion: context.afterVersion.short,
@@ -92,7 +107,9 @@ const buildUserMessage = (context: ReleaseContext, repo: string, branch: string)
       totalCommits: context.totalCommits,
       compareUrl: context.compareUrl,
       fileChangeSummary: context.fileChangeSummary,
-      commitMessages: trimCommitMessages(context.commitMessages),
+      prContributions: input.prContributions,
+      standaloneCommitHints: input.standaloneCommitHints,
+      commitMessagesFallback: trimCommitMessages(context.commitMessages),
     },
     null,
     2,
@@ -100,7 +117,7 @@ const buildUserMessage = (context: ReleaseContext, repo: string, branch: string)
 };
 
 export interface ReleaseSummarizer {
-  summarizeRelease: (input: { context: ReleaseContext; repo: string; branch: string }) => Promise<ReleaseNotes>;
+  summarizeRelease: (input: SummarizeReleaseInput) => Promise<ReleaseChangelogNotes>;
   prompt: string;
 }
 
@@ -145,8 +162,8 @@ export const execute = async (input: ExecuteInput = {}): Promise<ReleaseSummariz
 
   return {
     prompt,
-    summarizeRelease: async ({ context, repo, branch }) => {
-      const userMessage = buildUserMessage(context, repo, branch);
+    summarizeRelease: async (summarizeInput) => {
+      const userMessage = buildUserMessage(summarizeInput);
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
         const response = await anthropic.messages.create({
@@ -157,10 +174,10 @@ export const execute = async (input: ExecuteInput = {}): Promise<ReleaseSummariz
         });
 
         try {
-          return parseReleaseNotes(extractTextFromResponse(response));
+          return parseReleaseChangelogNotes(extractTextFromResponse(response));
         } catch (error) {
           if (attempt === MAX_RETRIES) {
-            throw new Error("Failed to parse LLM release notes response.", { cause: error });
+            throw new Error("Failed to parse LLM release changelog response.", { cause: error });
           }
         }
       }

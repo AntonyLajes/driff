@@ -47,8 +47,7 @@ describe("jobs/process-release integration", () => {
     const publishRelease = vi.fn(async () => ({ pageId: "p1" }));
     const summarizeRelease = vi.fn(async () => ({
       title: "R",
-      userFacing: "u",
-      technical: "t",
+      changelog: "What's new.",
       sections: [],
     }));
     const handler = execute({
@@ -70,6 +69,87 @@ describe("jobs/process-release integration", () => {
     expect(summarizeRelease).toHaveBeenCalledOnce();
     expect(publishRelease).toHaveBeenCalledOnce();
     expect(insert).toHaveBeenCalledOnce();
+  });
+
+  it("should pass PR rows and standalone hints to release summarizer", async () => {
+    gatherMock.mockResolvedValue({
+      beforeVersion: { short: "1", build: "1" },
+      afterVersion: { short: "1", build: "2" },
+      previousVersionKey: "1+1",
+      newVersionKey: "1+2",
+      compareCommits: [
+        { sha: "dead", message: "fix typo in label" },
+        { sha: "beef", message: "Merge pull request #9 from org/feat" },
+      ],
+      commitMessages: ["fix typo in label", "Merge pull request #9 from org/feat"],
+      prNumbers: [9],
+      totalCommits: 2,
+      compareUrl: "https://c",
+      fileChangeSummary: "—",
+    });
+    const select = vi
+      .fn()
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              prNumber: 9,
+              summaryUserFacing: "Brighter welcome screen.",
+              category: "feature",
+              title: "Welcome tweaks",
+            },
+          ]),
+        }),
+      });
+
+    const values = vi.fn();
+    const insert = vi.fn(() => ({ values }));
+    const publishRelease = vi.fn(async () => ({ pageId: "p99" }));
+    const summarizeRelease = vi.fn(async () => ({
+      title: "Rel",
+      changelog: "Stuff.",
+      sections: [],
+    }));
+    const db = { select, insert } as never;
+
+    const handler = execute({
+      db,
+      appId: "1",
+      privateKey: "k",
+      infoPlistPath: "p",
+      projectPbxprojPath: null,
+      promptVersion: 1,
+      releaseSummarizer: { summarizeRelease, prompt: "p" },
+      destination: { publishPR: vi.fn(), publishRelease },
+    });
+    await handler.execute({
+      repo: "acme/ios",
+      beforeSha: "a".repeat(40),
+      afterSha: "b".repeat(40),
+      branch: "develop",
+    });
+
+    expect(summarizeRelease).toHaveBeenCalledWith({
+      repo: "acme/ios",
+      branch: "develop",
+      context: expect.any(Object),
+      prContributions: [
+        {
+          prNumber: 9,
+          summaryUserFacing: "Brighter welcome screen.",
+          category: "feature",
+          title: "Welcome tweaks",
+        },
+      ],
+      standaloneCommitHints: [{ sha: "dead", messageLine: "fix typo in label" }],
+    });
   });
 
   it("should skip LLM when release version already stored", async () => {

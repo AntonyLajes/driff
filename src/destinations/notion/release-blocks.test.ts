@@ -15,8 +15,7 @@ describe("destinations/notion/release-blocks execute", () => {
       buildVersion: "1",
       compareUrl: "https://c",
       prNumbers: [],
-      userFacing: "u",
-      technical: "tech",
+      changelog: "High-level changes.",
       sections: [{ label: "Empty", items: [] }],
     };
     const blocks = execute(summary);

@@ -1,10 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { execute as loadEnv } from "@/config/env.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
-import { releasesTable } from "@/db/schema.js";
+import { pullRequestsTable, releasesTable } from "@/db/schema.js";
 import type { ReleaseSummarizer } from "@/llm/release-summarizer.js";
+import { execute as buildStandaloneHints } from "@/lib/release-commit-hints.js";
 import { execute as gatherReleaseContext } from "@/sources/github/gather-release-context.js";
 
 export interface ProcessReleaseJobPayload {
@@ -85,10 +86,45 @@ export const execute = (input: ExecuteInput) => {
         return;
       }
 
+      const prNumbers = context.prNumbers;
+      let prContributions: Array<{
+        prNumber: number;
+        summaryUserFacing: string | null;
+        category: string | null;
+        title: string | null;
+      }> = [];
+      if (prNumbers.length > 0) {
+        const rows = await input.db
+          .select({
+            prNumber: pullRequestsTable.prNumber,
+            summaryUserFacing: pullRequestsTable.summaryUserFacing,
+            category: pullRequestsTable.category,
+            title: pullRequestsTable.title,
+          })
+          .from(pullRequestsTable)
+          .where(
+            and(eq(pullRequestsTable.repo, job.repo), inArray(pullRequestsTable.prNumber, prNumbers)),
+          );
+        const byNum = new Map(rows.map((r) => [r.prNumber, r]));
+        prContributions = prNumbers.map((n) => {
+          const row = byNum.get(n);
+          return {
+            prNumber: n,
+            summaryUserFacing: row?.summaryUserFacing ?? null,
+            category: row?.category ?? null,
+            title: row?.title ?? null,
+          };
+        });
+      }
+
+      const standaloneCommitHints = buildStandaloneHints(context.compareCommits);
+
       const notes = await input.releaseSummarizer.summarizeRelease({
         context,
         repo: job.repo,
         branch: job.branch,
+        prContributions,
+        standaloneCommitHints,
       });
       const publish = await input.destination.publishRelease({
         title: notes.title,
@@ -100,8 +136,7 @@ export const execute = (input: ExecuteInput) => {
         buildVersion: context.afterVersion.build,
         compareUrl: context.compareUrl,
         prNumbers: context.prNumbers,
-        userFacing: notes.userFacing,
-        technical: notes.technical,
+        changelog: notes.changelog,
         sections: notes.sections,
       });
 
@@ -115,8 +150,7 @@ export const execute = (input: ExecuteInput) => {
         headSha: job.afterSha,
         beforeSha: job.beforeSha,
         prNumbers: context.prNumbers,
-        userFacing: notes.userFacing,
-        technical: notes.technical,
+        changelog: notes.changelog,
         sections: { sections: notes.sections, title: notes.title } as unknown as Record<
           string,
           unknown

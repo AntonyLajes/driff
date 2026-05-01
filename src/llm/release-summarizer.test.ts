@@ -16,26 +16,33 @@ const baseContext: ReleaseContext = {
   fileChangeSummary: "M: a.swift",
 };
 
+const baseSummarizeInput = {
+  context: baseContext,
+  repo: "o/r",
+  branch: "develop",
+  prContributions: [
+    { prNumber: 3, summaryUserFacing: "Fixed login spinner.", category: "bugfix", title: "fix login" },
+  ],
+  standaloneCommitHints: [{ sha: "z", messageLine: "chore: plist" }],
+};
+
 describe("llm/release-summarizer execute", () => {
-  it("should return parsed release notes from model response", async () => {
+  it("should return parsed release changelog from model response", async () => {
     const json =
-      '{"title":"1.0.1 (2)","userFacing":"Bug fixes.","technical":"Bumped build.","sections":[{"label":"Fixed","items":["#3"]}]}';
+      '{"title":"1.0.1 (2)","changelog":"Bug fixes for login.","sections":[{"label":"Fixed","items":["#3 spinner"]}]}';
     const create = vi.fn(async () => ({
       content: [{ type: "text" as const, text: json }],
     }));
     const summarizer = await execute({
       apiKey: "test-key",
-      readPrompt: async () => "You are a release writer.",
+      readPrompt: async () => "You are a changelog writer.",
       anthropicClientFactory: () => ({
         messages: { create },
       }),
     });
-    const result = await summarizer.summarizeRelease({
-      context: baseContext,
-      repo: "o/r",
-      branch: "develop",
-    });
+    const result = await summarizer.summarizeRelease(baseSummarizeInput);
     expect(result.title).toBe("1.0.1 (2)");
+    expect(result.changelog).toContain("Bug fixes");
     expect(result.sections[0]?.label).toBe("Fixed");
     expect(create).toHaveBeenCalledOnce();
   });
@@ -48,7 +55,7 @@ describe("llm/release-summarizer execute", () => {
         content: [
           {
             type: "text" as const,
-            text: '{"title":"ok","userFacing":"u","technical":"t","sections":[]}',
+            text: '{"title":"ok","changelog":"c","sections":[]}',
           },
         ],
       });
@@ -59,11 +66,7 @@ describe("llm/release-summarizer execute", () => {
         messages: { create: badThenGood },
       }),
     });
-    const result = await summarizer.summarizeRelease({
-      context: baseContext,
-      repo: "o/r",
-      branch: "develop",
-    });
+    const result = await summarizer.summarizeRelease(baseSummarizeInput);
     expect(result.title).toBe("ok");
     expect(badThenGood).toHaveBeenCalledTimes(2);
   });

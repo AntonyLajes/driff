@@ -42,12 +42,7 @@ const bullet = (s: string): NotionBlock => ({
 });
 
 export const execute = (summary: ReleaseNotesSummary): NotionBlock[] => {
-  const blocks: NotionBlock[] = [
-    heading2("User-facing"),
-    paragraph(summary.userFacing),
-    heading2("Technical"),
-    paragraph(summary.technical),
-  ];
+  const blocks: NotionBlock[] = [heading2("Changelog"), paragraph(summary.changelog)];
 
   for (const section of summary.sections) {
     if (section.items.length === 0) {

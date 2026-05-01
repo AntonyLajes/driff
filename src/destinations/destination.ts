@@ -23,8 +23,8 @@ export interface ReleaseNotesSummary {
   buildVersion: string;
   compareUrl: string;
   prNumbers: number[];
-  userFacing: string;
-  technical: string;
+  /** Narrativa curta de changelog para utilizadores finais / produto. */
+  changelog: string;
   sections: Array<{ label: string; items: string[] }>;
 }
 

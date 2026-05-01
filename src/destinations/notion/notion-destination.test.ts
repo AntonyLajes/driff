@@ -139,11 +139,8 @@ describe("destinations/notion/notion-destination execute", () => {
       buildVersion: "50",
       compareUrl: "https://github.com/acme/ios/compare/1.9...2.0",
       prNumbers: [10, 11],
-      userFacing: "Faster app.",
-      technical: "Bumped min iOS and refactors payment.",
-      sections: [
-        { label: "Fixed", items: ["Crash on login."] },
-      ],
+      changelog: "Better performance and onboarding polish.",
+      sections: [{ label: "Fixed", items: ["Crash on login."] }],
     };
     const destination = execute({
       token: "notion-token",
