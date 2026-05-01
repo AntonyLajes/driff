@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProcessReleaseJobInput, refToBranch, pushTouchesPlistPath } from "@/http/routes/webhook-release.js";
+import {
+  buildProcessReleaseJobInput,
+  refToBranch,
+  pushTouchesPlistPath,
+  pushTouchesReleasePaths,
+} from "@/http/routes/webhook-release.js";
+
+const relCfg = {
+  branch: "develop" as const,
+  plistPath: "App/Info.plist",
+  projectPbxprojPath: null as string | null,
+  monitoredRepo: null as string | null,
+};
 
 const basePush = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   ref: "refs/heads/develop",
@@ -35,11 +47,7 @@ describe("http/routes/webhook-release", () => {
   });
 
   it("buildProcessReleaseJobInput should return payload for matching push", () => {
-    const job = buildProcessReleaseJobInput("push", basePush() as Record<string, unknown>, {
-      branch: "develop",
-      plistPath: "App/Info.plist",
-      monitoredRepo: null,
-    });
+    const job = buildProcessReleaseJobInput("push", basePush() as Record<string, unknown>, relCfg);
     expect(job).toEqual({
       repo: "acme/ios",
       beforeSha: "a".repeat(40),
@@ -50,8 +58,7 @@ describe("http/routes/webhook-release", () => {
 
   it("buildProcessReleaseJobInput should respect monitored repo", () => {
     const job = buildProcessReleaseJobInput("push", basePush() as Record<string, unknown>, {
-      branch: "develop",
-      plistPath: "App/Info.plist",
+      ...relCfg,
       monitoredRepo: "other/ios",
     });
     expect(job).toBeNull();
@@ -60,16 +67,12 @@ describe("http/routes/webhook-release", () => {
   it("buildProcessReleaseJobInput should return null when config missing or event not push", () => {
     expect(buildProcessReleaseJobInput("push", basePush() as Record<string, unknown>, null)).toBeNull();
     expect(
-      buildProcessReleaseJobInput("pull_request", basePush() as Record<string, unknown>, {
-        branch: "develop",
-        plistPath: "App/Info.plist",
-        monitoredRepo: null,
-      }),
+      buildProcessReleaseJobInput("pull_request", basePush() as Record<string, unknown>, relCfg),
     ).toBeNull();
   });
 
   it("buildProcessReleaseJobInput should return null for invalid payload or null shas", () => {
-    const cfg = { branch: "develop", plistPath: "App/Info.plist", monitoredRepo: null };
+    const cfg = relCfg;
     expect(buildProcessReleaseJobInput("push", { foo: 1 } as Record<string, unknown>, cfg)).toBeNull();
     const b = basePush();
     expect(
@@ -93,9 +96,29 @@ describe("http/routes/webhook-release", () => {
       buildProcessReleaseJobInput(
         "push",
         { ...basePush(), ref: "refs/heads/main" } as Record<string, unknown>,
-        { branch: "develop", plistPath: "App/Info.plist", monitoredRepo: null },
+        relCfg,
       ),
     ).toBeNull();
+  });
+
+  it("pushTouchesReleasePaths should be true when only project.pbxproj changed", () => {
+    expect(
+      pushTouchesReleasePaths(
+        { commits: [{ modified: ["App.xcodeproj/project.pbxproj"] }] },
+        "App/Info.plist",
+        "App.xcodeproj/project.pbxproj",
+      ),
+    ).toBe(true);
+  });
+
+  it("pushTouchesReleasePaths should be false when pbx not touched and plist not touched", () => {
+    expect(
+      pushTouchesReleasePaths(
+        { commits: [{ modified: ["Other.swift"] }] },
+        "App/Info.plist",
+        "App.xcodeproj/project.pbxproj",
+      ),
+    ).toBe(false);
   });
 
   it("pushTouchesPlistPath should be true when 20 commits (github cap)", () => {

@@ -28,7 +28,7 @@ export const refToBranch = (ref: string): string | null => {
   return ref.slice(prefix.length) || null;
 };
 
-export const pushTouchesPlistPath = (
+const commitTouchesFilePath = (
   payload: {
     commits?: Array<{
       added?: string[];
@@ -36,7 +36,7 @@ export const pushTouchesPlistPath = (
       removed?: string[];
     }>;
   },
-  plistPath: string,
+  filePath: string,
 ): boolean => {
   const commits = payload.commits;
   if (!commits || commits.length === 0) {
@@ -52,7 +52,7 @@ export const pushTouchesPlistPath = (
         continue;
       }
       for (const path of list) {
-        if (path === plistPath) {
+        if (path === filePath) {
           return true;
         }
       }
@@ -61,9 +61,43 @@ export const pushTouchesPlistPath = (
   return false;
 };
 
+/** @deprecated use pushTouchesReleasePaths */
+export const pushTouchesPlistPath = (
+  payload: Parameters<typeof commitTouchesFilePath>[0],
+  plistPath: string,
+): boolean => {
+  return commitTouchesFilePath(payload, plistPath);
+};
+
+export const pushTouchesReleasePaths = (
+  payload: {
+    commits?: Array<{
+      added?: string[];
+      modified?: string[];
+      removed?: string[];
+    }>;
+  },
+  infoPlistPath: string,
+  projectPbxprojPath: string | null | undefined,
+): boolean => {
+  const paths: string[] = [infoPlistPath];
+  const p = projectPbxprojPath?.trim();
+  if (p) {
+    paths.push(p);
+  }
+  for (const path of paths) {
+    if (commitTouchesFilePath(payload, path)) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export interface ReleaseWebhookConfig {
   branch: string;
   plistPath: string;
+  /** Quando set, o push a este ficheiro também dispara o job (ex.: bump só no pbx). */
+  projectPbxprojPath: string | null;
   monitoredRepo: string | null;
 }
 
@@ -101,7 +135,7 @@ export const buildProcessReleaseJobInput = (
     return null;
   }
 
-  if (!pushTouchesPlistPath(data, config.plistPath)) {
+  if (!pushTouchesReleasePaths(data, config.plistPath, config.projectPbxprojPath)) {
     return null;
   }
 
