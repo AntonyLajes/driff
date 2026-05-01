@@ -21,6 +21,7 @@ export interface ExecuteInput {
   releaseSummarizer: ReleaseSummarizer;
   destination: Destination;
   infoPlistPath: string;
+  projectPbxprojPath: string | null;
   promptVersion: number;
 }
 
@@ -60,6 +61,7 @@ export const execute = (input: ExecuteInput) => {
         beforeSha: job.beforeSha,
         afterSha: job.afterSha,
         infoPlistPath: input.infoPlistPath,
+        projectPbxprojPath: input.projectPbxprojPath,
       });
 
       if (

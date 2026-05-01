@@ -24,6 +24,7 @@ describe("jobs/process-release", () => {
       appId: "1",
       privateKey: "k",
       infoPlistPath: "App/Info.plist",
+      projectPbxprojPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease: vi.fn(), prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease: vi.fn() },
