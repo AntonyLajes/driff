@@ -67,6 +67,7 @@ const buildReleaseConfig = (
   return {
     branch: env.RELEASE_VERSION_BRANCH ?? "",
     plistPath: env.RELEASE_INFO_PLIST_PATH ?? "",
+    projectPbxprojPath: env.RELEASE_PROJECT_PBXPROJ_PATH ?? null,
     monitoredRepo: env.RELEASE_MONITORED_REPO ?? null,
   };
 };
@@ -148,6 +149,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             appId: env.GITHUB_APP_ID,
             privateKey: env.GITHUB_APP_PRIVATE_KEY,
             infoPlistPath: env.RELEASE_INFO_PLIST_PATH ?? "",
+            projectPbxprojPath: env.RELEASE_PROJECT_PBXPROJ_PATH ?? null,
             releaseSummarizer:
               input.releaseSummarizer ??
               (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY })),
