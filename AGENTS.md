@@ -174,7 +174,7 @@ src/
     release-summarizer.ts   # Release notes JSON from Claude
     prompts/
       pr-summary.md
-      release-notes.md
+      release-changelog.md
   queue/
     queue.ts                # Enqueue/dequeue via Postgres
     worker.ts               # Worker loop
@@ -584,7 +584,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 **Behavior:**
 - GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH` or (if set) `RELEASE_PROJECT_PBXPROJ_PATH` — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
-- Job `process_release`: compare `before` and `after` on the remote ref. If `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from that file at each SHA; otherwise read the plist. If the plist only contains `$(...)` placeholders and no pbx path is set, the job fails with a clear config error. Then compare API for commits and merge PR heuristics, LLM `release-notes.md` → `publishRelease` in Notion.
+- Job `process_release`: compare `before` and `after` on the remote ref. If `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from that file at each SHA; otherwise read the plist. If the plist only contains `$(...)` placeholders and no pbx path is set, the job fails with a clear config error. The GitHub compare range supplies every commit (`compareCommits`); commits that are **not** merge/squash PR lines are passed as `standaloneCommitHints` to the LLM. For each PR number found in that range, matching rows in `pull_requests` (same `repo`) enrich the input with stored `summary_user_facing` when the PR was processed earlier. The prompt `release-changelog.md` returns user-facing **changelog** copy only (no engineering appendix), stored in `releases.changelog`, with optional sectioned bullets; Notion page body shows **Changelog** + sections.
 - Idempotency: `releases` has unique (`repo`, `version_key`).
 
 **Notion “Releases” database properties (must match integration):** Title, Repo, Branch, Version, Short Version, Build, Previous Version, URL, PR Numbers (see `notion-destination`).
