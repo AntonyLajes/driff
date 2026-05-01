@@ -99,6 +99,9 @@ describe("sources/github/gather-release-context execute", () => {
     expect(result.newVersionKey).toBe("1.0.0+2");
     expect(result.prNumbers).toEqual([5]);
     expect(result.totalCommits).toBe(1);
+    expect(result.compareCommits).toEqual([
+      { sha: "s1", message: "Merge pull request #5 from a/b" },
+    ]);
   });
 
   it("should read version from project.pbxproj when projectPbxprojPath is set", async () => {

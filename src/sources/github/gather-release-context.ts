@@ -73,11 +73,18 @@ const buildFileChangeSummary = (files: Array<{ filename: string; status: string 
   return lines.join("\n");
 };
 
+export interface CompareCommitEntry {
+  sha: string;
+  message: string;
+}
+
 export interface ReleaseContext {
   beforeVersion: IosPlistVersion | null;
   afterVersion: IosPlistVersion;
   previousVersionKey: string | null;
   newVersionKey: string;
+  /** Commits incluídos no intervalo GitHub Compare (ordenados pela API). */
+  compareCommits: CompareCommitEntry[];
   commitMessages: string[];
   prNumbers: number[];
   totalCommits: number;
@@ -211,6 +218,10 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
   const newVersionKey = toVersionKey(afterVersion);
   const previousVersionKey = beforeVersion ? toVersionKey(beforeVersion) : null;
   const commitMessages = compare.commits.map((c) => c.commit.message.trim());
+  const compareCommits: CompareCommitEntry[] = compare.commits.map((c) => ({
+    sha: c.sha,
+    message: c.commit.message.trim(),
+  }));
   const prNumbers = extractPrNumbersFromCommitMessages(commitMessages);
 
   return {
@@ -218,6 +229,7 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     afterVersion,
     previousVersionKey,
     newVersionKey,
+    compareCommits,
     commitMessages,
     prNumbers,
     totalCommits: compare.total_commits,

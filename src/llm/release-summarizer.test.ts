@@ -8,6 +8,7 @@ const baseContext: ReleaseContext = {
   afterVersion: { short: "1.0.1", build: "2" },
   previousVersionKey: "1.0.0+1",
   newVersionKey: "1.0.1+2",
+  compareCommits: [{ sha: "abc", message: "Merge pull request #3 from o/f" }],
   commitMessages: ["Merge pull request #3 from o/f"],
   prNumbers: [3],
   totalCommits: 1,
