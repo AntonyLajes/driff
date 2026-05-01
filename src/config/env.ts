@@ -31,6 +31,11 @@ const envSchema = z.object({
   RELEASE_VERSION_BRANCH: z.string().min(1).optional(),
   /** When set, only this `owner/name` repo triggers release notes (push handler). */
   RELEASE_MONITORED_REPO: z.string().min(1).optional(),
+  /**
+   * Optional: e.g. `MyApp.xcodeproj/project.pbxproj`. When set, version keys come from
+   * MARKETING_VERSION / CURRENT_PROJECT_VERSION in this file (needed when Info.plist has $(...)).
+   */
+  RELEASE_PROJECT_PBXPROJ_PATH: z.string().min(1).optional(),
 })
   .superRefine((data, ctx) => {
     const hasReleasesDb = Boolean(data.NOTION_RELEASES_DATABASE_ID);
