@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { hasVersionKeyChanged, execute } from "@/jobs/process-release.js";
+import { hasVersionKeyChanged, execute, normalizeReleasePrNumbers } from "@/jobs/process-release.js";
 
 describe("jobs/process-release", () => {
+  it("normalizeReleasePrNumbers should sort and dedupe", () => {
+    expect(normalizeReleasePrNumbers([10, 2, 10, 7])).toEqual([2, 7, 10]);
+    expect(normalizeReleasePrNumbers([])).toEqual([]);
+  });
+
   it("hasVersionKeyChanged should be false when keys match", () => {
     expect(
       hasVersionKeyChanged({ previousVersionKey: "1.0+1", newVersionKey: "1.0+1" }),

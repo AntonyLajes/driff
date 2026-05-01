@@ -66,7 +66,13 @@ describe("jobs/process-release integration", () => {
       afterSha: "b".repeat(40),
       branch: "develop",
     });
-    expect(summarizeRelease).toHaveBeenCalledOnce();
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(summarizeRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prContributions: [],
+        standaloneCommitHints: [],
+      }),
+    );
     expect(publishRelease).toHaveBeenCalledOnce();
     expect(insert).toHaveBeenCalledOnce();
   });
@@ -150,6 +156,85 @@ describe("jobs/process-release integration", () => {
       ],
       standaloneCommitHints: [{ sha: "dead", messageLine: "fix typo in label" }],
     });
+  });
+
+  it("should dedupe duplicate PR numbers in the compare range", async () => {
+    gatherMock.mockResolvedValue({
+      beforeVersion: { short: "1", build: "1" },
+      afterVersion: { short: "1", build: "2" },
+      previousVersionKey: "1+1",
+      newVersionKey: "1+2",
+      compareCommits: [{ sha: "s1", message: "Merge pull request #9 from a/x" }],
+      commitMessages: ["Merge pull request #9 from a/x"],
+      prNumbers: [9, 9],
+      totalCommits: 1,
+      compareUrl: "https://c",
+      fileChangeSummary: "—",
+    });
+    const select = vi
+      .fn()
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              prNumber: 9,
+              summaryUserFacing: "One entry only.",
+              category: "feature",
+              title: "Nine",
+            },
+          ]),
+        }),
+      });
+
+    const insert = vi.fn(() => ({ values: vi.fn() }));
+    const publishRelease = vi.fn(async () => ({ pageId: "pd" }));
+    const summarizeRelease = vi.fn(async () => ({
+      title: "T",
+      changelog: "c",
+      sections: [],
+    }));
+    const db = { select, insert } as never;
+
+    await execute({
+      db,
+      appId: "1",
+      privateKey: "k",
+      infoPlistPath: "p",
+      projectPbxprojPath: null,
+      promptVersion: 1,
+      releaseSummarizer: { summarizeRelease, prompt: "p" },
+      destination: { publishPR: vi.fn(), publishRelease },
+    }).execute({
+      repo: "o/r",
+      beforeSha: "a".repeat(40),
+      afterSha: "b".repeat(40),
+      branch: "develop",
+    });
+
+    expect(summarizeRelease).toHaveBeenCalledWith({
+      repo: "o/r",
+      branch: "develop",
+      context: expect.objectContaining({
+        prNumbers: [9],
+      }),
+      prContributions: [
+        {
+          prNumber: 9,
+          summaryUserFacing: "One entry only.",
+          category: "feature",
+          title: "Nine",
+        },
+      ],
+      standaloneCommitHints: [],
+    });
+    expect(publishRelease).toHaveBeenCalledWith(expect.objectContaining({ prNumbers: [9] }));
   });
 
   it("should skip LLM when release version already stored", async () => {
