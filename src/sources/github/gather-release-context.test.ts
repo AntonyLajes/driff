@@ -11,6 +11,12 @@ const plistForBuild = (build: string, short = "1.0.0"): string => {
 </dict></plist>`;
 };
 
+const pbxForBuild = (build: string, short = "1.0.0"): string => {
+  return `MARKETING_VERSION = ${short};
+CURRENT_PROJECT_VERSION = ${build};
+`;
+};
+
 const buildPrivateKey = (): string => {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   return privateKey.export({ format: "pem", type: "pkcs1" }).toString();
@@ -93,6 +99,108 @@ describe("sources/github/gather-release-context execute", () => {
     expect(result.newVersionKey).toBe("1.0.0+2");
     expect(result.prNumbers).toEqual([5]);
     expect(result.totalCommits).toBe(1);
+  });
+
+  it("should read version from project.pbxproj when projectPbxprojPath is set", async () => {
+    const appOctokit = buildAppOctokitMock(7, "inst-token");
+    const pbxPath = "App.xcodeproj/project.pbxproj";
+    const installationRequest = (async (route, parameters) => {
+      if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+        const path = (parameters as { path?: string } | undefined)?.path;
+        const ref = (parameters as { ref?: string } | undefined)?.ref;
+        if (path !== pbxPath) {
+          throw new Error(`Unexpected path: ${String(path)}`);
+        }
+        const text = ref === "beforebbb" ? pbxForBuild("1") : pbxForBuild("2");
+        return {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(text, "utf8").toString("base64"),
+          },
+        };
+      }
+      if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
+        return {
+          data: {
+            total_commits: 1,
+            commits: [{ sha: "s1", commit: { message: "chore: bump" } }],
+            html_url: "https://github.com/o/r/compare/before...after",
+            files: [{ filename: pbxPath, status: "modified" }],
+          },
+        };
+      }
+      throw new Error(`Unexpected installation route: ${String(route)}`);
+    }) as OctokitLike["request"];
+    const installationOctokit: OctokitLike = {
+      request: installationRequest,
+      pulls: { get: vi.fn(), listFiles: vi.fn() },
+    };
+    const octokitFactory = vi
+      .fn<(auth: string) => OctokitLike>()
+      .mockReturnValueOnce(appOctokit)
+      .mockReturnValueOnce(installationOctokit);
+
+    const result = await execute({
+      appId: "1",
+      privateKey: buildPrivateKey(),
+      repo: "o/r",
+      beforeSha: "beforebbb",
+      afterSha: "afterccc",
+      infoPlistPath: "App/Info.plist",
+      projectPbxprojPath: pbxPath,
+      octokitFactory,
+    });
+    expect(result.newVersionKey).toBe("1.0.0+2");
+    expect(result.beforeVersion).toEqual({ short: "1.0.0", build: "1" });
+  });
+
+  it("execute should throw when plist has Xcode placeholders and pbx path unset", async () => {
+    const placeholderPlist = `<?xml version="1.0"?><plist><dict>
+<key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+</dict></plist>`;
+    const appOctokit = buildAppOctokitMock(1, "t");
+    const installationRequest = (async (route) => {
+      if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+        return {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(placeholderPlist, "utf8").toString("base64"),
+          },
+        };
+      }
+      if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
+        return {
+          data: {
+            total_commits: 0,
+            commits: [],
+            html_url: "u",
+            files: [],
+          },
+        };
+      }
+      throw new Error(route);
+    }) as OctokitLike["request"];
+    const installationOctokit: OctokitLike = {
+      request: installationRequest,
+      pulls: { get: vi.fn(), listFiles: vi.fn() },
+    };
+    await expect(
+      execute({
+        appId: "1",
+        privateKey: buildPrivateKey(),
+        repo: "o/r",
+        beforeSha: "a".repeat(40),
+        afterSha: "b".repeat(40),
+        infoPlistPath: "p",
+        octokitFactory: vi
+          .fn<(auth: string) => OctokitLike>()
+          .mockReturnValueOnce(appOctokit)
+          .mockReturnValueOnce(installationOctokit),
+      }),
+    ).rejects.toThrow(/RELEASE_PROJECT_PBXPROJ_PATH/);
   });
 
   it("execute should throw when before or after sha is all zeros", async () => {

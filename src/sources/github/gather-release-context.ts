@@ -3,7 +3,13 @@ import {
   getInstallationOctokit,
   type OctokitLike,
 } from "@/sources/github/github-installation.js";
-import { type IosPlistVersion, execute as parsePlist, toVersionKey } from "@/lib/plist-version.js";
+import { execute as parsePbxVersion } from "@/lib/pbxproj-version.js";
+import {
+  type IosPlistVersion,
+  execute as parsePlist,
+  isPlaceholderPlistVersion,
+  toVersionKey,
+} from "@/lib/plist-version.js";
 
 import { Octokit } from "@octokit/rest";
 
@@ -86,6 +92,11 @@ export interface ExecuteInput {
   beforeSha: string;
   afterSha: string;
   infoPlistPath: string;
+  /**
+   * Quando definido, lê `MARKETING_VERSION` e `CURRENT_PROJECT_VERSION` deste
+   * ficheiro em vez de confiar no Info.plist (útil com `$(MARKETING_VERSION)` no XML).
+   */
+  projectPbxprojPath?: string | null;
   octokitFactory?: (auth: string) => OctokitLike;
 }
 
@@ -106,7 +117,7 @@ const getOctokitFactory = (
   return (auth) => new Octokit({ auth }) as unknown as OctokitLike;
 };
 
-const fetchPlistTextAt = async (input: {
+const fetchFileTextAt = async (input: {
   octokit: OctokitLike;
   owner: string;
   repo: string;
@@ -159,16 +170,42 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     octokitFactory,
   });
 
-  const [beforeText, afterText, compare] = await Promise.all([
-    fetchPlistTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: input.beforeSha }),
-    fetchPlistTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: input.afterSha }),
-    compareShas({ octokit, owner, repo: repository, beforeSha: input.beforeSha, afterSha: input.afterSha }),
-  ]);
+  const pbx = input.projectPbxprojPath?.trim() ?? "";
+  const compare = await compareShas({ octokit, owner, repo: repository, beforeSha: input.beforeSha, afterSha: input.afterSha });
 
-  const beforeVersion = parsePlist(beforeText);
-  const afterVersion = parsePlist(afterText);
-  if (!afterVersion) {
-    throw new Error("Não foi possível ler CFBundleShortVersionString / CFBundleVersion no Info.plist (destino).");
+  let beforeVersion: IosPlistVersion | null;
+  let afterVersion: IosPlistVersion;
+  if (pbx.length > 0) {
+    const [beforePbx, afterPbx] = await Promise.all([
+      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: input.beforeSha }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: input.afterSha }),
+    ]);
+    const b = parsePbxVersion(beforePbx);
+    const a = parsePbxVersion(afterPbx);
+    if (!a) {
+      throw new Error(
+        "Não foi possível inferir MARKETING_VERSION / CURRENT_PROJECT_VERSION no project.pbxproj (destino).",
+      );
+    }
+    beforeVersion = b;
+    afterVersion = a;
+  } else {
+    const [beforeText, afterText] = await Promise.all([
+      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: input.beforeSha }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: input.afterSha }),
+    ]);
+    const b = parsePlist(beforeText);
+    const a = parsePlist(afterText);
+    if (!a) {
+      throw new Error("Não foi possível ler CFBundleShortVersionString / CFBundleVersion no Info.plist (destino).");
+    }
+    if (isPlaceholderPlistVersion(a) || (b !== null && isPlaceholderPlistVersion(b))) {
+      throw new Error(
+        "O Info.plist usa variáveis Xcode (ex.: $(MARKETING_VERSION)); defina RELEASE_PROJECT_PBXPROJ_PATH para o project.pbxproj onde a versão é realmente alterada.",
+      );
+    }
+    beforeVersion = b;
+    afterVersion = a;
   }
 
   const newVersionKey = toVersionKey(afterVersion);
