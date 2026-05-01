@@ -31,6 +31,20 @@ export const execute = (rawPlist: string): IosPlistVersion | null => {
   return { short: short ?? "", build: build ?? "" };
 };
 
+/** `Info.plist` com `$(MARKETING_VERSION)` não muda com bump só no pbx. */
+export const isPlaceholderPlistVersion = (v: IosPlistVersion): boolean => {
+  const s = v.short.trim();
+  const b = v.build.trim();
+  const p = (x: string) => x.length > 0 && (x.startsWith("$(") || x.startsWith("${"));
+  if (p(s) || p(b)) {
+    return true;
+  }
+  if (s.includes("MARKETING_VERSION") || s.includes("CURRENT_PROJECT_VERSION")) {
+    return true;
+  }
+  return false;
+};
+
 export const toVersionKey = (v: IosPlistVersion): string => {
   if (v.short && v.build) {
     return `${v.short}+${v.build}`;

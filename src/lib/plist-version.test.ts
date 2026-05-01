@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { execute, toVersionKey } from "@/lib/plist-version.js";
+import { execute, isPlaceholderPlistVersion, toVersionKey } from "@/lib/plist-version.js";
 
 describe("lib/plist-version execute", () => {
   it("should parse short and build from xml plist", () => {
@@ -26,5 +26,10 @@ describe("lib/plist-version execute", () => {
   it("toVersionKey should handle partial versions", () => {
     expect(toVersionKey({ short: "1.0", build: "" })).toBe("1.0");
     expect(toVersionKey({ short: "", build: "99" })).toBe("99");
+  });
+
+  it("isPlaceholderPlistVersion should be true for Xcode $(...) strings", () => {
+    expect(isPlaceholderPlistVersion({ short: "$(MARKETING_VERSION)", build: "1" })).toBe(true);
+    expect(isPlaceholderPlistVersion({ short: "1.0", build: "${CURRENT_PROJECT_VERSION}" })).toBe(true);
   });
 });
