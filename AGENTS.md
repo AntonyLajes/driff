@@ -251,9 +251,12 @@ ANTHROPIC_API_KEY=
 NOTION_TOKEN=              # Internal integration token
 NOTION_DATABASE_ID=        # Database where PRs become pages
 
-# Optional — iOS release notes (Phase 2). If NOTION_RELEASES_DATABASE_ID is set, RELEASE_INFO_PLIST_PATH and RELEASE_VERSION_BRANCH are required. Tag creation stays in CI; this stack only reads git + plist.
+# Optional — iOS release notes (Phase 2). If NOTION_RELEASES_DATABASE_ID is set, RELEASE_INFO_PLIST_PATH and RELEASE_VERSION_BRANCH are required. Tag creation stays in CI; the service reads the repo via the GitHub API.
+# If the main Info.plist only contains `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` (no literal numbers), set RELEASE_PROJECT_PBXPROJ_PATH to the `*.xcodeproj/project.pbxproj` where `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are bumped (e.g. `make increment-version`).
 # NOTION_RELEASES_DATABASE_ID=
-# RELEASE_INFO_PLIST_PATH=App/Info.plist
+# RELEASE_INFO_PLIST_PATH=Info.plist
+# Optional — required for placeholder plists: path to pbx (repo-relative).
+# RELEASE_PROJECT_PBXPROJ_PATH=MyApp.xcodeproj/project.pbxproj
 # RELEASE_VERSION_BRANCH=develop
 # Optional: only this repo (owner/name) can enqueue process_release. If unset, any installed repo is allowed.
 # RELEASE_MONITORED_REPO=acme/ios-app
@@ -577,16 +580,16 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 ## Phase 2 — Version bump detection (implemented)
 
-**Goal:** When a push to the configured branch updates the iOS `Info.plist` (XML) version, generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
+**Goal:** When a push to the configured branch updates the app’s visible iOS version (from XML `Info.plist` or, when configured, from `project.pbxproj` literals), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
 
 **Behavior:**
-- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH` (or the batch has 20 commits — GitHub cap — in which case the job re-checks by comparing shas). Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
-- Job `process_release`: compare `before` and `after` on the remote ref, read plist at each sha, call compare API for commits and merge PR heuristics, then LLM `release-notes.md` → `publishRelease` in Notion.
+- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH` or (if set) `RELEASE_PROJECT_PBXPROJ_PATH` — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
+- Job `process_release`: compare `before` and `after` on the remote ref. If `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from that file at each SHA; otherwise read the plist. If the plist only contains `$(...)` placeholders and no pbx path is set, the job fails with a clear config error. Then compare API for commits and merge PR heuristics, LLM `release-notes.md` → `publishRelease` in Notion.
 - Idempotency: `releases` has unique (`repo`, `version_key`).
 
 **Notion “Releases” database properties (must match integration):** Title, Repo, Branch, Version, Short Version, Build, Previous Version, URL, PR Numbers (see `notion-destination`).
 
-**Out of scope:** Plist **binary** format, `project.pbxproj`–only version sources, Android, App Store Connect, creating git tags.
+**Out of scope:** Plist **binary** format, Android, App Store Connect, creating git tags.
 
 ---
 
