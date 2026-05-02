@@ -57,6 +57,15 @@ describe("config/env execute", () => {
     expect(onlyCommas.PR_SUMMARY_BASE_BRANCHES).toBeNull();
   });
 
+  it("should parse optional RELEASE_COMPARE_ROOT_SHA", () => {
+    const sha = "a".repeat(40);
+    const result = execute({
+      ...buildValidEnv(),
+      RELEASE_COMPARE_ROOT_SHA: sha,
+    });
+    expect(result.RELEASE_COMPARE_ROOT_SHA).toBe(sha);
+  });
+
   it("should require plist path and branch when NOTION_RELEASES_DATABASE_ID is set", () => {
     expect(() =>
       execute({

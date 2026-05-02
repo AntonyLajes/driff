@@ -36,6 +36,11 @@ const envSchema = z.object({
    * MARKETING_VERSION / CURRENT_PROJECT_VERSION in this file (needed when Info.plist has $(...)).
    */
   RELEASE_PROJECT_PBXPROJ_PATH: z.string().min(1).optional(),
+  /**
+   * Optional Git SHA used as the left edge of the first GitHub compare on a marketing line
+   * when no prior `releases` row exists for that `short_version` (see docs/release-compare-windows.md).
+   */
+  RELEASE_COMPARE_ROOT_SHA: z.string().min(1).optional(),
 })
   .superRefine((data, ctx) => {
     const hasReleasesDb = Boolean(data.NOTION_RELEASES_DATABASE_ID);
