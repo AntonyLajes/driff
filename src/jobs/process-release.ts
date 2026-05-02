@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { execute as loadEnv } from "@/config/env.js";
 import type { Destination } from "@/destinations/destination.js";
@@ -6,6 +6,7 @@ import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable } from "@/db/schema.js";
 import type { ReleaseSummarizer } from "@/llm/release-summarizer.js";
 import { execute as buildStandaloneHints } from "@/lib/release-commit-hints.js";
+import { execute as resolveReleaseCompareBefore } from "@/jobs/resolve-release-compare-before.js";
 import { execute as gatherReleaseContext } from "@/sources/github/gather-release-context.js";
 
 export interface ProcessReleaseJobPayload {
@@ -46,6 +47,10 @@ const parsePayload = (payload: Record<string, unknown>): ProcessReleaseJobPayloa
   return { repo, beforeSha, afterSha, branch };
 };
 
+const isNullSha = (sha: string): boolean => {
+  return /^0+$/.test(sha.trim());
+};
+
 /** Números de PR únicos no intervalo da release (ordem ordenada estável para query e texto). */
 export const normalizeReleasePrNumbers = (prNumbers: number[]): number[] => {
   return [...new Set(prNumbers)].sort((a, b) => a - b);
@@ -60,7 +65,7 @@ export const execute = (input: ExecuteInput) => {
         throw new Error("Release notes are not configured (NOTION_RELEASES_DATABASE_ID).");
       }
 
-      const context = await gatherReleaseContext({
+      const narrow = await gatherReleaseContext({
         appId: input.appId,
         privateKey: input.privateKey,
         repo: job.repo,
@@ -71,11 +76,42 @@ export const execute = (input: ExecuteInput) => {
       });
 
       if (
-        context.previousVersionKey !== null &&
-        context.previousVersionKey === context.newVersionKey
+        narrow.previousVersionKey !== null &&
+        narrow.previousVersionKey === narrow.newVersionKey
       ) {
         return;
       }
+
+      const compareBeforeResolved = await resolveReleaseCompareBefore({
+        db: input.db,
+        repo: job.repo,
+        branch: job.branch,
+        beforeVersion: narrow.beforeVersion,
+        afterVersion: narrow.afterVersion,
+        webhookBeforeSha: job.beforeSha,
+        releaseCompareRootSha: env.RELEASE_COMPARE_ROOT_SHA ?? null,
+      });
+
+      const webhookBeforeTrim = job.beforeSha.trim();
+      const afterTrim = job.afterSha.trim();
+      let effectiveCompareBefore = compareBeforeResolved.trim();
+      if (isNullSha(effectiveCompareBefore) || effectiveCompareBefore === afterTrim) {
+        effectiveCompareBefore = webhookBeforeTrim;
+      }
+
+      const context =
+        effectiveCompareBefore === webhookBeforeTrim
+          ? narrow
+          : await gatherReleaseContext({
+              appId: input.appId,
+              privateKey: input.privateKey,
+              repo: job.repo,
+              beforeSha: job.beforeSha,
+              afterSha: job.afterSha,
+              compareBeforeSha: effectiveCompareBefore,
+              infoPlistPath: input.infoPlistPath,
+              projectPbxprojPath: input.projectPbxprojPath,
+            });
 
       const existing = await input.db
         .select({ id: releasesTable.id })
@@ -153,6 +189,24 @@ export const execute = (input: ExecuteInput) => {
         sections: notes.sections,
       });
 
+      const priorEraRow = await input.db
+        .select({ marketingEraStartSha: releasesTable.marketingEraStartSha })
+        .from(releasesTable)
+        .where(
+          and(
+            eq(releasesTable.repo, job.repo),
+            eq(releasesTable.branch, job.branch),
+            eq(releasesTable.shortVersion, context.afterVersion.short),
+            isNotNull(releasesTable.marketingEraStartSha),
+          ),
+        )
+        .orderBy(asc(releasesTable.createdAt))
+        .limit(1);
+
+      const existingEraSha = priorEraRow[0]?.marketingEraStartSha?.trim();
+      const marketingEraStartSha =
+        existingEraSha && existingEraSha.length > 0 ? existingEraSha : effectiveCompareBefore;
+
       await input.db.insert(releasesTable).values({
         repo: job.repo,
         versionKey: context.newVersionKey,
@@ -161,7 +215,7 @@ export const execute = (input: ExecuteInput) => {
         previousVersionKey: context.previousVersionKey,
         branch: job.branch,
         headSha: job.afterSha,
-        beforeSha: job.beforeSha,
+        beforeSha: effectiveCompareBefore,
         prNumbers: releasePrNumbers,
         changelog: notes.changelog,
         sections: { sections: notes.sections, title: notes.title } as unknown as Record<
@@ -170,6 +224,7 @@ export const execute = (input: ExecuteInput) => {
         >,
         notionPageId: publish.pageId,
         promptVersion: input.promptVersion,
+        marketingEraStartSha,
         updatedAt: new Date(),
       });
     },

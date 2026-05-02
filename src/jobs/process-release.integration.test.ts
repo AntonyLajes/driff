@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const gatherMock = vi.hoisted(() =>
   vi.fn<typeof import("@/sources/github/gather-release-context.js").execute>(),
+);
+
+const resolveCompareMock = vi.hoisted(() =>
+  vi.fn(async (inp: { webhookBeforeSha: string }) => inp.webhookBeforeSha.trim()),
 );
 
 vi.mock("@/config/env.js", () => ({
@@ -9,6 +13,7 @@ vi.mock("@/config/env.js", () => ({
     NOTION_RELEASES_DATABASE_ID: "rel-db",
     GITHUB_APP_ID: "1",
     GITHUB_APP_PRIVATE_KEY: "k",
+    RELEASE_COMPARE_ROOT_SHA: undefined,
   }),
 }));
 
@@ -16,17 +21,44 @@ vi.mock("@/sources/github/gather-release-context.js", () => ({
   execute: gatherMock,
 }));
 
+vi.mock("@/jobs/resolve-release-compare-before.js", () => ({
+  execute: resolveCompareMock,
+}));
+
 import { execute } from "@/jobs/process-release.js";
 
 const buildSelectChain = (limitResult: unknown) => {
   const limit = vi.fn(async () => limitResult);
-  const where = vi.fn(() => ({ limit }));
+  const orderBy = vi.fn(() => ({ limit }));
+  const where = vi.fn(() => ({
+    limit,
+    orderBy,
+  }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
-  return { select, limit, where, from };
+  return { select, limit, where, from, orderBy };
 };
 
+const releaseSelectRow = (limitResult: unknown) => ({
+  from: vi.fn().mockReturnValue({
+    where: vi.fn(() => ({
+      limit: vi.fn().mockResolvedValue(limitResult),
+      orderBy: vi.fn(() => ({
+        limit: vi.fn().mockResolvedValue(limitResult),
+      })),
+    })),
+  }),
+});
+
 describe("jobs/process-release integration", () => {
+  beforeEach(() => {
+    gatherMock.mockReset();
+    resolveCompareMock.mockReset();
+    resolveCompareMock.mockImplementation(async (inp: { webhookBeforeSha: string }) =>
+      inp.webhookBeforeSha.trim(),
+    );
+  });
+
   it("should publish and insert when no duplicate release exists", async () => {
     gatherMock.mockResolvedValue({
       beforeVersion: { short: "1", build: "1" },
@@ -66,7 +98,8 @@ describe("jobs/process-release integration", () => {
       afterSha: "b".repeat(40),
       branch: "develop",
     });
-    expect(select).toHaveBeenCalledTimes(1);
+    expect(resolveCompareMock).toHaveBeenCalledOnce();
+    expect(select).toHaveBeenCalledTimes(2);
     expect(summarizeRelease).toHaveBeenCalledWith(
       expect.objectContaining({
         prContributions: [],
@@ -75,6 +108,12 @@ describe("jobs/process-release integration", () => {
     );
     expect(publishRelease).toHaveBeenCalledOnce();
     expect(insert).toHaveBeenCalledOnce();
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        beforeSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        marketingEraStartSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+    );
   });
 
   it("should pass PR rows and standalone hints to release summarizer", async () => {
@@ -95,13 +134,7 @@ describe("jobs/process-release integration", () => {
     });
     const select = vi
       .fn()
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      })
+      .mockReturnValueOnce(releaseSelectRow([]))
       .mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue([
@@ -113,7 +146,8 @@ describe("jobs/process-release integration", () => {
             },
           ]),
         }),
-      });
+      })
+      .mockReturnValueOnce(releaseSelectRow([]));
 
     const values = vi.fn();
     const insert = vi.fn(() => ({ values }));
@@ -142,6 +176,7 @@ describe("jobs/process-release integration", () => {
       branch: "develop",
     });
 
+    expect(select).toHaveBeenCalledTimes(3);
     expect(summarizeRelease).toHaveBeenCalledWith({
       repo: "acme/ios",
       branch: "develop",
@@ -173,13 +208,7 @@ describe("jobs/process-release integration", () => {
     });
     const select = vi
       .fn()
-      .mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      })
+      .mockReturnValueOnce(releaseSelectRow([]))
       .mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue([
@@ -191,7 +220,8 @@ describe("jobs/process-release integration", () => {
             },
           ]),
         }),
-      });
+      })
+      .mockReturnValueOnce(releaseSelectRow([]));
 
     const insert = vi.fn(() => ({ values: vi.fn() }));
     const publishRelease = vi.fn(async () => ({ pageId: "pd" }));
@@ -218,6 +248,7 @@ describe("jobs/process-release integration", () => {
       branch: "develop",
     });
 
+    expect(select).toHaveBeenCalledTimes(3);
     expect(summarizeRelease).toHaveBeenCalledWith({
       repo: "o/r",
       branch: "develop",
@@ -250,7 +281,11 @@ describe("jobs/process-release integration", () => {
       compareUrl: "https://c",
       fileChangeSummary: "—",
     });
-    const { select } = buildSelectChain([{ id: "dup" }]);
+    const limit = vi.fn().mockResolvedValueOnce([{ id: "dup" }]);
+    const orderBy = vi.fn(() => ({ limit }));
+    const where = vi.fn(() => ({ limit, orderBy }));
+    const from = vi.fn(() => ({ where }));
+    const select = vi.fn(() => ({ from }));
     const insert = vi.fn();
     const db = { select, insert } as never;
     const summarizeRelease = vi.fn();
@@ -271,6 +306,7 @@ describe("jobs/process-release integration", () => {
       afterSha: "b".repeat(40),
       branch: "develop",
     });
+    expect(resolveCompareMock).toHaveBeenCalledOnce();
     expect(summarizeRelease).not.toHaveBeenCalled();
     expect(publishRelease).not.toHaveBeenCalled();
     expect(insert).not.toHaveBeenCalled();
@@ -306,6 +342,92 @@ describe("jobs/process-release integration", () => {
       afterSha: "b".repeat(40),
       branch: "develop",
     });
+    expect(resolveCompareMock).not.toHaveBeenCalled();
     expect(summarizeRelease).not.toHaveBeenCalled();
+  });
+
+  it("should call gather twice when compare base differs from webhook before", async () => {
+    const webhookBefore = "a".repeat(40);
+    const wideBefore = "c".repeat(40);
+    const afterSha = "b".repeat(40);
+    const wideContext = {
+      beforeVersion: { short: "1", build: "1" },
+      afterVersion: { short: "1", build: "2" },
+      previousVersionKey: "1+1",
+      newVersionKey: "1+2",
+      compareCommits: [{ sha: "s2", message: "wide" }],
+      commitMessages: ["wide"],
+      prNumbers: [],
+      totalCommits: 1,
+      compareUrl: "https://wide",
+      fileChangeSummary: "—",
+    };
+    gatherMock
+      .mockResolvedValueOnce({
+        beforeVersion: { short: "1", build: "1" },
+        afterVersion: { short: "1", build: "2" },
+        previousVersionKey: "1+1",
+        newVersionKey: "1+2",
+        compareCommits: [],
+        commitMessages: [],
+        prNumbers: [],
+        totalCommits: 0,
+        compareUrl: "https://narrow",
+        fileChangeSummary: "—",
+      })
+      .mockResolvedValueOnce(wideContext);
+    resolveCompareMock.mockResolvedValueOnce(wideBefore);
+
+    const select = vi
+      .fn()
+      .mockReturnValueOnce(releaseSelectRow([]))
+      .mockReturnValueOnce(releaseSelectRow([]));
+    const values = vi.fn();
+    const insert = vi.fn(() => ({ values }));
+    const db = { select, insert } as never;
+    const summarizeRelease = vi.fn(async () => ({
+      title: "Wide",
+      changelog: "More.",
+      sections: [],
+    }));
+    const publishRelease = vi.fn(async () => ({ pageId: "pw" }));
+
+    await execute({
+      db,
+      appId: "1",
+      privateKey: "k",
+      infoPlistPath: "p",
+      projectPbxprojPath: null,
+      promptVersion: 1,
+      releaseSummarizer: { summarizeRelease, prompt: "p" },
+      destination: { publishPR: vi.fn(), publishRelease },
+    }).execute({
+      repo: "o/r",
+      beforeSha: webhookBefore,
+      afterSha,
+      branch: "develop",
+    });
+
+    expect(gatherMock).toHaveBeenCalledTimes(2);
+    expect(gatherMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        beforeSha: webhookBefore,
+        afterSha,
+        compareBeforeSha: wideBefore,
+      }),
+    );
+    expect(summarizeRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: wideContext,
+        standaloneCommitHints: [{ sha: "s2", messageLine: "wide" }],
+      }),
+    );
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        beforeSha: wideBefore,
+        marketingEraStartSha: wideBefore,
+      }),
+    );
   });
 });
