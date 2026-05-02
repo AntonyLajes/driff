@@ -100,6 +100,11 @@ export interface ExecuteInput {
   afterSha: string;
   infoPlistPath: string;
   /**
+   * When set, GitHub compare uses this SHA as the left endpoint instead of {@link beforeSha}.
+   * Version files are still read at {@link beforeSha} and {@link afterSha} (webhook SHAs).
+   */
+  compareBeforeSha?: string | null;
+  /**
    * Quando definido, lê `MARKETING_VERSION` e `CURRENT_PROJECT_VERSION` deste
    * ficheiro em vez de confiar no Info.plist (útil com `$(MARKETING_VERSION)` no XML).
    */
@@ -164,8 +169,19 @@ const compareShas = async (input: {
 };
 
 export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
-  if (nullSha(input.afterSha) || nullSha(input.beforeSha)) {
+  const trimmedBefore = input.beforeSha.trim();
+  const trimmedAfter = input.afterSha.trim();
+  const compareOverride = input.compareBeforeSha?.trim();
+  const compareLeft =
+    compareOverride !== undefined && compareOverride !== null && compareOverride.length > 0
+      ? compareOverride
+      : trimmedBefore;
+
+  if (nullSha(trimmedAfter) || nullSha(trimmedBefore) || nullSha(compareLeft)) {
     throw new Error("Ref inválida: before/after não podem ser o SHA nulo (branch nova ou deletada).");
+  }
+  if (compareLeft === trimmedAfter) {
+    throw new Error("Invalid Git compare range: compare base SHA equals after SHA.");
   }
 
   const { appId, privateKey } = getCredentials(input);
@@ -178,14 +194,20 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
   });
 
   const pbx = input.projectPbxprojPath?.trim() ?? "";
-  const compare = await compareShas({ octokit, owner, repo: repository, beforeSha: input.beforeSha, afterSha: input.afterSha });
+  const compare = await compareShas({
+    octokit,
+    owner,
+    repo: repository,
+    beforeSha: compareLeft,
+    afterSha: trimmedAfter,
+  });
 
   let beforeVersion: IosPlistVersion | null;
   let afterVersion: IosPlistVersion;
   if (pbx.length > 0) {
     const [beforePbx, afterPbx] = await Promise.all([
-      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: input.beforeSha }),
-      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: input.afterSha }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: trimmedBefore }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: trimmedAfter }),
     ]);
     const b = parsePbxVersion(beforePbx);
     const a = parsePbxVersion(afterPbx);
@@ -198,8 +220,8 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     afterVersion = a;
   } else {
     const [beforeText, afterText] = await Promise.all([
-      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: input.beforeSha }),
-      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: input.afterSha }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: trimmedBefore }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: trimmedAfter }),
     ]);
     const b = parsePlist(beforeText);
     const a = parsePlist(afterText);

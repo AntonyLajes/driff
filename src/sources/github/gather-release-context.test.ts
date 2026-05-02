@@ -158,6 +158,59 @@ describe("sources/github/gather-release-context execute", () => {
     expect(result.beforeVersion).toEqual({ short: "1.0.0", build: "1" });
   });
 
+  it("should use compareBeforeSha only for GitHub compare, not for plist reads", async () => {
+    const compareBefore = "w".repeat(40);
+    const appOctokit = buildAppOctokitMock(7, "inst-token");
+    const installationRequest = (async (route, parameters) => {
+      if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+        const ref = (parameters as { ref?: string } | undefined)?.ref;
+        const text =
+          ref === "beforebbb"
+            ? plistForBuild("1")
+            : plistForBuild("2", "1.0.0");
+        return {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(text, "utf8").toString("base64"),
+          },
+        };
+      }
+      if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
+        const basehead = (parameters as { basehead?: string } | undefined)?.basehead;
+        expect(basehead).toBe(`${compareBefore}...afterccc`);
+        return {
+          data: {
+            total_commits: 0,
+            commits: [],
+            html_url: "https://github.com/o/r/compare/wide...after",
+            files: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected installation route: ${String(route)}`);
+    }) as OctokitLike["request"];
+    const installationOctokit: OctokitLike = {
+      request: installationRequest,
+      pulls: { get: vi.fn(), listFiles: vi.fn() },
+    };
+    const octokitFactory = vi
+      .fn<(auth: string) => OctokitLike>()
+      .mockReturnValueOnce(appOctokit)
+      .mockReturnValueOnce(installationOctokit);
+
+    await execute({
+      appId: "1",
+      privateKey: buildPrivateKey(),
+      repo: "o/r",
+      beforeSha: "beforebbb",
+      afterSha: "afterccc",
+      compareBeforeSha: compareBefore,
+      infoPlistPath: "App/Info.plist",
+      octokitFactory,
+    });
+  });
+
   it("execute should throw when plist has Xcode placeholders and pbx path unset", async () => {
     const placeholderPlist = `<?xml version="1.0"?><plist><dict>
 <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
