@@ -104,6 +104,11 @@ export const releasesTable = pgTable(
     sections: jsonb("sections").$type<Record<string, unknown>>(),
     notionPageId: text("notion_page_id"),
     promptVersion: integer("prompt_version"),
+    /**
+     * Git SHA marking the start of this marketing line's "era" (first row for a given
+     * `short_version`); reused for later builds on the same line and for marketing-bump compares.
+     */
+    marketingEraStartSha: text("marketing_era_start_sha"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

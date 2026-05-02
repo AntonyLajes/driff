@@ -1,0 +1,1 @@
+ALTER TABLE "releases" ADD COLUMN "marketing_era_start_sha" text;
