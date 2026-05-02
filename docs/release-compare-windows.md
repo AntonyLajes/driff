@@ -1,6 +1,6 @@
 # Release compare windows — product spec
 
-This document defines **how Git compare intervals** (`before_sha` … `after_sha`) should be chosen so release notes match team intent: summarize work **during** a build or **during** an entire marketing-version era. It is the source of truth for future changes to `process_release` / enqueue logic; today’s implementation still uses the **push webhook’s** `before` / `after` SHAs unless noted otherwise.
+This document defines **how Git compare intervals** (`before_sha` … `after_sha`) should be chosen so release notes match team intent: summarize work **during** a build or **during** an entire marketing-version era. It is the source of truth for `process_release` / `gather-release-context` compare behaviour (plist reads still use the push webhook’s `before` / `after` SHAs).
 
 ---
 
@@ -68,9 +68,9 @@ This document defines **how Git compare intervals** (`before_sha` … `after_sha
 
 ## 4. Persistence (MVP vs later)
 
-**MVP (required):** Each `releases` row keeps at least `repo`, `branch`, `short_version`, `build`, `version_key`, `head_sha`, `before_sha` (actually used for compare), timestamps, plus changelog payload for Notion.
+**MVP (required):** Each `releases` row keeps at least `repo`, `branch`, `short_version`, `build`, `version_key`, `head_sha`, `before_sha` (Git compare left edge actually used), `marketing_era_start_sha` (anchor for the marketing line’s era, copied from the first row on that line), timestamps, plus changelog payload for Notion.
 
-**Later (optional):** `marketing_era_start_sha` column; or `release_commits` table if we need offline replay without GitHub.
+**Later (optional):** `release_commits` table if we need offline replay without GitHub.
 
 ---
 
@@ -110,6 +110,7 @@ This document defines **how Git compare intervals** (`before_sha` … `after_sha
 | Area | Status |
 |------|--------|
 | PR enrichment, standalone commit hints, changelog prompt, Notion releases DB | Implemented |
-| Compare window per §3.1 / §3.2 (anchors from `releases`) | **Not yet** — still uses webhook `before` / `after` from the push that enqueues `process_release` |
+| Compare window per §3.1 / §3.2 (anchors from `releases`) | Implemented — `resolve-release-compare-before` + optional `RELEASE_COMPARE_ROOT_SHA`; `marketing_era_start_sha` on `releases` for track A on marketing bumps |
+| Plist/pbx version reads at webhook SHAs | Implemented — `gather-release-context` optional `compareBeforeSha` widens only the GitHub compare |
 
-When implementation matches this spec, update the table above and add a short note in `AGENTS.md` Phase 2.
+When behaviour changes, update this table and `AGENTS.md` Phase 2.
