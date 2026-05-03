@@ -137,6 +137,11 @@ export const workspaceSettingsTable = pgTable("workspace_settings", {
   releaseVersionBranch: text("release_version_branch"),
   releaseMonitoredRepo: text("release_monitored_repo"),
   releaseProjectPbxprojPath: text("release_project_pbxproj_path"),
+  /**
+   * Expo / React Native: repo-relative path to `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`.
+   * When set, release version is read from this file instead of Info.plist / pbxproj.
+   */
+  releaseExpoAppConfigPath: text("release_expo_app_config_path"),
   releaseCompareRootSha: text("release_compare_root_sha"),
   /** Base branch names for PR summarization (`pull_request.base.ref`); empty means any branch. */
   prSummaryBaseBranches: jsonb("pr_summary_base_branches").$type<string[]>(),

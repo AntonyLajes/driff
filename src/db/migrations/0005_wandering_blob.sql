@@ -1,0 +1,1 @@
+ALTER TABLE "workspace_settings" ADD COLUMN "release_expo_app_config_path" text;
