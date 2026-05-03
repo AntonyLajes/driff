@@ -146,6 +146,7 @@ src/
   config/
     env.ts                  # Env var validation with Zod (secrets + infra)
     workspace-settings.ts   # Merge `workspace_settings` row with env fallbacks; validated at boot
+    release-project-kind.ts # Tipo de projeto + path único → campos legados plist/pbx/expo
   db/
     schema.ts               # Drizzle schemas
     client.ts               # Postgres + Drizzle client
@@ -252,6 +253,8 @@ NOTION_TOKEN=
 # Optional fallbacks (same semantics as workspace_settings columns):
 # PR_SUMMARY_BASE_BRANCHES=develop
 # NOTION_RELEASES_DATABASE_ID=
+# RELEASE_PROJECT_KIND=react_native_expo
+# RELEASE_VERSION_FILE_PATH=app.json
 # RELEASE_INFO_PLIST_PATH=Info.plist
 # RELEASE_VERSION_BRANCH=develop
 # RELEASE_PROJECT_PBXPROJ_PATH=
@@ -266,7 +269,7 @@ NODE_ENV=development
 
 ### `workspace_settings` (Postgres)
 
-Single-tenant precursor to Phase 5 org config: at boot the app loads the **newest** row by `updated_at` and merges with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release plist path, version branch, monitored repo, pbxproj path, compare root SHA, and `pr_summary_base_branches` (JSON array of strings).
+Single-tenant precursor to Phase 5 org config: at boot the app loads the **newest** row by `updated_at` and merges with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release paths, version branch, monitored repo, compare root SHA, `pr_summary_base_branches` (JSON array of strings), and the **unified release fields** below.
 
 After `npm run db:migrate`, insert one row (adjust UUID if you prefer a fixed id). Example:
 
@@ -274,21 +277,27 @@ After `npm run db:migrate`, insert one row (adjust UUID if you prefer a fixed id
 INSERT INTO workspace_settings (
   notion_pr_database_id,
   notion_releases_database_id,
-  release_info_plist_path,
+  release_project_kind,
+  release_version_file_path,
   release_version_branch,
   pr_summary_base_branches
 ) VALUES (
   'your-notion-pr-database-id',
   'your-notion-releases-database-id',
+  'ios_plist',
   'ios/App/Info.plist',
   'develop',
   '["develop", "release"]'::jsonb
 );
 ```
 
-Validation: `notion_pr_database_id` must be set in **either** the row or `NOTION_DATABASE_ID`. If `notion_releases_database_id` is set, `release_version_branch` must be set, and **at least one** of `release_info_plist_path`, `release_project_pbxproj_path`, or `release_expo_app_config_path` (Expo / React Native: `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`).
+**Preferido (onboarding / “adicionar projeto”):** `release_project_kind` + `release_version_file_path` (sempre os dois). Valores de `release_project_kind`: `ios_plist` (Info.plist), `ios_pbx` (`project.pbxproj`), `react_native_expo` (`app.json` / `app.config.*`). Reservados (ainda sem parser): `android_gradle`, `flutter_pubspec`. O merge em `workspace-settings.ts` mapeia isto para os campos internos usados por `gather-release-context`.
 
-**Expo / React Native:** When `release_expo_app_config_path` is set, `gather-release-context` reads `expo.version` plus `ios.buildNumber` or `android.versionCode` from that file at the webhook SHAs (JSON is reliable; `.js`/`.ts` uses static regex extraction — prefer `app.json`/`app.config.json` for dynamic configs). Push webhooks treat changes to that path like plist/pbx changes for enqueueing `process_release`.
+**Legado:** ainda podes preencher só `release_info_plist_path`, `release_project_pbxproj_path`, ou `release_expo_app_config_path` (ou envs equivalentes); o boot infere `release_project_kind` + `release_version_file_path` para UI.
+
+Validation: `notion_pr_database_id` must be set in **either** the row or `NOTION_DATABASE_ID`. If `notion_releases_database_id` is set, `release_version_branch` must be set, and **at least one** fonte de versão: o par unificado (`release_project_kind` + `release_version_file_path`) **ou** qualquer um dos três caminhos legados.
+
+**Expo / React Native:** Com `react_native_expo` + path, `gather-release-context` lê `expo.version` e build a partir desse ficheiro (JSON fiável; `.js`/`.ts` usa extração estática por regex — preferir `app.json`/`app.config.json` quando o config é dinâmico). Webhooks `push` observam `versionWatchPaths` derivados desses caminhos.
 
 ---
 
@@ -603,7 +612,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 ## Phase 2 — Version bump detection (implemented)
 
-**Goal:** When a push to the configured branch updates the app’s visible version (XML `Info.plist`, `project.pbxproj` literals, or **Expo / React Native** `app.json` / `app.config.*` via `RELEASE_EXPO_APP_CONFIG_PATH` / `workspace_settings.release_expo_app_config_path`), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
+**Goal:** When a push to the configured branch updates the app’s visible version (ficheiro definido por `release_project_kind` + `release_version_file_path`, ou caminhos legados plist / pbx / Expo), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
 
 **Behavior:**
 - GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH`, (if set) `RELEASE_PROJECT_PBXPROJ_PATH`, or (if set) the Expo app config path — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
