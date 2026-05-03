@@ -1,6 +1,4 @@
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
-
-import { execute as loadEnv } from "@/config/env.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable } from "@/db/schema.js";
@@ -25,6 +23,9 @@ export interface ExecuteInput {
   infoPlistPath: string;
   projectPbxprojPath: string | null;
   promptVersion: number;
+  /** Notion database id for release pages; when empty, the job treats release publishing as disabled. */
+  releasesNotionDatabaseId: string | null;
+  releaseCompareRootSha: string | null;
 }
 
 const parsePayload = (payload: Record<string, unknown>): ProcessReleaseJobPayload => {
@@ -60,9 +61,10 @@ export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
       const job = parsePayload(payload);
-      const env = loadEnv();
-      if (!env.NOTION_RELEASES_DATABASE_ID) {
-        throw new Error("Release notes are not configured (NOTION_RELEASES_DATABASE_ID).");
+      if (!input.releasesNotionDatabaseId?.trim()) {
+        throw new Error(
+          "Release notes are not configured (workspace_settings.notion_releases_database_id or NOTION_RELEASES_DATABASE_ID).",
+        );
       }
 
       const narrow = await gatherReleaseContext({
@@ -89,7 +91,7 @@ export const execute = (input: ExecuteInput) => {
         beforeVersion: narrow.beforeVersion,
         afterVersion: narrow.afterVersion,
         webhookBeforeSha: job.beforeSha,
-        releaseCompareRootSha: env.RELEASE_COMPARE_ROOT_SHA ?? null,
+        releaseCompareRootSha: input.releaseCompareRootSha,
       });
 
       const webhookBeforeTrim = job.beforeSha.trim();

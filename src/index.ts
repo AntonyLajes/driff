@@ -1,6 +1,10 @@
 import "dotenv/config";
 
 import { execute as loadEnv } from "@/config/env.js";
+import {
+  execute as loadWorkspaceSettings,
+  type MergedWorkspaceSettings,
+} from "@/config/workspace-settings.js";
 import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
 import { execute as createServer } from "@/http/server.js";
@@ -59,16 +63,16 @@ const createNoopDbClient = (): DbClientLike => ({
 });
 
 const buildReleaseConfig = (
-  env: ReturnType<typeof loadEnv>,
+  workspace: MergedWorkspaceSettings,
 ): import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null => {
-  if (!env.NOTION_RELEASES_DATABASE_ID) {
+  if (!workspace.notionReleasesDatabaseId?.trim()) {
     return null;
   }
   return {
-    branch: env.RELEASE_VERSION_BRANCH ?? "",
-    plistPath: env.RELEASE_INFO_PLIST_PATH ?? "",
-    projectPbxprojPath: env.RELEASE_PROJECT_PBXPROJ_PATH ?? null,
-    monitoredRepo: env.RELEASE_MONITORED_REPO ?? null,
+    branch: workspace.releaseVersionBranch ?? "",
+    plistPath: workspace.releaseInfoPlistPath ?? "",
+    projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
+    monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
 };
 
@@ -104,12 +108,13 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   const db = input.db ?? dbBundle.db;
   const dbClient = input.dbClient ?? dbBundle.client ?? createNoopDbClient();
 
-  const releaseNotesEnabled = Boolean(env.NOTION_RELEASES_DATABASE_ID);
+  const workspace = await loadWorkspaceSettings(db, env);
+  const releaseNotesEnabled = Boolean(workspace.notionReleasesDatabaseId?.trim());
   const webhook = buildWebhookInput(
     input,
     env.GITHUB_WEBHOOK_SECRET,
-    env.PR_SUMMARY_BASE_BRANCHES,
-    releaseNotesEnabled ? buildReleaseConfig(env) : null,
+    workspace.prSummaryBaseBranches,
+    releaseNotesEnabled ? buildReleaseConfig(workspace) : null,
     db,
   );
   const server = input.server ?? createServer({ webhook });
@@ -135,8 +140,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
           input.destination ??
           createNotionDestination({
             token: env.NOTION_TOKEN,
-            databaseId: env.NOTION_DATABASE_ID,
-            releasesDatabaseId: env.NOTION_RELEASES_DATABASE_ID,
+            databaseId: workspace.notionPrDatabaseId,
+            releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
           }),
         promptVersion: input.promptVersion ?? 1,
       });
@@ -148,8 +153,10 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             db,
             appId: env.GITHUB_APP_ID,
             privateKey: env.GITHUB_APP_PRIVATE_KEY,
-            infoPlistPath: env.RELEASE_INFO_PLIST_PATH ?? "",
-            projectPbxprojPath: env.RELEASE_PROJECT_PBXPROJ_PATH ?? null,
+            infoPlistPath: workspace.releaseInfoPlistPath ?? "",
+            projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
+            releasesNotionDatabaseId: workspace.notionReleasesDatabaseId,
+            releaseCompareRootSha: workspace.releaseCompareRootSha,
             releaseSummarizer:
               input.releaseSummarizer ??
               (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY })),
@@ -157,8 +164,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
               input.destination ??
               createNotionDestination({
                 token: env.NOTION_TOKEN,
-                databaseId: env.NOTION_DATABASE_ID,
-                releasesDatabaseId: env.NOTION_RELEASES_DATABASE_ID,
+                databaseId: workspace.notionPrDatabaseId,
+                releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
               }),
             promptVersion: input.releasePromptVersion ?? 1,
           })

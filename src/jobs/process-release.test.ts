@@ -30,6 +30,8 @@ describe("jobs/process-release", () => {
       privateKey: "k",
       infoPlistPath: "App/Info.plist",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease: vi.fn(), prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease: vi.fn() },

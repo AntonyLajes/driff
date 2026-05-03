@@ -8,15 +8,6 @@ const resolveCompareMock = vi.hoisted(() =>
   vi.fn(async (inp: { webhookBeforeSha: string }) => inp.webhookBeforeSha.trim()),
 );
 
-vi.mock("@/config/env.js", () => ({
-  execute: () => ({
-    NOTION_RELEASES_DATABASE_ID: "rel-db",
-    GITHUB_APP_ID: "1",
-    GITHUB_APP_PRIVATE_KEY: "k",
-    RELEASE_COMPARE_ROOT_SHA: undefined,
-  }),
-}));
-
 vi.mock("@/sources/github/gather-release-context.js", () => ({
   execute: gatherMock,
 }));
@@ -88,6 +79,8 @@ describe("jobs/process-release integration", () => {
       privateKey: "k",
       infoPlistPath: "p",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease },
@@ -165,6 +158,8 @@ describe("jobs/process-release integration", () => {
       privateKey: "k",
       infoPlistPath: "p",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease },
@@ -238,6 +233,8 @@ describe("jobs/process-release integration", () => {
       privateKey: "k",
       infoPlistPath: "p",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease },
@@ -296,6 +293,8 @@ describe("jobs/process-release integration", () => {
       privateKey: "k",
       infoPlistPath: "p",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease },
@@ -332,6 +331,8 @@ describe("jobs/process-release integration", () => {
       privateKey: "k",
       infoPlistPath: "p",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease: vi.fn() },
@@ -398,6 +399,8 @@ describe("jobs/process-release integration", () => {
       privateKey: "k",
       infoPlistPath: "p",
       projectPbxprojPath: null,
+      releasesNotionDatabaseId: "rel-db",
+      releaseCompareRootSha: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease },

@@ -34,25 +34,32 @@ const getNotionClientFactory = (
 };
 
 const getCredentials = (input: ExecuteInput): { token: string; databaseId: string } => {
-  if (input.token && input.databaseId) {
-    return {
-      token: input.token,
-      databaseId: input.databaseId,
-    };
+  const tokenFromInput = input.token?.trim();
+  const databaseIdFromInput = input.databaseId?.trim();
+  if (tokenFromInput && databaseIdFromInput) {
+    return { token: tokenFromInput, databaseId: databaseIdFromInput };
   }
 
   const env = loadEnv();
-  return {
-    token: input.token ?? env.NOTION_TOKEN,
-    databaseId: input.databaseId ?? env.NOTION_DATABASE_ID,
-  };
+  const token = tokenFromInput && tokenFromInput.length > 0 ? tokenFromInput : env.NOTION_TOKEN;
+  const databaseId =
+    databaseIdFromInput && databaseIdFromInput.length > 0
+      ? databaseIdFromInput
+      : (env.NOTION_DATABASE_ID?.trim() ?? "");
+  if (!databaseId) {
+    throw new Error(
+      "Notion PR database id is not configured; pass databaseId to the destination factory or set NOTION_DATABASE_ID / workspace_settings.",
+    );
+  }
+  return { token, databaseId };
 };
 
 const getReleasesDatabaseId = (input: ExecuteInput): string | null => {
-  if (input.releasesDatabaseId) {
-    return input.releasesDatabaseId;
+  const fromInput = input.releasesDatabaseId?.trim();
+  if (fromInput && fromInput.length > 0) {
+    return fromInput;
   }
-  return loadEnv().NOTION_RELEASES_DATABASE_ID ?? null;
+  return loadEnv().NOTION_RELEASES_DATABASE_ID?.trim() ?? null;
 };
 
 const toReleaseProperties = (summary: ReleaseNotesSummary): Record<string, unknown> => {
