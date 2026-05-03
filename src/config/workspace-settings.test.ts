@@ -32,6 +32,8 @@ const row = (
     releaseMonitoredRepo: null,
     releaseProjectPbxprojPath: null,
     releaseExpoAppConfigPath: null,
+    releaseProjectKind: null,
+    releaseVersionFilePath: null,
     releaseCompareRootSha: null,
     prSummaryBaseBranches: null,
     createdAt: new Date(),
@@ -66,6 +68,55 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
   it("should merge RELEASE_EXPO_APP_CONFIG_PATH from env", () => {
     const merged = mergeWorkspaceSettings(undefined, buildEnv({ RELEASE_EXPO_APP_CONFIG_PATH: "app.json" }));
     expect(merged.releaseExpoAppConfigPath).toBe("app.json");
+    expect(merged.releaseProjectKind).toBe("react_native_expo");
+    expect(merged.releaseVersionFilePath).toBe("app.json");
+  });
+
+  it("should apply unified RELEASE_PROJECT_KIND and RELEASE_VERSION_FILE_PATH over legacy env", () => {
+    const merged = mergeWorkspaceSettings(
+      undefined,
+      buildEnv({
+        RELEASE_INFO_PLIST_PATH: "Legacy/Info.plist",
+        RELEASE_PROJECT_KIND: "react_native_expo",
+        RELEASE_VERSION_FILE_PATH: "app.config.js",
+      }),
+    );
+    expect(merged.releaseExpoAppConfigPath).toBe("app.config.js");
+    expect(merged.releaseInfoPlistPath).toBe("");
+    expect(merged.releaseProjectPbxprojPath).toBeNull();
+    expect(merged.releaseProjectKind).toBe("react_native_expo");
+    expect(merged.releaseVersionFilePath).toBe("app.config.js");
+  });
+
+  it("should prefer DB unified columns over legacy columns", () => {
+    const merged = mergeWorkspaceSettings(
+      row({
+        releaseProjectKind: "ios_plist",
+        releaseVersionFilePath: "App/Info.plist",
+        releaseInfoPlistPath: "wrong/Info.plist",
+        releaseExpoAppConfigPath: "app.json",
+      }),
+      buildEnv({ RELEASE_EXPO_APP_CONFIG_PATH: "app.json" }),
+    );
+    expect(merged.releaseInfoPlistPath).toBe("App/Info.plist");
+    expect(merged.releaseExpoAppConfigPath).toBeNull();
+    expect(merged.releaseProjectKind).toBe("ios_plist");
+    expect(merged.releaseVersionFilePath).toBe("App/Info.plist");
+  });
+
+  it("should throw when only RELEASE_PROJECT_KIND is set without path", () => {
+    expect(() =>
+      mergeWorkspaceSettings(undefined, buildEnv({ RELEASE_PROJECT_KIND: "ios_plist" })),
+    ).toThrow(/release_version_file_path/);
+  });
+
+  it("should throw for unsupported release_project_kind", () => {
+    expect(() =>
+      mergeWorkspaceSettings(
+        row({ releaseProjectKind: "android_gradle", releaseVersionFilePath: "app/build.gradle" }),
+        buildEnv(),
+      ),
+    ).toThrow(/not supported yet/);
   });
 });
 
@@ -89,6 +140,8 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       releaseProjectPbxprojPath: null,
       releaseExpoAppConfigPath: null,
       releaseCompareRootSha: null,
+      releaseProjectKind: null,
+      releaseVersionFilePath: null,
     };
     expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/no version source is configured/);
   });
@@ -104,6 +157,8 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       releaseProjectPbxprojPath: null,
       releaseExpoAppConfigPath: null,
       releaseCompareRootSha: null,
+      releaseProjectKind: null,
+      releaseVersionFilePath: null,
     };
     expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/release_version_branch/);
   });
@@ -119,6 +174,8 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       releaseProjectPbxprojPath: null,
       releaseExpoAppConfigPath: "app.config.js",
       releaseCompareRootSha: null,
+      releaseProjectKind: "react_native_expo",
+      releaseVersionFilePath: "app.config.js",
     };
     expect(() => validateMergedWorkspaceSettings(merged)).not.toThrow();
   });

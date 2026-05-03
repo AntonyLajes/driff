@@ -331,9 +331,7 @@ describe("http/routes/webhooks handler", () => {
       prSummaryBaseBranches: null,
       releaseConfig: {
         branch: "develop",
-        plistPath: "App/Info.plist",
-        projectPbxprojPath: null,
-        expoAppConfigPath: null,
+        versionWatchPaths: ["App/Info.plist"],
         monitoredRepo: null,
       },
       findWebhookEventByDeliveryId: vi.fn(async () => false),

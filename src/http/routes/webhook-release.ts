@@ -69,6 +69,10 @@ export const pushTouchesPlistPath = (
   return commitTouchesFilePath(payload, plistPath);
 };
 
+/**
+ * Verifica se algum commit do payload tocou um dos ficheiros onde a versão é alterada.
+ * `versionWatchPaths` vem de `collectVersionWatchPaths` (um ou mais paths após resolver tipo + ficheiro).
+ */
 export const pushTouchesReleasePaths = (
   payload: {
     commits?: Array<{
@@ -77,23 +81,9 @@ export const pushTouchesReleasePaths = (
       removed?: string[];
     }>;
   },
-  infoPlistPath: string,
-  projectPbxprojPath: string | null | undefined,
-  expoAppConfigPath: string | null | undefined,
+  versionWatchPaths: readonly string[],
 ): boolean => {
-  const paths: string[] = [];
-  const plist = infoPlistPath.trim();
-  if (plist.length > 0) {
-    paths.push(plist);
-  }
-  const p = projectPbxprojPath?.trim();
-  if (p) {
-    paths.push(p);
-  }
-  const expo = expoAppConfigPath?.trim();
-  if (expo) {
-    paths.push(expo);
-  }
+  const paths = versionWatchPaths.map((p) => p.trim()).filter((p) => p.length > 0);
   if (paths.length === 0) {
     return true;
   }
@@ -107,12 +97,8 @@ export const pushTouchesReleasePaths = (
 
 export interface ReleaseWebhookConfig {
   branch: string;
-  /** Optional when version is read only from Expo app config (`expoAppConfigPath`). */
-  plistPath: string;
-  /** Quando set, o push a este ficheiro também dispara o job (ex.: bump só no pbx). */
-  projectPbxprojPath: string | null;
-  /** Expo / RN: `app.json` or `app.config.js` — push to this path can enqueue `process_release`. */
-  expoAppConfigPath: string | null;
+  /** Repo-relative paths that should trigger `process_release` when changed on the release branch. */
+  versionWatchPaths: string[];
   monitoredRepo: string | null;
 }
 
@@ -150,7 +136,7 @@ export const buildProcessReleaseJobInput = (
     return null;
   }
 
-  if (!pushTouchesReleasePaths(data, config.plistPath, config.projectPbxprojPath, config.expoAppConfigPath)) {
+  if (!pushTouchesReleasePaths(data, config.versionWatchPaths)) {
     return null;
   }
 

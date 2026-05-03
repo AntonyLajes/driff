@@ -244,7 +244,7 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     const plistPath = input.infoPlistPath.trim();
     if (!plistPath) {
       throw new Error(
-        "infoPlistPath is required when release_expo_app_config_path and RELEASE_PROJECT_PBXPROJ_PATH are unset.",
+        "infoPlistPath is required when Expo app config and project.pbxproj paths are unset; configure release_project_kind + release_version_file_path (or legacy plist / pbx / expo columns).",
       );
     }
     const [beforeText, afterText] = await Promise.all([

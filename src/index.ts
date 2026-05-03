@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { execute as loadEnv } from "@/config/env.js";
+import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
   execute as loadWorkspaceSettings,
   type MergedWorkspaceSettings,
@@ -70,9 +71,11 @@ const buildReleaseConfig = (
   }
   return {
     branch: workspace.releaseVersionBranch ?? "",
-    plistPath: workspace.releaseInfoPlistPath ?? "",
-    projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
-    expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
+    versionWatchPaths: collectVersionWatchPaths(
+      workspace.releaseInfoPlistPath,
+      workspace.releaseProjectPbxprojPath,
+      workspace.releaseExpoAppConfigPath,
+    ),
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
 };

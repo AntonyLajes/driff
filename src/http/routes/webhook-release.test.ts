@@ -9,9 +9,7 @@ import {
 
 const relCfg = {
   branch: "develop" as const,
-  plistPath: "App/Info.plist",
-  projectPbxprojPath: null as string | null,
-  expoAppConfigPath: null as string | null,
+  versionWatchPaths: ["App/Info.plist"] as string[],
   monitoredRepo: null as string | null,
 };
 
@@ -106,9 +104,7 @@ describe("http/routes/webhook-release", () => {
     expect(
       pushTouchesReleasePaths(
         { commits: [{ modified: ["App.xcodeproj/project.pbxproj"] }] },
-        "App/Info.plist",
-        "App.xcodeproj/project.pbxproj",
-        null,
+        ["App/Info.plist", "App.xcodeproj/project.pbxproj"],
       ),
     ).toBe(true);
   });
@@ -117,21 +113,14 @@ describe("http/routes/webhook-release", () => {
     expect(
       pushTouchesReleasePaths(
         { commits: [{ modified: ["Other.swift"] }] },
-        "App/Info.plist",
-        "App.xcodeproj/project.pbxproj",
-        null,
+        ["App/Info.plist", "App.xcodeproj/project.pbxproj"],
       ),
     ).toBe(false);
   });
 
   it("pushTouchesReleasePaths should be true when app.config.js changed", () => {
     expect(
-      pushTouchesReleasePaths(
-        { commits: [{ modified: ["app.config.js"] }] },
-        "",
-        null,
-        "app.config.js",
-      ),
+      pushTouchesReleasePaths({ commits: [{ modified: ["app.config.js"] }] }, ["app.config.js"]),
     ).toBe(true);
   });
 

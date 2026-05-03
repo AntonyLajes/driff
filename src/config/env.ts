@@ -50,6 +50,13 @@ const envSchema = z.object({
    * Expo / React Native: repo-relative path to `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`.
    */
   RELEASE_EXPO_APP_CONFIG_PATH: z.string().min(1).optional(),
+  /**
+   * Modelo unificado (preferido): `ios_plist` | `ios_pbx` | `react_native_expo` | `android_gradle` | `flutter_pubspec`.
+   * Exige `RELEASE_VERSION_FILE_PATH` na mesma origem (env ou DB).
+   */
+  RELEASE_PROJECT_KIND: z.string().min(1).optional(),
+  /** Caminho no repo do ficheiro onde a versão é alterada (em conjunto com `RELEASE_PROJECT_KIND`). */
+  RELEASE_VERSION_FILE_PATH: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
