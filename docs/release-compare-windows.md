@@ -37,7 +37,7 @@ This document defines **how Git compare intervals** (`before_sha` … `after_sha
 - `after_sha` = new state SHA where `213+2` is true (typically `head_sha` for this release).
 - `before_sha` = anchor for the **start** of the work attributed to “during build 1”:
   - **Preferred:** `head_sha` of the **previous stored release** for the same `repo` + `branch` with the **same** `short_version` (last known build of that line). The compare is then **exclusive start / inclusive end** semantics as defined by GitHub’s `base...head` range — implementation must document the exact mapping (usually: commits reachable from `after` that are not ancestors of `before`, i.e. “what landed between the two tips” on the release branch).
-  - **Fallback (no prior release on that marketing line):** configurable root SHA per repo (env, e.g. `RELEASE_COMPARE_ROOT_SHA`) or first commit on the branch; or conservatively use webhook `before` only for the first build of a line.
+  - **Fallback (no prior release on that marketing line):** configurable root SHA (`workspace_settings.release_compare_root_sha` or env `RELEASE_COMPARE_ROOT_SHA`) or first commit on the branch; or conservatively use webhook `before` only for the first build of a line.
 
 **Expected outcome:** The changelog reflects **all commits** merged while the project was still on build 1, not only the single bump commit.
 
@@ -61,7 +61,7 @@ This document defines **how Git compare intervals** (`before_sha` … `after_sha
 
 ### 3.3 First release (no prior row in `releases`)
 
-- No previous release: `before_sha` from env **`RELEASE_COMPARE_ROOT_SHA`** (optional), or branch root, or webhook `before` with explicit “first release” copy in the LLM input.
+- No previous release: `before_sha` from **`workspace_settings.release_compare_root_sha`** or env **`RELEASE_COMPARE_ROOT_SHA`** (optional), or branch root, or webhook `before` with explicit “first release” copy in the LLM input.
 - Must not crash; idempotency on `(`repo`, `version_key`)` unchanged.
 
 ---
@@ -110,7 +110,7 @@ This document defines **how Git compare intervals** (`before_sha` … `after_sha
 | Area | Status |
 |------|--------|
 | PR enrichment, standalone commit hints, changelog prompt, Notion releases DB | Implemented |
-| Compare window per §3.1 / §3.2 (anchors from `releases`) | Implemented — `resolve-release-compare-before` + optional `RELEASE_COMPARE_ROOT_SHA`; `marketing_era_start_sha` on `releases` for track A on marketing bumps |
+| Compare window per §3.1 / §3.2 (anchors from `releases`) | Implemented — `resolve-release-compare-before` + optional root SHA via `workspace_settings` / `RELEASE_COMPARE_ROOT_SHA`; `marketing_era_start_sha` on `releases` for track A on marketing bumps |
 | Plist/pbx version reads at webhook SHAs | Implemented — `gather-release-context` optional `compareBeforeSha` widens only the GitHub compare |
 
 When behaviour changes, update this table and `AGENTS.md` Phase 2.

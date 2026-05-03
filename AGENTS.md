@@ -144,7 +144,8 @@ docs/
   release-compare-windows.md  # Spec: Git compare windows for build vs marketing-version releases
 src/
   config/
-    env.ts                  # Env var validation with Zod
+    env.ts                  # Env var validation with Zod (secrets + infra)
+    workspace-settings.ts   # Merge `workspace_settings` row with env fallbacks; validated at boot
   db/
     schema.ts               # Drizzle schemas
     client.ts               # Postgres + Drizzle client
@@ -230,7 +231,7 @@ npm run format             # prettier --write
 
 ## Environment variables
 
-Validated in `src/config/env.ts` with Zod. Required vars below must be set or boot fails. Optional vars are documented inline.
+Validated in `src/config/env.ts` with Zod. **Secrets and infra** (database URL, GitHub App, webhook secret, Anthropic, Notion token, port/log level) stay here. **Integration IDs and release paths** can live in the `workspace_settings` table instead; env keys with the same names remain as **optional fallbacks** when a column is null or blank (see `src/config/workspace-settings.ts`).
 
 ```
 # Postgres (Railway provides automatically when you attach the DB)
@@ -241,28 +242,19 @@ GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY=    # Contents of the .pem, with \n preserved
 GITHUB_WEBHOOK_SECRET=     # Secret defined when creating the app
 
-# Optional: restrict PR summarization to PRs merged into one of these base branches
-# (GitHub: pull_request.base.ref). Comma-separated, trimmed. Example: develop or develop,release.
-# If unset or empty, every merged PR is summarized (original Phase 1 behavior).
-# PR_SUMMARY_BASE_BRANCHES=develop
-
 # Anthropic
 ANTHROPIC_API_KEY=
 
-# Notion
-NOTION_TOKEN=              # Internal integration token
-NOTION_DATABASE_ID=        # Database where PRs become pages
-
-# Optional — iOS release notes (Phase 2). If NOTION_RELEASES_DATABASE_ID is set, RELEASE_INFO_PLIST_PATH and RELEASE_VERSION_BRANCH are required. Tag creation stays in CI; the service reads the repo via the GitHub API.
-# If the main Info.plist only contains `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` (no literal numbers), set RELEASE_PROJECT_PBXPROJ_PATH to the `*.xcodeproj/project.pbxproj` where `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are bumped (e.g. `make increment-version`).
+# Notion (token stays in env; database IDs optional here if set in workspace_settings)
+NOTION_TOKEN=
+# NOTION_DATABASE_ID=
+# Optional fallbacks (same semantics as workspace_settings columns):
+# PR_SUMMARY_BASE_BRANCHES=develop
 # NOTION_RELEASES_DATABASE_ID=
 # RELEASE_INFO_PLIST_PATH=Info.plist
-# Optional — required for placeholder plists: path to pbx (repo-relative).
-# RELEASE_PROJECT_PBXPROJ_PATH=MyApp.xcodeproj/project.pbxproj
 # RELEASE_VERSION_BRANCH=develop
-# Optional: only this repo (owner/name) can enqueue process_release. If unset, any installed repo is allowed.
-# RELEASE_MONITORED_REPO=acme/ios-app
-# Optional: Git SHA used as the left edge of the first GitHub compare on a marketing line when no prior release exists (see docs/release-compare-windows.md).
+# RELEASE_PROJECT_PBXPROJ_PATH=
+# RELEASE_MONITORED_REPO=
 # RELEASE_COMPARE_ROOT_SHA=
 
 # App
@@ -270,6 +262,30 @@ PORT=3000
 LOG_LEVEL=info
 NODE_ENV=development
 ```
+
+### `workspace_settings` (Postgres)
+
+Single-tenant precursor to Phase 5 org config: at boot the app loads the **newest** row by `updated_at` and merges with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release plist path, version branch, monitored repo, pbxproj path, compare root SHA, and `pr_summary_base_branches` (JSON array of strings).
+
+After `npm run db:migrate`, insert one row (adjust UUID if you prefer a fixed id). Example:
+
+```sql
+INSERT INTO workspace_settings (
+  notion_pr_database_id,
+  notion_releases_database_id,
+  release_info_plist_path,
+  release_version_branch,
+  pr_summary_base_branches
+) VALUES (
+  'your-notion-pr-database-id',
+  'your-notion-releases-database-id',
+  'ios/App/Info.plist',
+  'develop',
+  '["develop", "release"]'::jsonb
+);
+```
+
+Validation: `notion_pr_database_id` must be set in **either** the row or `NOTION_DATABASE_ID`. If `notion_releases_database_id` is set, `release_info_plist_path` and `release_version_branch` must be set (DB or env).
 
 ---
 
