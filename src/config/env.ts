@@ -7,7 +7,11 @@ const envSchema = z.object({
   GITHUB_WEBHOOK_SECRET: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
   NOTION_TOKEN: z.string().min(1),
-  NOTION_DATABASE_ID: z.string().min(1),
+  /**
+   * Fallback when `workspace_settings.notion_pr_database_id` is unset.
+   * Prefer storing the id in the database for non-secret integration config.
+   */
+  NOTION_DATABASE_ID: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
@@ -26,6 +30,7 @@ const envSchema = z.object({
         .filter((b) => b.length > 0);
       return branches.length === 0 ? null : branches;
     }),
+  /** Fallback when `workspace_settings` does not define release Notion database id. */
   NOTION_RELEASES_DATABASE_ID: z.string().min(1).optional(),
   RELEASE_INFO_PLIST_PATH: z.string().min(1).optional(),
   RELEASE_VERSION_BRANCH: z.string().min(1).optional(),
@@ -41,29 +46,7 @@ const envSchema = z.object({
    * when no prior `releases` row exists for that `short_version` (see docs/release-compare-windows.md).
    */
   RELEASE_COMPARE_ROOT_SHA: z.string().min(1).optional(),
-})
-  .superRefine((data, ctx) => {
-    const hasReleasesDb = Boolean(data.NOTION_RELEASES_DATABASE_ID);
-    if (!hasReleasesDb) {
-      return;
-    }
-    if (!data.RELEASE_INFO_PLIST_PATH) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "When NOTION_RELEASES_DATABASE_ID is set, RELEASE_INFO_PLIST_PATH is required (path to Info.plist in the app repo).",
-        path: ["RELEASE_INFO_PLIST_PATH"],
-      });
-    }
-    if (!data.RELEASE_VERSION_BRANCH) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "When NOTION_RELEASES_DATABASE_ID is set, RELEASE_VERSION_BRANCH is required (e.g. develop).",
-        path: ["RELEASE_VERSION_BRANCH"],
-      });
-    }
-  });
+});
 
 export type Env = z.infer<typeof envSchema>;
 

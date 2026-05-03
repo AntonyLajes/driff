@@ -66,19 +66,9 @@ describe("config/env execute", () => {
     expect(result.RELEASE_COMPARE_ROOT_SHA).toBe(sha);
   });
 
-  it("should require plist path and branch when NOTION_RELEASES_DATABASE_ID is set", () => {
-    expect(() =>
-      execute({
-        ...buildValidEnv(),
-        NOTION_RELEASES_DATABASE_ID: "rel-db",
-      }),
-    ).toThrowError();
-    expect(() =>
-      execute({
-        ...buildValidEnv(),
-        NOTION_RELEASES_DATABASE_ID: "rel-db",
-        RELEASE_INFO_PLIST_PATH: "App/Info.plist",
-      }),
-    ).toThrowError();
+  it("should allow omitting NOTION_DATABASE_ID at parse time", () => {
+    const { NOTION_DATABASE_ID: _, ...rest } = buildValidEnv();
+    const result = execute(rest);
+    expect(result.NOTION_DATABASE_ID).toBeUndefined();
   });
 });
