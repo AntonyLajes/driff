@@ -1,6 +1,7 @@
 import sensible from "@fastify/sensible";
 import fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 
+import { execute as registerCors, type CorsRegistrationInput } from "@/http/cors.js";
 import { handler as registerHealthRoute } from "@/http/routes/health.js";
 import {
   handler as registerWebhookRoute,
@@ -10,6 +11,7 @@ import {
 export interface ExecuteInput {
   logger?: FastifyServerOptions["logger"];
   webhook?: WebhookHandlerInput;
+  cors?: CorsRegistrationInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -23,6 +25,7 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
 
   server.register(sensible);
   server.register(async (instance) => {
+    await registerCors(instance, input.cors ?? { kind: "off" });
     await registerHealthRoute(instance);
   });
   const webhookInput = input.webhook;

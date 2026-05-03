@@ -17,6 +17,23 @@ const envSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  /**
+   * Comma-separated browser origins allowed to call the HTTP API (e.g. the Vite dev server).
+   * When empty, `NODE_ENV === "development"` enables reflective CORS for local UI work; production stays off unless you set explicit origins.
+   */
+  CORS_ORIGINS: z
+    .string()
+    .optional()
+    .transform((raw) => {
+      if (raw === undefined) {
+        return [] as string[];
+      }
+      const origins = raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      return origins;
+    }),
   PR_SUMMARY_BASE_BRANCHES: z
     .string()
     .optional()

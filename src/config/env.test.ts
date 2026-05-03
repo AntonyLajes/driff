@@ -71,4 +71,18 @@ describe("config/env execute", () => {
     const result = execute(rest);
     expect(result.NOTION_DATABASE_ID).toBeUndefined();
   });
+
+  it("should parse CORS_ORIGINS as a trimmed comma-separated list", () => {
+    const result = execute({
+      ...buildValidEnv(),
+      CORS_ORIGINS: " http://a.test ,http://b.test ",
+    });
+
+    expect(result.CORS_ORIGINS).toEqual(["http://a.test", "http://b.test"]);
+  });
+
+  it("should default CORS_ORIGINS to an empty list when unset", () => {
+    const result = execute(buildValidEnv());
+    expect(result.CORS_ORIGINS).toEqual([]);
+  });
 });

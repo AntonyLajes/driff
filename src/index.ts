@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-import { execute as loadEnv } from "@/config/env.js";
+import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
   execute as loadWorkspaceSettings,
@@ -8,6 +8,7 @@ import {
 } from "@/config/workspace-settings.js";
 import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
+import type { CorsRegistrationInput } from "@/http/cors.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -39,6 +40,7 @@ export interface ExecuteInput {
   port?: number;
   host?: string;
   webhook?: WebhookHandlerInput;
+  cors?: CorsRegistrationInput;
   queue?: QueueAdapter;
   worker?: WorkerAdapter;
   source?: Source;
@@ -78,6 +80,16 @@ const buildReleaseConfig = (
     ),
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
+};
+
+const buildCorsFromEnv = (env: Env): CorsRegistrationInput => {
+  if (env.CORS_ORIGINS.length > 0) {
+    return { kind: "allowlist", origins: env.CORS_ORIGINS };
+  }
+  if (env.NODE_ENV === "development") {
+    return { kind: "reflect" };
+  }
+  return { kind: "off" };
 };
 
 const buildWebhookInput = (
@@ -121,7 +133,12 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
     releaseNotesEnabled ? buildReleaseConfig(workspace) : null,
     db,
   );
-  const server = input.server ?? createServer({ webhook });
+  const server =
+    input.server ??
+    createServer({
+      webhook,
+      cors: input.cors ?? buildCorsFromEnv(env),
+    });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {
       return input.worker;

@@ -27,6 +27,24 @@ describe("http/server execute", () => {
     expect(response.json()).toEqual({ ok: true });
   });
 
+  it("should echo access-control-allow-origin on health when reflective CORS is enabled", async () => {
+    const server = execute({ logger: false, cors: { kind: "reflect" } });
+    servers.push(server);
+
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/health",
+      headers: { origin: "http://localhost:5173" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://localhost:5173",
+    );
+  });
+
   it("should create a server when logger is inferred in test environment", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     try {

@@ -160,6 +160,7 @@ describe("index execute runtime wiring", () => {
         webhookSecret: "webhook-secret",
         prSummaryBaseBranches: null,
       }),
+      cors: { kind: "off" },
     });
     expect(mocks.createGithubSource).toHaveBeenCalledWith({
       appId: "123456",
