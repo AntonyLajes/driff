@@ -136,10 +136,18 @@ export const workspaceSettingsTable = pgTable("workspace_settings", {
   releaseInfoPlistPath: text("release_info_plist_path"),
   releaseVersionBranch: text("release_version_branch"),
   releaseMonitoredRepo: text("release_monitored_repo"),
+  /**
+   * Tipo de projeto para releases: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`.
+   * Usar em conjunto com `release_version_file_path` (um único ficheiro onde a versão muda).
+   */
+  releaseProjectKind: text("release_project_kind"),
+  /** Caminho no repo do ficheiro de versão (Info.plist, project.pbxproj, app.json, etc.). */
+  releaseVersionFilePath: text("release_version_file_path"),
   releaseProjectPbxprojPath: text("release_project_pbxproj_path"),
   /**
    * Expo / React Native: repo-relative path to `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`.
    * When set, release version is read from this file instead of Info.plist / pbxproj.
+   * Prefer `release_project_kind` + `release_version_file_path` for novos projetos.
    */
   releaseExpoAppConfigPath: text("release_expo_app_config_path"),
   releaseCompareRootSha: text("release_compare_root_sha"),

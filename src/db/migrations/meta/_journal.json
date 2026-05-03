@@ -43,6 +43,13 @@
       "when": 1777843165616,
       "tag": "0005_wandering_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777843930776,
+      "tag": "0006_pink_epoch",
+      "breakpoints": true
     }
   ]
 }
