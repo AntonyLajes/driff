@@ -158,6 +158,7 @@ src/
       health.ts             # GET /health
   lib/
     plist-version.ts        # CFBundle* from XML plist
+    expo-app-config-version.ts # Expo app.json / static app.config.js|ts → marketing + build
   sources/
     source.ts               # Source interface (origin abstraction)
     github/
@@ -285,7 +286,9 @@ INSERT INTO workspace_settings (
 );
 ```
 
-Validation: `notion_pr_database_id` must be set in **either** the row or `NOTION_DATABASE_ID`. If `notion_releases_database_id` is set, `release_info_plist_path` and `release_version_branch` must be set (DB or env).
+Validation: `notion_pr_database_id` must be set in **either** the row or `NOTION_DATABASE_ID`. If `notion_releases_database_id` is set, `release_version_branch` must be set, and **at least one** of `release_info_plist_path`, `release_project_pbxproj_path`, or `release_expo_app_config_path` (Expo / React Native: `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`).
+
+**Expo / React Native:** When `release_expo_app_config_path` is set, `gather-release-context` reads `expo.version` plus `ios.buildNumber` or `android.versionCode` from that file at the webhook SHAs (JSON is reliable; `.js`/`.ts` uses static regex extraction — prefer `app.json`/`app.config.json` for dynamic configs). Push webhooks treat changes to that path like plist/pbx changes for enqueueing `process_release`.
 
 ---
 
@@ -600,18 +603,18 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 ## Phase 2 — Version bump detection (implemented)
 
-**Goal:** When a push to the configured branch updates the app’s visible iOS version (from XML `Info.plist` or, when configured, from `project.pbxproj` literals), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
+**Goal:** When a push to the configured branch updates the app’s visible version (XML `Info.plist`, `project.pbxproj` literals, or **Expo / React Native** `app.json` / `app.config.*` via `RELEASE_EXPO_APP_CONFIG_PATH` / `workspace_settings.release_expo_app_config_path`), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
 
 **Behavior:**
-- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH` or (if set) `RELEASE_PROJECT_PBXPROJ_PATH` — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
-- Job `process_release`: read plist/pbx at the push webhook’s `before` / `after` SHAs. The GitHub compare range for commits/PR hints may use a **wider** left edge: build-only bumps anchor to the latest prior `releases.head_sha` for the same `repo`, `branch`, and `short_version` (fallback: optional `RELEASE_COMPARE_ROOT_SHA`, then webhook `before`); marketing bumps use the earliest stored `marketing_era_start_sha` on the old `short_version`, then the latest prior `head_sha` on that line, then the same fallbacks (`docs/release-compare-windows.md`). If `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from that file at each SHA; otherwise read the plist. If the plist only contains `$(...)` placeholders and no pbx path is set, the job fails with a clear config error. The GitHub compare range supplies every commit (`compareCommits`); commits that are **not** merge/squash PR lines are passed as `standaloneCommitHints` to the LLM. For each PR number found in that range, matching rows in `pull_requests` (same `repo`) enrich the input with stored `summary_user_facing` when the PR was processed earlier. The prompt `release-changelog.md` returns user-facing **changelog** copy only (no engineering appendix), stored in `releases.changelog`, with optional sectioned bullets; Notion page body shows **Changelog** + sections. Persist the effective compare base in `releases.before_sha` and the marketing-line era anchor in `releases.marketing_era_start_sha` (first row on a `short_version` sets it; later rows reuse it).
+- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH`, (if set) `RELEASE_PROJECT_PBXPROJ_PATH`, or (if set) the Expo app config path — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
+- Job `process_release`: read version sources at the push webhook’s `before` / `after` SHAs (`gather-release-context`: Expo path takes precedence over pbx, then plist). The GitHub compare range for commits/PR hints may use a **wider** left edge: build-only bumps anchor to the latest prior `releases.head_sha` for the same `repo`, `branch`, and `short_version` (fallback: optional `RELEASE_COMPARE_ROOT_SHA`, then webhook `before`); marketing bumps use the earliest stored `marketing_era_start_sha` on the old `short_version`, then the latest prior `head_sha` on that line, then the same fallbacks (`docs/release-compare-windows.md`). If `RELEASE_EXPO_APP_CONFIG_PATH` (or DB column) is set, read `expo.version` and native build fields from that file at each SHA; else if `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` from the pbx; otherwise read the plist. If the plist only contains `$(...)` placeholders and neither pbx nor Expo path is set, the job fails with a clear config error. The GitHub compare range supplies every commit (`compareCommits`); commits that are **not** merge/squash PR lines are passed as `standaloneCommitHints` to the LLM. For each PR number found in that range, matching rows in `pull_requests` (same `repo`) enrich the input with stored `summary_user_facing` when the PR was processed earlier. The prompt `release-changelog.md` returns user-facing **changelog** copy only (no engineering appendix), stored in `releases.changelog`, with optional sectioned bullets; Notion page body shows **Changelog** + sections. Persist the effective compare base in `releases.before_sha` and the marketing-line era anchor in `releases.marketing_era_start_sha` (first row on a `short_version` sets it; later rows reuse it).
 - Idempotency: `releases` has unique (`repo`, `version_key`).
 
 **Compare windows:** Implemented per `docs/release-compare-windows.md` (`resolve-release-compare-before`, `gather-release-context` `compareBeforeSha`, optional `RELEASE_COMPARE_ROOT_SHA`, column `releases.marketing_era_start_sha`).
 
 **Notion “Releases” database properties (must match integration):** Title, Repo, Branch, Version, Short Version, Build, Previous Version, URL, PR Numbers (see `notion-destination`).
 
-**Out of scope:** Plist **binary** format, Android, App Store Connect, creating git tags.
+**Out of scope:** Plist **binary** format, Android versioning **outside** Expo `expo.android.versionCode` in the configured app config, App Store Connect, creating git tags.
 
 ---
 
