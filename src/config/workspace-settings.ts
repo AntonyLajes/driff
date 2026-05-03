@@ -12,6 +12,7 @@ export interface MergedWorkspaceSettings {
   releaseVersionBranch: string | null;
   releaseMonitoredRepo: string | null;
   releaseProjectPbxprojPath: string | null;
+  releaseExpoAppConfigPath: string | null;
   releaseCompareRootSha: string | null;
 }
 
@@ -45,6 +46,10 @@ export const mergeWorkspaceSettings = (
     env.RELEASE_PROJECT_PBXPROJ_PATH,
   );
   const releaseCompareRootSha = firstNonBlank(row?.releaseCompareRootSha, env.RELEASE_COMPARE_ROOT_SHA);
+  const releaseExpoAppConfigPath = firstNonBlank(
+    row?.releaseExpoAppConfigPath,
+    env.RELEASE_EXPO_APP_CONFIG_PATH,
+  );
 
   let prSummaryBaseBranches: string[] | null = null;
   const dbBranches = row?.prSummaryBaseBranches;
@@ -72,6 +77,7 @@ export const mergeWorkspaceSettings = (
     releaseVersionBranch,
     releaseMonitoredRepo,
     releaseProjectPbxprojPath,
+    releaseExpoAppConfigPath,
     releaseCompareRootSha,
   };
 };
@@ -83,14 +89,18 @@ export const validateMergedWorkspaceSettings = (merged: MergedWorkspaceSettings)
     );
   }
   if (merged.notionReleasesDatabaseId) {
-    if (!merged.releaseInfoPlistPath?.trim()) {
-      throw new Error(
-        "Release notes are enabled but release_info_plist_path is missing. Set workspace_settings.release_info_plist_path or RELEASE_INFO_PLIST_PATH.",
-      );
-    }
     if (!merged.releaseVersionBranch?.trim()) {
       throw new Error(
         "Release notes are enabled but release_version_branch is missing. Set workspace_settings.release_version_branch or RELEASE_VERSION_BRANCH.",
+      );
+    }
+    const hasVersionSource =
+      Boolean(merged.releaseInfoPlistPath?.trim()) ||
+      Boolean(merged.releaseProjectPbxprojPath?.trim()) ||
+      Boolean(merged.releaseExpoAppConfigPath?.trim());
+    if (!hasVersionSource) {
+      throw new Error(
+        "Release notes are enabled but no version source is configured. Set one of: workspace_settings.release_info_plist_path (RELEASE_INFO_PLIST_PATH), release_project_pbxproj_path (RELEASE_PROJECT_PBXPROJ_PATH), or release_expo_app_config_path (RELEASE_EXPO_APP_CONFIG_PATH) for Expo / React Native.",
       );
     }
   }

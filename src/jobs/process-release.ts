@@ -22,6 +22,8 @@ export interface ExecuteInput {
   destination: Destination;
   infoPlistPath: string;
   projectPbxprojPath: string | null;
+  /** Expo / RN app config path; when set, version is read from this file (see `expo-app-config-version`). */
+  expoAppConfigPath: string | null;
   promptVersion: number;
   /** Notion database id for release pages; when empty, the job treats release publishing as disabled. */
   releasesNotionDatabaseId: string | null;
@@ -75,6 +77,7 @@ export const execute = (input: ExecuteInput) => {
         afterSha: job.afterSha,
         infoPlistPath: input.infoPlistPath,
         projectPbxprojPath: input.projectPbxprojPath,
+        expoAppConfigPath: input.expoAppConfigPath,
       });
 
       if (
@@ -113,6 +116,7 @@ export const execute = (input: ExecuteInput) => {
               compareBeforeSha: effectiveCompareBefore,
               infoPlistPath: input.infoPlistPath,
               projectPbxprojPath: input.projectPbxprojPath,
+              expoAppConfigPath: input.expoAppConfigPath,
             });
 
       const existing = await input.db

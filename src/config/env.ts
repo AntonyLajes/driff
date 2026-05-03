@@ -46,6 +46,10 @@ const envSchema = z.object({
    * when no prior `releases` row exists for that `short_version` (see docs/release-compare-windows.md).
    */
   RELEASE_COMPARE_ROOT_SHA: z.string().min(1).optional(),
+  /**
+   * Expo / React Native: repo-relative path to `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`.
+   */
+  RELEASE_EXPO_APP_CONFIG_PATH: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

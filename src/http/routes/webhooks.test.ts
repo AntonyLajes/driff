@@ -333,6 +333,7 @@ describe("http/routes/webhooks handler", () => {
         branch: "develop",
         plistPath: "App/Info.plist",
         projectPbxprojPath: null,
+        expoAppConfigPath: null,
         monitoredRepo: null,
       },
       findWebhookEventByDeliveryId: vi.fn(async () => false),

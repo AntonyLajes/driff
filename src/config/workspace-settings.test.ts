@@ -31,6 +31,7 @@ const row = (
     releaseVersionBranch: null,
     releaseMonitoredRepo: null,
     releaseProjectPbxprojPath: null,
+    releaseExpoAppConfigPath: null,
     releaseCompareRootSha: null,
     prSummaryBaseBranches: null,
     createdAt: new Date(),
@@ -61,6 +62,11 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
     const merged = mergeWorkspaceSettings(undefined, buildEnv({ PR_SUMMARY_BASE_BRANCHES: "a, b" }));
     expect(merged.prSummaryBaseBranches).toEqual(["a", "b"]);
   });
+
+  it("should merge RELEASE_EXPO_APP_CONFIG_PATH from env", () => {
+    const merged = mergeWorkspaceSettings(undefined, buildEnv({ RELEASE_EXPO_APP_CONFIG_PATH: "app.json" }));
+    expect(merged.releaseExpoAppConfigPath).toBe("app.json");
+  });
 });
 
 describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
@@ -72,7 +78,7 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
     expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/Notion PR database id is missing/);
   });
 
-  it("should throw when releases enabled without plist path", () => {
+  it("should throw when releases enabled without any version source", () => {
     const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
       notionPrDatabaseId: "pr-db",
       notionReleasesDatabaseId: "rel-db",
@@ -81,9 +87,10 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       releaseVersionBranch: "develop",
       releaseMonitoredRepo: null,
       releaseProjectPbxprojPath: null,
+      releaseExpoAppConfigPath: null,
       releaseCompareRootSha: null,
     };
-    expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/release_info_plist_path/);
+    expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/no version source is configured/);
   });
 
   it("should throw when releases enabled without branch", () => {
@@ -95,9 +102,25 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       releaseVersionBranch: null,
       releaseMonitoredRepo: null,
       releaseProjectPbxprojPath: null,
+      releaseExpoAppConfigPath: null,
       releaseCompareRootSha: null,
     };
     expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/release_version_branch/);
+  });
+
+  it("should accept releases with only Expo app config path", () => {
+    const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
+      notionPrDatabaseId: "pr-db",
+      notionReleasesDatabaseId: "rel-db",
+      prSummaryBaseBranches: null,
+      releaseInfoPlistPath: null,
+      releaseVersionBranch: "develop",
+      releaseMonitoredRepo: null,
+      releaseProjectPbxprojPath: null,
+      releaseExpoAppConfigPath: "app.config.js",
+      releaseCompareRootSha: null,
+    };
+    expect(() => validateMergedWorkspaceSettings(merged)).not.toThrow();
   });
 
   it("should accept valid merged settings with releases enabled", () => {
@@ -107,6 +130,7 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
         notionReleasesDatabaseId: "rel",
         releaseInfoPlistPath: "ios/App/Info.plist",
         releaseVersionBranch: "develop",
+        releaseExpoAppConfigPath: null,
       }),
       buildEnv({ NOTION_DATABASE_ID: undefined, NOTION_RELEASES_DATABASE_ID: undefined }),
     );

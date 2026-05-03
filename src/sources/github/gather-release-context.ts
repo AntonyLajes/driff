@@ -3,6 +3,7 @@ import {
   getInstallationOctokit,
   type OctokitLike,
 } from "@/sources/github/github-installation.js";
+import { execute as parseExpoAppConfig } from "@/lib/expo-app-config-version.js";
 import { execute as parsePbxVersion } from "@/lib/pbxproj-version.js";
 import {
   type IosPlistVersion,
@@ -109,6 +110,11 @@ export interface ExecuteInput {
    * ficheiro em vez de confiar no Info.plist (útil com `$(MARKETING_VERSION)` no XML).
    */
   projectPbxprojPath?: string | null;
+  /**
+   * Expo / React Native: path to `app.json` or `app.config.*` — version comes from here when set
+   * (takes precedence over plist / pbxproj).
+   */
+  expoAppConfigPath?: string | null;
   octokitFactory?: (auth: string) => OctokitLike;
 }
 
@@ -204,7 +210,23 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
 
   let beforeVersion: IosPlistVersion | null;
   let afterVersion: IosPlistVersion;
-  if (pbx.length > 0) {
+  const expoPath = input.expoAppConfigPath?.trim() ?? "";
+  if (expoPath.length > 0) {
+    const [beforeExpo, afterExpo] = await Promise.all([
+      fetchFileTextAt({ octokit, owner, repo: repository, path: expoPath, ref: trimmedBefore }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: expoPath, ref: trimmedAfter }),
+    ]);
+    const fileName = expoPath.includes("/") ? expoPath.split("/").pop() ?? expoPath : expoPath;
+    const b = parseExpoAppConfig(beforeExpo, fileName);
+    const a = parseExpoAppConfig(afterExpo, fileName);
+    if (!a) {
+      throw new Error(
+        "Could not read expo.version (and ios.buildNumber / android.versionCode) from the Expo app config at the after ref.",
+      );
+    }
+    beforeVersion = b;
+    afterVersion = a;
+  } else if (pbx.length > 0) {
     const [beforePbx, afterPbx] = await Promise.all([
       fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: trimmedBefore }),
       fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: trimmedAfter }),
@@ -219,9 +241,15 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     beforeVersion = b;
     afterVersion = a;
   } else {
+    const plistPath = input.infoPlistPath.trim();
+    if (!plistPath) {
+      throw new Error(
+        "infoPlistPath is required when release_expo_app_config_path and RELEASE_PROJECT_PBXPROJ_PATH are unset.",
+      );
+    }
     const [beforeText, afterText] = await Promise.all([
-      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: trimmedBefore }),
-      fetchFileTextAt({ octokit, owner, repo: repository, path: input.infoPlistPath, ref: trimmedAfter }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: plistPath, ref: trimmedBefore }),
+      fetchFileTextAt({ octokit, owner, repo: repository, path: plistPath, ref: trimmedAfter }),
     ]);
     const b = parsePlist(beforeText);
     const a = parsePlist(afterText);

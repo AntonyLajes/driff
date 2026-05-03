@@ -79,11 +79,23 @@ export const pushTouchesReleasePaths = (
   },
   infoPlistPath: string,
   projectPbxprojPath: string | null | undefined,
+  expoAppConfigPath: string | null | undefined,
 ): boolean => {
-  const paths: string[] = [infoPlistPath];
+  const paths: string[] = [];
+  const plist = infoPlistPath.trim();
+  if (plist.length > 0) {
+    paths.push(plist);
+  }
   const p = projectPbxprojPath?.trim();
   if (p) {
     paths.push(p);
+  }
+  const expo = expoAppConfigPath?.trim();
+  if (expo) {
+    paths.push(expo);
+  }
+  if (paths.length === 0) {
+    return true;
   }
   for (const path of paths) {
     if (commitTouchesFilePath(payload, path)) {
@@ -95,9 +107,12 @@ export const pushTouchesReleasePaths = (
 
 export interface ReleaseWebhookConfig {
   branch: string;
+  /** Optional when version is read only from Expo app config (`expoAppConfigPath`). */
   plistPath: string;
   /** Quando set, o push a este ficheiro também dispara o job (ex.: bump só no pbx). */
   projectPbxprojPath: string | null;
+  /** Expo / RN: `app.json` or `app.config.js` — push to this path can enqueue `process_release`. */
+  expoAppConfigPath: string | null;
   monitoredRepo: string | null;
 }
 
@@ -135,7 +150,7 @@ export const buildProcessReleaseJobInput = (
     return null;
   }
 
-  if (!pushTouchesReleasePaths(data, config.plistPath, config.projectPbxprojPath)) {
+  if (!pushTouchesReleasePaths(data, config.plistPath, config.projectPbxprojPath, config.expoAppConfigPath)) {
     return null;
   }
 

@@ -72,6 +72,7 @@ const buildReleaseConfig = (
     branch: workspace.releaseVersionBranch ?? "",
     plistPath: workspace.releaseInfoPlistPath ?? "",
     projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
+    expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
 };
@@ -155,6 +156,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             privateKey: env.GITHUB_APP_PRIVATE_KEY,
             infoPlistPath: workspace.releaseInfoPlistPath ?? "",
             projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
+            expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
             releasesNotionDatabaseId: workspace.notionReleasesDatabaseId,
             releaseCompareRootSha: workspace.releaseCompareRootSha,
             releaseSummarizer:
