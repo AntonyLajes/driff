@@ -124,6 +124,26 @@ export const releasesTable = pgTable(
   }),
 );
 
+/**
+ * Single-tenant workspace integration config (Notion DB ids, release paths, filters).
+ * Non-secret values only; secrets stay in environment variables. When a row exists,
+ * non-empty columns override env for the same setting (see `workspace-settings` loader).
+ */
+export const workspaceSettingsTable = pgTable("workspace_settings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  notionPrDatabaseId: text("notion_pr_database_id"),
+  notionReleasesDatabaseId: text("notion_releases_database_id"),
+  releaseInfoPlistPath: text("release_info_plist_path"),
+  releaseVersionBranch: text("release_version_branch"),
+  releaseMonitoredRepo: text("release_monitored_repo"),
+  releaseProjectPbxprojPath: text("release_project_pbxproj_path"),
+  releaseCompareRootSha: text("release_compare_root_sha"),
+  /** Base branch names for PR summarization (`pull_request.base.ref`); empty means any branch. */
+  prSummaryBaseBranches: jsonb("pr_summary_base_branches").$type<string[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const promptsTable = pgTable(
   "prompts",
   {
