@@ -85,4 +85,28 @@ describe("config/env execute", () => {
     const result = execute(buildValidEnv());
     expect(result.CORS_ORIGINS).toEqual([]);
   });
+
+  it("should reject partial Google OAuth configuration", () => {
+    expect(() =>
+      execute({
+        ...buildValidEnv(),
+        GOOGLE_OAUTH_CLIENT_ID: "abc.apps.googleusercontent.com",
+      }),
+    ).toThrowError();
+  });
+
+  it("should parse full Google OAuth configuration", () => {
+    const result = execute({
+      ...buildValidEnv(),
+      GOOGLE_OAUTH_CLIENT_ID: "abc.apps.googleusercontent.com",
+      GOOGLE_OAUTH_CLIENT_SECRET: "gsecret",
+      AUTH_JWT_SECRET: "y".repeat(32),
+      AUTH_PUBLIC_URL: "http://localhost:3000",
+      FRONTEND_URL: "http://localhost:5173",
+    });
+
+    expect(result.GOOGLE_OAUTH_CLIENT_ID).toBe("abc.apps.googleusercontent.com");
+    expect(result.AUTH_JWT_SECRET).toHaveLength(32);
+    expect(result.FRONTEND_URL).toBe("http://localhost:5173");
+  });
 });

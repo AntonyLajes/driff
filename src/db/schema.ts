@@ -157,6 +157,29 @@ export const workspaceSettingsTable = pgTable("workspace_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * Operator accounts linked to Google Sign-In (`sub` from OIDC userinfo).
+ */
+export const usersTable = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    googleSub: text("google_sub").notNull(),
+    email: text("email").notNull(),
+    name: text("name"),
+    picture: text("picture"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    googleSubUnique: unique("users_google_sub_unique").on(table.googleSub),
+  }),
+);
+
 export const promptsTable = pgTable(
   "prompts",
   {

@@ -9,6 +9,7 @@ import {
 import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
 import type { CorsRegistrationInput } from "@/http/cors.js";
+import { buildGoogleOAuthRegistrationInput } from "@/http/routes/auth-google.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -133,11 +134,13 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
     releaseNotesEnabled ? buildReleaseConfig(workspace) : null,
     db,
   );
+  const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
   const server =
     input.server ??
     createServer({
       webhook,
       cors: input.cors ?? buildCorsFromEnv(env),
+      googleOAuth,
     });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {

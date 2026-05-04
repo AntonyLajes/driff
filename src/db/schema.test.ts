@@ -6,6 +6,7 @@ import {
   jobsTable,
   promptsTable,
   pullRequestsTable,
+  usersTable,
   webhookEventsTable,
 } from "@/db/schema.js";
 
@@ -51,6 +52,15 @@ describe("db/schema tables", () => {
     expect(columns.name).toBeDefined();
     expect(columns.version).toBeDefined();
     expect(columns.content).toBeDefined();
+    expect(config.uniqueConstraints.length).toBe(1);
+  });
+
+  it("should define users table for Google-linked accounts", () => {
+    const columns = getTableColumns(usersTable);
+    const config = getTableConfig(usersTable);
+
+    expect(columns.googleSub).toBeDefined();
+    expect(columns.email).toBeDefined();
     expect(config.uniqueConstraints.length).toBe(1);
   });
 });

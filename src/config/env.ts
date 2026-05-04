@@ -74,6 +74,37 @@ const envSchema = z.object({
   RELEASE_PROJECT_KIND: z.string().min(1).optional(),
   /** Caminho no repo do ficheiro onde a versão é alterada (em conjunto com `RELEASE_PROJECT_KIND`). */
   RELEASE_VERSION_FILE_PATH: z.string().min(1).optional(),
+  /**
+   * Google OAuth (optional). When fully configured, the HTTP server exposes
+   * `/auth/google/start` and `/auth/google/callback` for browser sign-in.
+   */
+  GOOGLE_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  /** HMAC secret for Driff session JWTs (min 32 chars when OAuth is enabled). */
+  AUTH_JWT_SECRET: z.string().min(32).optional(),
+  /** Public base URL of this API (e.g. http://localhost:3000) — used as Google redirect origin. */
+  AUTH_PUBLIC_URL: z.string().url().optional(),
+  /** Vite / web app origin where users return after OAuth (e.g. http://localhost:5173). */
+  FRONTEND_URL: z.string().url().optional(),
+}).superRefine((data, ctx) => {
+  const oauthParts = [
+    data.GOOGLE_OAUTH_CLIENT_ID,
+    data.GOOGLE_OAUTH_CLIENT_SECRET,
+    data.AUTH_JWT_SECRET,
+    data.AUTH_PUBLIC_URL,
+    data.FRONTEND_URL,
+  ];
+  const defined = oauthParts.filter((value) => value !== undefined && value !== "");
+  if (defined.length === 0) {
+    return;
+  }
+  if (defined.length !== oauthParts.length) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "Google OAuth: set all of GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, AUTH_JWT_SECRET (min 32 chars), AUTH_PUBLIC_URL, and FRONTEND_URL, or omit all OAuth variables.",
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

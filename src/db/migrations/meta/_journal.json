@@ -50,6 +50,13 @@
       "when": 1777843930776,
       "tag": "0006_pink_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777845000000,
+      "tag": "0007_google_oauth_users",
+      "breakpoints": true
     }
   ]
 }

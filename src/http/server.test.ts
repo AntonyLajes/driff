@@ -126,4 +126,31 @@ describe("http/server execute", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true });
   });
+
+  it("should redirect to Google OAuth when google oauth input is provided", async () => {
+    const server = execute({
+      logger: false,
+      googleOAuth: {
+        db: {} as never,
+        clientId: "test-google-client-id",
+        clientSecret: "test-google-client-secret",
+        jwtSecret: "x".repeat(32),
+        publicApiUrl: "http://127.0.0.1:9",
+        frontendUrl: "http://localhost:5173",
+        nodeEnv: "test",
+      },
+    });
+    servers.push(server);
+
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: "/auth/google/start",
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toContain("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(response.headers.location).toContain("client_id=test-google-client-id");
+    expect(response.headers["set-cookie"]).toMatch(/driff_google_oauth_state=/);
+  });
 });

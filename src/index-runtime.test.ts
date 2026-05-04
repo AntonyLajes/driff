@@ -155,13 +155,15 @@ describe("index execute runtime wiring", () => {
       databaseUrl: "postgres://user:pass@localhost:5432/driff",
     });
     expect(mocks.createWebhookDependencies).toHaveBeenCalledWith({ db: mocks.db });
-    expect(mocks.createServer).toHaveBeenCalledWith({
-      webhook: expect.objectContaining({
-        webhookSecret: "webhook-secret",
-        prSummaryBaseBranches: null,
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        webhook: expect.objectContaining({
+          webhookSecret: "webhook-secret",
+          prSummaryBaseBranches: null,
+        }),
+        cors: { kind: "off" },
       }),
-      cors: { kind: "off" },
-    });
+    );
     expect(mocks.createGithubSource).toHaveBeenCalledWith({
       appId: "123456",
       privateKey: "private-key",
