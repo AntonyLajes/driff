@@ -146,6 +146,11 @@ describe("index execute runtime wiring", () => {
     delete process.env.RELEASE_VERSION_BRANCH;
     delete process.env.RELEASE_PROJECT_PBXPROJ_PATH;
     delete process.env.RELEASE_MONITORED_REPO;
+    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    delete process.env.AUTH_JWT_SECRET;
+    delete process.env.AUTH_PUBLIC_URL;
+    delete process.env.FRONTEND_URL;
   });
 
   it("should wire default runtime dependencies from env", async () => {

@@ -104,6 +104,18 @@ const envSchema = z.object({
       message:
         "Google OAuth: set all of GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, AUTH_JWT_SECRET (min 32 chars), AUTH_PUBLIC_URL, and FRONTEND_URL, or omit all OAuth variables.",
     });
+    return;
+  }
+  if (
+    data.AUTH_PUBLIC_URL !== undefined &&
+    data.FRONTEND_URL !== undefined &&
+    data.AUTH_PUBLIC_URL.replace(/\/+$/, "") === data.FRONTEND_URL.replace(/\/+$/, "")
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "AUTH_PUBLIC_URL and FRONTEND_URL must differ: AUTH_PUBLIC_URL is the Fastify API (e.g. http://localhost:3000); FRONTEND_URL is the Vite app (e.g. http://localhost:5173).",
+    });
   }
 });
 

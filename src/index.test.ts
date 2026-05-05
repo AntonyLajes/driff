@@ -26,6 +26,11 @@ describe("index execute", () => {
     process.env.PORT = "3000";
     process.env.LOG_LEVEL = "info";
     process.env.NODE_ENV = "test";
+    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    delete process.env.AUTH_JWT_SECRET;
+    delete process.env.AUTH_PUBLIC_URL;
+    delete process.env.FRONTEND_URL;
   };
 
   it("should call listen with default host and port", async () => {

@@ -131,7 +131,15 @@ export const handler = async (
   const redirectUri = `${input.publicApiUrl}/auth/google/callback`;
   const secureFlag = input.nodeEnv === "production" ? "; Secure" : "";
 
-  instance.get("/auth/google/start", async (_request, reply) => {
+  instance.get("/auth/google/start", async (request, reply) => {
+    if (redirectUri.includes(":5173/auth/google/callback")) {
+      request.log.warn(
+        {
+          redirectUri,
+        },
+        "Google OAuth redirect_uri targets port 5173 (Vite). Set AUTH_PUBLIC_URL to the Fastify API origin (e.g. http://localhost:3000) and register that redirect URI in Google Cloud Console.",
+      );
+    }
     const state = randomBytes(24).toString("hex");
     reply.header(
       "Set-Cookie",
