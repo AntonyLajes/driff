@@ -140,6 +140,10 @@ export const handler = async (
         "Google OAuth redirect_uri targets port 5173 (Vite). Set AUTH_PUBLIC_URL to the Fastify API origin (e.g. http://localhost:3000) and register that redirect URI in Google Cloud Console.",
       );
     }
+    request.log.info(
+      { redirectUri },
+      "google_oauth_authorize: add this exact redirect URI under Authorized redirect URIs in Google Cloud Console (OAuth Web client).",
+    );
     const state = randomBytes(24).toString("hex");
     reply.header(
       "Set-Cookie",
