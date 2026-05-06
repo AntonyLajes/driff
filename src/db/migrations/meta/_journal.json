@@ -64,6 +64,13 @@
       "when": 1777846000000,
       "tag": "0008_multi_user_workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1777847000000,
+      "tag": "0009_github_user_workspace_repo",
+      "breakpoints": true
     }
   ]
 }

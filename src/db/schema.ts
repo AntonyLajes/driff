@@ -150,6 +150,24 @@ export const usersTable = pgTable(
 );
 
 /**
+ * GitHub OAuth (user-to-server) tokens for listing repos and reading public metadata.
+ * Access tokens are stored sealed with `AUTH_JWT_SECRET` (see `token-aes.ts`).
+ */
+export const userGithubAccountsTable = pgTable("user_github_accounts", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  accessTokenCiphertext: text("access_token_ciphertext").notNull(),
+  refreshTokenCiphertext: text("refresh_token_ciphertext"),
+  scope: text("scope"),
+  tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+  githubUserId: text("github_user_id"),
+  githubLogin: text("github_login"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * Per-user workspaces (apps / projects). Integration settings for each row live in
  * `workspace_settings` with matching `workspace_id` (or legacy global settings when null).
  */
@@ -167,6 +185,10 @@ export const workspacesTable = pgTable(
      * Null until detection or manual selection.
      */
     workspaceKind: text("workspace_kind"),
+    /** Linked GitHub repo (`owner/name`) after onboarding. */
+    githubRepoFullName: text("github_repo_full_name"),
+    /** Default branch from GitHub metadata (optional cache). */
+    githubRepoDefaultBranch: text("github_repo_default_branch"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

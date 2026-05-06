@@ -6,6 +6,7 @@ import {
   jobsTable,
   promptsTable,
   pullRequestsTable,
+  userGithubAccountsTable,
   usersTable,
   webhookEventsTable,
   workspacesTable,
@@ -72,7 +73,14 @@ describe("db/schema tables", () => {
     expect(columns.userId).toBeDefined();
     expect(columns.slug).toBeDefined();
     expect(columns.workspaceKind).toBeDefined();
+    expect(columns.githubRepoFullName).toBeDefined();
     expect(config.uniqueConstraints.length).toBe(1);
     expect(config.indexes.length).toBe(1);
+  });
+
+  it("should define user_github_accounts for GitHub user OAuth tokens", () => {
+    const columns = getTableColumns(userGithubAccountsTable);
+    expect(columns.accessTokenCiphertext).toBeDefined();
+    expect(columns.githubLogin).toBeDefined();
   });
 });
