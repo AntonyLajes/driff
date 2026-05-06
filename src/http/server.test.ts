@@ -127,6 +127,25 @@ describe("http/server execute", () => {
     expect(response.json()).toEqual({ ok: true });
   });
 
+  it("should return 401 for workspaces without bearer when workspaces api is enabled", async () => {
+    const server = execute({
+      logger: false,
+      workspacesMe: {
+        db: {} as never,
+        jwtSecret: "x".repeat(32),
+      },
+    });
+    servers.push(server);
+
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces",
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
   it("should redirect to Google OAuth when google oauth input is provided", async () => {
     const server = execute({
       logger: false,

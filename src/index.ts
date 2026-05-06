@@ -135,12 +135,15 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
     db,
   );
   const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
+  const workspacesMe =
+    googleOAuth !== undefined ? { db, jwtSecret: googleOAuth.jwtSecret } : undefined;
   const server =
     input.server ??
     createServer({
       webhook,
       cors: input.cors ?? buildCorsFromEnv(env),
       googleOAuth,
+      workspacesMe,
     });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {

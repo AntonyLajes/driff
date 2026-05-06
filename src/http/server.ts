@@ -8,6 +8,10 @@ import {
 } from "@/http/routes/auth-google.js";
 import { handler as registerHealthRoute } from "@/http/routes/health.js";
 import {
+  handler as registerWorkspacesMeRoute,
+  type WorkspacesMeRegistrationInput,
+} from "@/http/routes/workspaces-me.js";
+import {
   handler as registerWebhookRoute,
   type HandlerInput as WebhookHandlerInput,
 } from "@/http/routes/webhooks.js";
@@ -18,6 +22,8 @@ export interface ExecuteInput {
   cors?: CorsRegistrationInput;
   /** When set, registers `/auth/google/start` and `/auth/google/callback`. */
   googleOAuth?: GoogleOAuthRegistrationInput;
+  /** When set, registers `/api/me/workspaces` (Bearer session JWT). */
+  workspacesMe?: WorkspacesMeRegistrationInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -35,6 +41,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     await registerHealthRoute(instance);
     if (input.googleOAuth !== undefined) {
       await registerAuthGoogleRoute(instance, input.googleOAuth);
+    }
+    if (input.workspacesMe !== undefined) {
+      await registerWorkspacesMeRoute(instance, input.workspacesMe);
     }
   });
   const webhookInput = input.webhook;
