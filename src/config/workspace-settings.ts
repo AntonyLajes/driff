@@ -1,4 +1,4 @@
-import { desc } from "drizzle-orm";
+import { desc, isNull } from "drizzle-orm";
 
 import type { Env } from "@/config/env.js";
 import {
@@ -165,12 +165,14 @@ export const validateMergedWorkspaceSettings = (merged: MergedWorkspaceSettings)
 };
 
 /**
- * Loads the newest `workspace_settings` row and merges with env (secrets are never stored here).
+ * Loads the newest **global** `workspace_settings` row (`workspace_id` null) and merges with env.
+ * Per-user workspace rows are ignored until the worker reads settings by workspace.
  */
 export const execute = async (db: Database, env: Env): Promise<MergedWorkspaceSettings> => {
   const rows = await db
     .select()
     .from(workspaceSettingsTable)
+    .where(isNull(workspaceSettingsTable.workspaceId))
     .orderBy(desc(workspaceSettingsTable.updatedAt))
     .limit(1);
   const merged = mergeWorkspaceSettings(rows[0], env);

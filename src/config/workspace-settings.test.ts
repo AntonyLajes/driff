@@ -25,6 +25,7 @@ const row = (
 ): typeof workspaceSettingsTable.$inferSelect =>
   ({
     id: "00000000-0000-4000-8000-000000000001",
+    workspaceId: null,
     notionPrDatabaseId: null,
     notionReleasesDatabaseId: null,
     releaseInfoPlistPath: null,
@@ -203,7 +204,8 @@ describe("config/workspace-settings execute", () => {
     });
     const limit = vi.fn(async () => [stored]);
     const orderBy = vi.fn(() => ({ limit }));
-    const from = vi.fn(() => ({ orderBy }));
+    const where = vi.fn(() => ({ orderBy }));
+    const from = vi.fn(() => ({ where }));
     const select = vi.fn(() => ({ from }));
     const db = { select } as never;
 
