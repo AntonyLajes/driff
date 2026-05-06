@@ -279,6 +279,38 @@ Users (`users`) can own multiple **workspaces** (display `name` + URL-safe `slug
 
 When **Google OAuth** is fully configured, the HTTP server exposes **`GET /api/me/workspaces`** and **`POST /api/me/workspaces`** with **`Authorization: Bearer <session JWT>`**. `POST` JSON: `{ "name": string, "slug"?: string, "workspaceKind"?: string }` — omit `slug` to derive it from `name`. Duplicate slug for the same user returns **409**.
 
+**`PATCH /api/me/workspaces/:workspaceId`** (same Bearer auth): partial JSON body — any of `name`, `workspaceKind` (`null` clears), `githubRepoFullName` (`owner/repo` or `null`), `githubRepoDefaultBranch` (`null` clears). Only workspaces owned by the session user can be updated (**404** otherwise).
+
+### GitHub user OAuth (workspace onboarding)
+
+This is **not** the same integration as the **GitHub App** (`GITHUB_APP_*`) used for webhooks and installation tokens. For onboarding you create a separate **GitHub OAuth App** (user-to-server) so operators can list repositories and run lightweight file detection.
+
+**Dashboard checklist (github.com):**
+
+1. Go to **Settings → Developer settings → OAuth Apps → New OAuth App** (or use an existing OAuth App dedicated to Driff).
+2. **Application name:** e.g. `Driff (local)` / `Driff`.
+3. **Homepage URL:** your product URL (e.g. `http://localhost:5173` in dev).
+4. **Authorization callback URL** — must match the API exactly (no trailing slash on the origin you set in `AUTH_PUBLIC_URL`):
+   - `{AUTH_PUBLIC_URL}/api/me/github/oauth/callback`
+   - Example: `http://localhost:3000/api/me/github/oauth/callback`
+5. After creation, copy **Client ID** → `GITHUB_USER_OAUTH_CLIENT_ID`, generate a **Client secret** → `GITHUB_USER_OAUTH_CLIENT_SECRET`.
+6. Put both variables in the back-end `.env` together with the same **Google OAuth bundle** you already use for session JWTs: `AUTH_JWT_SECRET`, `AUTH_PUBLIC_URL`, `FRONTEND_URL`. If either GitHub client variable is missing while the other is set, boot fails (Zod).
+
+**Runtime routes (registered when the GitHub user OAuth env pair + JWT bundle are all set):**
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `POST` | `/api/me/github/oauth/start` | Bearer session JWT | Returns JSON `{ "authorizeUrl" }` — open this URL in the browser to start GitHub OAuth. |
+| `GET` | `/api/me/github/oauth/callback` | _(GitHub redirect)_ | Exchanges `code`, stores sealed tokens in `user_github_accounts`, redirects to **`FRONTEND_URL/settings?github_oauth=success&github_login=...`** (or `github_oauth=exchange_failed`, etc.). |
+| `GET` | `/api/me/github/status` | Bearer | `{ "connected": boolean, "githubLogin"?: string }` |
+| `DELETE` | `/api/me/github/disconnect` | Bearer | **204** — removes stored GitHub tokens for the user. |
+| `GET` | `/api/me/github/repos` | Bearer | Query `page` (default 1), `per_page` (default 30, max 100). Returns `{ repos, page, perPage, hasMore }`. **400** `github_not_connected` if OAuth not completed. |
+| `POST` | `/api/me/github/repo/infer` | Bearer | JSON `{ "fullName": "owner/repo" }` → `{ "inference": { suggestedKind, confidence, defaultBranch, versionFilePath, signals } }`. Uses the user’s GitHub token and the Contents API only (no clone). |
+
+**Scopes requested:** `read:user repo` (see `GITHUB_OAUTH_SCOPES` in `src/http/routes/github-me.ts`). Adjust there if you need a narrower scope later.
+
+**Secrets:** access (and optional refresh) tokens are sealed with **AES-256-GCM** using a key derived from `AUTH_JWT_SECRET` (`src/auth/token-aes.ts`). Treat `AUTH_JWT_SECRET` as a sensitive root key.
+
 ### `workspace_settings` (Postgres)
 
 Integration rows optionally reference **`workspace_id`** → `workspaces.id` (at most one settings row per workspace). The worker and GitHub webhooks still read only **legacy global** settings: the newest row where **`workspace_id` IS NULL**, merged with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release paths, version branch, monitored repo, compare root SHA, `pr_summary_base_branches` (JSON array of strings), and the **unified release fields** below.
