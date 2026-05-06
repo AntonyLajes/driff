@@ -1,0 +1,371 @@
+import { Octokit } from "@octokit/rest";
+import { eq } from "drizzle-orm";
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+
+import { signGithubOAuthState, verifyGithubOAuthState } from "@/auth/github-oauth-state.js";
+import { verifySessionJwt } from "@/auth/session-jwt.js";
+import { sealSecret, openSecret } from "@/auth/token-aes.js";
+import type { Env } from "@/config/env.js";
+import type { Database } from "@/db/client.js";
+import { userGithubAccountsTable } from "@/db/schema.js";
+import { inferRepoKind } from "@/github/repo-kind-infer.js";
+
+const GITHUB_OAUTH_SCOPES = "read:user repo";
+
+const readBearerToken = (authorization: string | undefined): string | null => {
+  if (authorization === undefined || !authorization.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = authorization.slice("Bearer ".length).trim();
+  return token.length > 0 ? token : null;
+};
+
+const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "");
+
+export interface GithubMeRegistrationInput {
+  db: Database;
+  jwtSecret: string;
+  githubClientId: string;
+  githubClientSecret: string;
+  publicApiUrl: string;
+  frontendUrl: string;
+  nodeEnv: string;
+}
+
+export const buildGithubMeRegistrationInput = (
+  env: Env,
+): Omit<GithubMeRegistrationInput, "db"> | undefined => {
+  if (
+    env.GITHUB_USER_OAUTH_CLIENT_ID === undefined ||
+    env.GITHUB_USER_OAUTH_CLIENT_SECRET === undefined ||
+    env.AUTH_JWT_SECRET === undefined ||
+    env.AUTH_PUBLIC_URL === undefined ||
+    env.FRONTEND_URL === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    jwtSecret: env.AUTH_JWT_SECRET,
+    githubClientId: env.GITHUB_USER_OAUTH_CLIENT_ID,
+    githubClientSecret: env.GITHUB_USER_OAUTH_CLIENT_SECRET,
+    publicApiUrl: trimTrailingSlash(env.AUTH_PUBLIC_URL),
+    frontendUrl: trimTrailingSlash(env.FRONTEND_URL),
+    nodeEnv: env.NODE_ENV,
+  };
+};
+
+const exchangeGithubOAuthCode = async (input: {
+  code: string;
+  redirectUri: string;
+  clientId: string;
+  clientSecret: string;
+}): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  scope?: string;
+  expires_in?: number;
+}> => {
+  const body = new URLSearchParams({
+    client_id: input.clientId,
+    client_secret: input.clientSecret,
+    code: input.code,
+    redirect_uri: input.redirectUri,
+  });
+  const response = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`github_token_http_${response.status}:${text}`);
+  }
+  const json = (await response.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    scope?: string;
+    expires_in?: number;
+    error?: string;
+    error_description?: string;
+  };
+  if (typeof json.access_token !== "string") {
+    const err = json.error_description ?? json.error ?? "missing_access_token";
+    throw new Error(`github_token_error:${err}`);
+  }
+  return {
+    access_token: json.access_token,
+    refresh_token: typeof json.refresh_token === "string" ? json.refresh_token : undefined,
+    scope: typeof json.scope === "string" ? json.scope : undefined,
+    expires_in: typeof json.expires_in === "number" ? json.expires_in : undefined,
+  };
+};
+
+const fetchGithubUserLogin = async (accessToken: string): Promise<{ id: string; login: string }> => {
+  const response = await fetch("https://api.github.com/user", {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`github_user_http_${response.status}:${text}`);
+  }
+  const json = (await response.json()) as { id?: number; login?: string };
+  if (typeof json.id !== "number" || typeof json.login !== "string") {
+    throw new Error("github_user_missing_fields");
+  }
+  return { id: String(json.id), login: json.login };
+};
+
+const loadGithubAccessToken = async (
+  db: Database,
+  userId: string,
+  jwtSecret: string,
+): Promise<string | null> => {
+  const rows = await db
+    .select()
+    .from(userGithubAccountsTable)
+    .where(eq(userGithubAccountsTable.userId, userId))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  return openSecret(row.accessTokenCiphertext, jwtSecret);
+};
+
+export const handler = async (
+  instance: FastifyInstance,
+  input: GithubMeRegistrationInput,
+): Promise<void> => {
+  const redirectUri = `${input.publicApiUrl}/api/me/github/oauth/callback`;
+
+  instance.post("/api/me/github/oauth/start", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const state = signGithubOAuthState({ userId: session.userId, secret: input.jwtSecret });
+    const params = new URLSearchParams({
+      client_id: input.githubClientId,
+      redirect_uri: redirectUri,
+      scope: GITHUB_OAUTH_SCOPES,
+      state,
+    });
+    const authorizeUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+    return reply.send({ authorizeUrl });
+  });
+
+  instance.get("/api/me/github/oauth/callback", async (request, reply) => {
+    const query = request.query as Record<string, string | undefined>;
+    const code = query.code;
+    const state = query.state;
+    const frontend = input.frontendUrl;
+
+    const redirectWith = (search: Record<string, string>) => {
+      const qs = new URLSearchParams(search).toString();
+      return reply.redirect(`${frontend}/settings?${qs}`, 302);
+    };
+
+    if (typeof code !== "string" || typeof state !== "string") {
+      return redirectWith({ github_oauth: "missing_code_or_state" });
+    }
+
+    const verified = verifyGithubOAuthState(state, input.jwtSecret);
+    if (verified === null) {
+      return redirectWith({ github_oauth: "invalid_state" });
+    }
+
+    try {
+      const tokenBundle = await exchangeGithubOAuthCode({
+        code,
+        redirectUri,
+        clientId: input.githubClientId,
+        clientSecret: input.githubClientSecret,
+      });
+      const ghUser = await fetchGithubUserLogin(tokenBundle.access_token);
+      const now = new Date();
+      const expiresAt =
+        typeof tokenBundle.expires_in === "number"
+          ? new Date(now.getTime() + tokenBundle.expires_in * 1000)
+          : null;
+
+      const accessCipher = sealSecret(tokenBundle.access_token, input.jwtSecret);
+      const refreshCipher =
+        tokenBundle.refresh_token !== undefined
+          ? sealSecret(tokenBundle.refresh_token, input.jwtSecret)
+          : null;
+
+      await input.db
+        .insert(userGithubAccountsTable)
+        .values({
+          userId: verified.userId,
+          accessTokenCiphertext: accessCipher,
+          refreshTokenCiphertext: refreshCipher,
+          scope: tokenBundle.scope ?? null,
+          tokenExpiresAt: expiresAt,
+          githubUserId: ghUser.id,
+          githubLogin: ghUser.login,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: userGithubAccountsTable.userId,
+          set: {
+            accessTokenCiphertext: accessCipher,
+            refreshTokenCiphertext: refreshCipher,
+            scope: tokenBundle.scope ?? null,
+            tokenExpiresAt: expiresAt,
+            githubUserId: ghUser.id,
+            githubLogin: ghUser.login,
+            updatedAt: now,
+          },
+        });
+
+      return redirectWith({ github_oauth: "success", github_login: ghUser.login });
+    } catch (err) {
+      request.log.warn({ err }, "github_oauth_callback_failed");
+      return redirectWith({ github_oauth: "exchange_failed" });
+    }
+  });
+
+  instance.get("/api/me/github/status", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const rows = await input.db
+      .select({
+        githubLogin: userGithubAccountsTable.githubLogin,
+      })
+      .from(userGithubAccountsTable)
+      .where(eq(userGithubAccountsTable.userId, session.userId))
+      .limit(1);
+    const row = rows[0];
+    if (row === undefined) {
+      return reply.send({ connected: false });
+    }
+    return reply.send({
+      connected: true,
+      githubLogin: row.githubLogin ?? undefined,
+    });
+  });
+
+  instance.delete("/api/me/github/disconnect", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    await input.db
+      .delete(userGithubAccountsTable)
+      .where(eq(userGithubAccountsTable.userId, session.userId));
+    return reply.status(204).send();
+  });
+
+  const reposQuerySchema = z.object({
+    page: z.coerce.number().int().positive().default(1),
+    per_page: z.coerce.number().int().min(1).max(100).default(30),
+  });
+
+  instance.get("/api/me/github/repos", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const accessToken = await loadGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+    const parsed = reposQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_query" });
+    }
+    const { page, per_page: perPage } = parsed.data;
+    const octokit = new Octokit({ auth: accessToken });
+    const { data } = await octokit.rest.repos.listForAuthenticatedUser({
+      per_page: perPage,
+      page,
+      sort: "pushed",
+      affiliation: "owner,collaborator,organization_member",
+    });
+    const repos = data.map((r) => ({
+      id: r.id,
+      name: r.name,
+      fullName: r.full_name,
+      private: r.private,
+      defaultBranch: r.default_branch,
+      description: r.description ?? null,
+      pushedAt: r.pushed_at ?? null,
+    }));
+    return reply.send({
+      repos,
+      page,
+      perPage,
+      hasMore: repos.length === perPage,
+    });
+  });
+
+  const inferBodySchema = z.object({
+    fullName: z
+      .string()
+      .min(3)
+      .max(241)
+      .regex(/^[\w.-]+\/[\w.-]+$/u, "expected owner/repo"),
+  });
+
+  instance.post("/api/me/github/repo/infer", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const accessToken = await loadGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+    const parsed = inferBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const octokit = new Octokit({ auth: accessToken });
+    try {
+      const inference = await inferRepoKind(octokit, parsed.data.fullName);
+      return reply.send({ inference });
+    } catch (err) {
+      request.log.warn({ err }, "github_repo_infer_failed");
+      const status =
+        typeof err === "object" && err !== null && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      if (status === 404) {
+        return reply.status(404).send({ error: "repo_not_found_or_no_access" });
+      }
+      return reply.status(500).send({ error: "infer_failed" });
+    }
+  });
+};

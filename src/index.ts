@@ -10,6 +10,7 @@ import { execute as createNotionDestination } from "@/destinations/notion/notion
 import { execute as createDbClient } from "@/db/client.js";
 import type { CorsRegistrationInput } from "@/http/cors.js";
 import { buildGoogleOAuthRegistrationInput } from "@/http/routes/auth-google.js";
+import { buildGithubMeRegistrationInput } from "@/http/routes/github-me.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -137,6 +138,9 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
   const workspacesMe =
     googleOAuth !== undefined ? { db, jwtSecret: googleOAuth.jwtSecret } : undefined;
+  const githubMeBase = buildGithubMeRegistrationInput(env);
+  const githubMe =
+    githubMeBase !== undefined ? { ...githubMeBase, db } : undefined;
   const server =
     input.server ??
     createServer({
@@ -144,6 +148,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       cors: input.cors ?? buildCorsFromEnv(env),
       googleOAuth,
       workspacesMe,
+      githubMe,
     });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {

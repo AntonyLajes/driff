@@ -8,6 +8,10 @@ import {
 } from "@/http/routes/auth-google.js";
 import { handler as registerHealthRoute } from "@/http/routes/health.js";
 import {
+  handler as registerGithubMeRoute,
+  type GithubMeRegistrationInput,
+} from "@/http/routes/github-me.js";
+import {
   handler as registerWorkspacesMeRoute,
   type WorkspacesMeRegistrationInput,
 } from "@/http/routes/workspaces-me.js";
@@ -24,6 +28,8 @@ export interface ExecuteInput {
   googleOAuth?: GoogleOAuthRegistrationInput;
   /** When set, registers `/api/me/workspaces` (Bearer session JWT). */
   workspacesMe?: WorkspacesMeRegistrationInput;
+  /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
+  githubMe?: GithubMeRegistrationInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -44,6 +50,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.workspacesMe !== undefined) {
       await registerWorkspacesMeRoute(instance, input.workspacesMe);
+    }
+    if (input.githubMe !== undefined) {
+      await registerGithubMeRoute(instance, input.githubMe);
     }
   });
   const webhookInput = input.webhook;
