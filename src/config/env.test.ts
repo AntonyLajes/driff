@@ -122,4 +122,24 @@ describe("config/env execute", () => {
       }),
     ).toThrowError();
   });
+
+  it("should reject partial GitHub user OAuth configuration", () => {
+    expect(() =>
+      execute({
+        ...buildValidEnv(),
+        GITHUB_USER_OAUTH_CLIENT_ID: "Iv1.abc",
+      }),
+    ).toThrowError();
+  });
+
+  it("should parse GitHub user OAuth client id and secret together", () => {
+    const result = execute({
+      ...buildValidEnv(),
+      GITHUB_USER_OAUTH_CLIENT_ID: "Iv1.abc123",
+      GITHUB_USER_OAUTH_CLIENT_SECRET: "ghsecret",
+    });
+
+    expect(result.GITHUB_USER_OAUTH_CLIENT_ID).toBe("Iv1.abc123");
+    expect(result.GITHUB_USER_OAUTH_CLIENT_SECRET).toBe("ghsecret");
+  });
 });

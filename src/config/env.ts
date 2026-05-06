@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const envSchema = z.object({
+const envFieldsSchema = z.object({
   DATABASE_URL: z.string().url(),
   GITHUB_APP_ID: z.string().min(1),
   GITHUB_APP_PRIVATE_KEY: z.string().min(1),
@@ -86,7 +86,16 @@ const envSchema = z.object({
   AUTH_PUBLIC_URL: z.string().url().optional(),
   /** Vite / web app origin where users return after OAuth (e.g. http://localhost:5173). */
   FRONTEND_URL: z.string().url().optional(),
-}).superRefine((data, ctx) => {
+  /**
+   * GitHub OAuth App (user-to-server) for listing repos and repo metadata during workspace onboarding.
+   * Separate from the GitHub App used for webhooks. Set both client vars together, or omit both.
+   * HTTP routes also require `AUTH_JWT_SECRET`, `AUTH_PUBLIC_URL`, and `FRONTEND_URL` (session bundle).
+   */
+  GITHUB_USER_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  GITHUB_USER_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+});
+
+const envSchema = envFieldsSchema.superRefine((data, ctx) => {
   const oauthParts = [
     data.GOOGLE_OAUTH_CLIENT_ID,
     data.GOOGLE_OAUTH_CLIENT_SECRET,
@@ -117,7 +126,18 @@ const envSchema = z.object({
         "AUTH_PUBLIC_URL and FRONTEND_URL must differ: AUTH_PUBLIC_URL is the Fastify API (e.g. http://localhost:3000); FRONTEND_URL is the Vite app (e.g. http://localhost:5173).",
     });
   }
-});
+}).refine(
+  (data) => {
+    const parts = [data.GITHUB_USER_OAUTH_CLIENT_ID, data.GITHUB_USER_OAUTH_CLIENT_SECRET];
+    const defined = parts.filter((v) => v !== undefined && v !== "");
+    return defined.length === 0 || defined.length === 2;
+  },
+  {
+    message:
+      "GitHub user OAuth: set both GITHUB_USER_OAUTH_CLIENT_ID and GITHUB_USER_OAUTH_CLIENT_SECRET, or omit both.",
+    path: ["GITHUB_USER_OAUTH_CLIENT_ID"],
+  },
+);
 
 export type Env = z.infer<typeof envSchema>;
 
