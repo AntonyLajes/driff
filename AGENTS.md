@@ -273,9 +273,15 @@ NODE_ENV=development
 
 Browsers call the JSON API from a different origin than Fastify (e.g. Vite on port 5173). **`CORS_ORIGINS`** is an optional comma-separated allowlist. When it is **empty**: `NODE_ENV === "development"` registers **reflective** CORS (`Access-Control-Allow-Origin` mirrors the request `Origin`); `test` and `production` leave CORS **off** until you set explicit origins. When **`CORS_ORIGINS` is non-empty**, that allowlist is always used (all environments). Registration lives in `src/http/cors.ts` and is wired from `src/index.ts` into `createServer`.
 
+### `workspaces` (Postgres)
+
+Users (`users`) can own multiple **workspaces** (display `name` + URL-safe `slug` unique per user). Optional **`workspace_kind`** stores the app type for onboarding (`ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec` — same vocabulary as release config).
+
+When **Google OAuth** is fully configured, the HTTP server exposes **`GET /api/me/workspaces`** and **`POST /api/me/workspaces`** with **`Authorization: Bearer <session JWT>`**. `POST` JSON: `{ "name": string, "slug"?: string, "workspaceKind"?: string }` — omit `slug` to derive it from `name`. Duplicate slug for the same user returns **409**.
+
 ### `workspace_settings` (Postgres)
 
-Single-tenant precursor to Phase 5 org config: at boot the app loads the **newest** row by `updated_at` and merges with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release paths, version branch, monitored repo, compare root SHA, `pr_summary_base_branches` (JSON array of strings), and the **unified release fields** below.
+Integration rows optionally reference **`workspace_id`** → `workspaces.id` (at most one settings row per workspace). The worker and GitHub webhooks still read only **legacy global** settings: the newest row where **`workspace_id` IS NULL**, merged with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release paths, version branch, monitored repo, compare root SHA, `pr_summary_base_branches` (JSON array of strings), and the **unified release fields** below.
 
 After `npm run db:migrate`, insert one row (adjust UUID if you prefer a fixed id). Example:
 
