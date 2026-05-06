@@ -8,6 +8,7 @@ import {
   pullRequestsTable,
   usersTable,
   webhookEventsTable,
+  workspacesTable,
 } from "@/db/schema.js";
 
 describe("db/schema tables", () => {
@@ -62,5 +63,16 @@ describe("db/schema tables", () => {
     expect(columns.googleSub).toBeDefined();
     expect(columns.email).toBeDefined();
     expect(config.uniqueConstraints.length).toBe(1);
+  });
+
+  it("should define workspaces table scoped per user", () => {
+    const columns = getTableColumns(workspacesTable);
+    const config = getTableConfig(workspacesTable);
+
+    expect(columns.userId).toBeDefined();
+    expect(columns.slug).toBeDefined();
+    expect(columns.workspaceKind).toBeDefined();
+    expect(config.uniqueConstraints.length).toBe(1);
+    expect(config.indexes.length).toBe(1);
   });
 });

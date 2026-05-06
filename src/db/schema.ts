@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -6,6 +7,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -125,39 +127,6 @@ export const releasesTable = pgTable(
 );
 
 /**
- * Single-tenant workspace integration config (Notion DB ids, release paths, filters).
- * Non-secret values only; secrets stay in environment variables. When a row exists,
- * non-empty columns override env for the same setting (see `workspace-settings` loader).
- */
-export const workspaceSettingsTable = pgTable("workspace_settings", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  notionPrDatabaseId: text("notion_pr_database_id"),
-  notionReleasesDatabaseId: text("notion_releases_database_id"),
-  releaseInfoPlistPath: text("release_info_plist_path"),
-  releaseVersionBranch: text("release_version_branch"),
-  releaseMonitoredRepo: text("release_monitored_repo"),
-  /**
-   * Tipo de projeto para releases: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`.
-   * Usar em conjunto com `release_version_file_path` (um único ficheiro onde a versão muda).
-   */
-  releaseProjectKind: text("release_project_kind"),
-  /** Caminho no repo do ficheiro de versão (Info.plist, project.pbxproj, app.json, etc.). */
-  releaseVersionFilePath: text("release_version_file_path"),
-  releaseProjectPbxprojPath: text("release_project_pbxproj_path"),
-  /**
-   * Expo / React Native: repo-relative path to `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`.
-   * When set, release version is read from this file instead of Info.plist / pbxproj.
-   * Prefer `release_project_kind` + `release_version_file_path` for novos projetos.
-   */
-  releaseExpoAppConfigPath: text("release_expo_app_config_path"),
-  releaseCompareRootSha: text("release_compare_root_sha"),
-  /** Base branch names for PR summarization (`pull_request.base.ref`); empty means any branch. */
-  prSummaryBaseBranches: jsonb("pr_summary_base_branches").$type<string[]>(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-/**
  * Operator accounts linked to Google Sign-In (`sub` from OIDC userinfo).
  */
 export const usersTable = pgTable(
@@ -177,6 +146,75 @@ export const usersTable = pgTable(
   },
   (table) => ({
     googleSubUnique: unique("users_google_sub_unique").on(table.googleSub),
+  }),
+);
+
+/**
+ * Per-user workspaces (apps / projects). Integration settings for each row live in
+ * `workspace_settings` with matching `workspace_id` (or legacy global settings when null).
+ */
+export const workspacesTable = pgTable(
+  "workspaces",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    /**
+     * Optional app kind for onboarding / releases (`ios_plist`, `ios_pbx`, `react_native_expo`, …).
+     * Null until detection or manual selection.
+     */
+    workspaceKind: text("workspace_kind"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userSlugUnique: unique("workspaces_user_id_slug_unique").on(table.userId, table.slug),
+    userIdIdx: index("workspaces_user_id_idx").on(table.userId),
+  }),
+);
+
+/**
+ * Per-workspace integration config (Notion DB ids, release paths, filters), or a legacy
+ * global row when `workspace_id` is null (worker continues to load only those until multi-tenant wiring).
+ * Non-secret values only; secrets stay in environment variables.
+ */
+export const workspaceSettingsTable = pgTable(
+  "workspace_settings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").references(() => workspacesTable.id, { onDelete: "cascade" }),
+    notionPrDatabaseId: text("notion_pr_database_id"),
+    notionReleasesDatabaseId: text("notion_releases_database_id"),
+    releaseInfoPlistPath: text("release_info_plist_path"),
+    releaseVersionBranch: text("release_version_branch"),
+    releaseMonitoredRepo: text("release_monitored_repo"),
+    /**
+     * Tipo de projeto para releases: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`.
+     * Usar em conjunto com `release_version_file_path` (um único ficheiro onde a versão muda).
+     */
+    releaseProjectKind: text("release_project_kind"),
+    /** Caminho no repo do ficheiro de versão (Info.plist, project.pbxproj, app.json, etc.). */
+    releaseVersionFilePath: text("release_version_file_path"),
+    releaseProjectPbxprojPath: text("release_project_pbxproj_path"),
+    /**
+     * Expo / React Native: repo-relative path to `app.json`, `app.config.json`, `app.config.js`, or `app.config.ts`.
+     * When set, release version is read from this file instead of Info.plist / pbxproj.
+     * Prefer `release_project_kind` + `release_version_file_path` for novos projetos.
+     */
+    releaseExpoAppConfigPath: text("release_expo_app_config_path"),
+    releaseCompareRootSha: text("release_compare_root_sha"),
+    /** Base branch names for PR summarization (`pull_request.base.ref`); empty means any branch. */
+    prSummaryBaseBranches: jsonb("pr_summary_base_branches").$type<string[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceIdUniqueWhenSet: uniqueIndex("workspace_settings_workspace_id_key")
+      .on(table.workspaceId)
+      .where(sql`${table.workspaceId} IS NOT NULL`),
   }),
 );
 
