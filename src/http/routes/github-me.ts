@@ -174,7 +174,7 @@ export const handler = async (
 
     const redirectWith = (search: Record<string, string>) => {
       const qs = new URLSearchParams(search).toString();
-      return reply.redirect(`${frontend}/workspaces/new?${qs}`, 302);
+      return reply.redirect(`${frontend}/workspaces/new/github?${qs}`, 302);
     };
 
     if (typeof code !== "string" || typeof state !== "string") {
