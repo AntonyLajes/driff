@@ -301,7 +301,7 @@ This is **not** the same integration as the **GitHub App** (`GITHUB_APP_*`) used
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | `POST` | `/api/me/github/oauth/start` | Bearer session JWT | Returns JSON `{ "authorizeUrl" }` — open this URL in the browser to start GitHub OAuth. |
-| `GET` | `/api/me/github/oauth/callback` | _(GitHub redirect)_ | Exchanges `code`, stores sealed tokens in `user_github_accounts`, redirects to **`FRONTEND_URL/settings?github_oauth=success&github_login=...`** (or `github_oauth=exchange_failed`, etc.). |
+| `GET` | `/api/me/github/oauth/callback` | _(GitHub redirect)_ | Exchanges `code`, stores sealed tokens in `user_github_accounts`, redirects to **`FRONTEND_URL/workspaces/new?github_oauth=success&github_login=...`** (or `github_oauth=exchange_failed`, etc.). |
 | `GET` | `/api/me/github/status` | Bearer | `{ "connected": boolean, "githubLogin"?: string }` |
 | `DELETE` | `/api/me/github/disconnect` | Bearer | **204** — removes stored GitHub tokens for the user. |
 | `GET` | `/api/me/github/repos` | Bearer | Query `page` (default 1), `per_page` (default 30, max 100). Returns `{ repos, page, perPage, hasMore }`. **400** `github_not_connected` if OAuth not completed. |
