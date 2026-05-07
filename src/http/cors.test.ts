@@ -35,6 +35,30 @@ describe("http/cors execute", () => {
     );
   });
 
+  it("should allow DELETE on preflight so disconnect-style API calls work", async () => {
+    const server = Fastify({ logger: false });
+    servers.push(server);
+
+    await execute(server, { kind: "reflect" });
+    server.delete("/probe", async () => ({ ok: true }));
+    await server.ready();
+
+    const response = await server.inject({
+      method: "OPTIONS",
+      url: "/probe",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "DELETE",
+        "access-control-request-headers": "authorization",
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+    const allowMethods = response.headers["access-control-allow-methods"];
+    expect(allowMethods).toBeDefined();
+    expect(String(allowMethods)).toContain("DELETE");
+  });
+
   it("should allow only listed origins when using allowlist mode", async () => {
     const server = Fastify({ logger: false });
     servers.push(server);

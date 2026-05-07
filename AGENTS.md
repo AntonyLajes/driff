@@ -271,7 +271,7 @@ NODE_ENV=development
 
 ### CORS (Driff web UI → API)
 
-Browsers call the JSON API from a different origin than Fastify (e.g. Vite on port 5173). **`CORS_ORIGINS`** is an optional comma-separated allowlist. When it is **empty**: `NODE_ENV === "development"` registers **reflective** CORS (`Access-Control-Allow-Origin` mirrors the request `Origin`); `test` and `production` leave CORS **off** until you set explicit origins. When **`CORS_ORIGINS` is non-empty**, that allowlist is always used (all environments). Registration lives in `src/http/cors.ts` and is wired from `src/index.ts` into `createServer`.
+Browsers call the JSON API from a different origin than Fastify (e.g. Vite on port 5173). **`CORS_ORIGINS`** is an optional comma-separated allowlist. When it is **empty**: `NODE_ENV === "development"` registers **reflective** CORS (`Access-Control-Allow-Origin` mirrors the request `Origin`); `test` and `production` leave CORS **off** until you set explicit origins. When **`CORS_ORIGINS` is non-empty**, that allowlist is always used (all environments). Registration lives in `src/http/cors.ts` and is wired from `src/index.ts` into `createServer`. Preflight responses explicitly allow **`DELETE`**, **`PATCH`**, and **`PUT`** (not only GET/POST), so browser calls such as GitHub disconnect succeed.
 
 ### `workspaces` (Postgres)
 
