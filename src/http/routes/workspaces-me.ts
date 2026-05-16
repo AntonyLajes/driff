@@ -5,7 +5,7 @@ import { z } from "zod";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { releaseProjectKindSchema } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
-import { pullRequestsTable, releasesTable, workspacesTable } from "@/db/schema.js";
+import { pullRequestsTable, releasesTable, workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 
 export interface WorkspacesMeRegistrationInput {
@@ -65,6 +65,13 @@ const workspaceRowSelect = {
   createdAt: workspacesTable.createdAt,
   updatedAt: workspacesTable.updatedAt,
 };
+
+const patchWorkspaceSettingsBodySchema = z
+  .object({
+    notionPrDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
+    notionReleasesDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" });
 
 const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugParam: string) => {
   const slug = normalizeWorkspaceSlug(slugParam);
@@ -176,6 +183,134 @@ export const handler = async (
     }));
 
     return reply.send({ releases, pullRequests: prRows });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/settings", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const wsId = loaded.workspace.id;
+    const rows = await input.db
+      .select({
+        notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
+        notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+      })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, wsId))
+      .limit(1);
+    const row = rows[0];
+    return reply.send({
+      settings: {
+        notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
+        notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
+      },
+    });
+  });
+
+  instance.patch("/api/me/workspaces/by-slug/:slug/settings", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const parsedBody = patchWorkspaceSettingsBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const patch = parsedBody.data;
+    const wsId = loaded.workspace.id;
+    const now = new Date();
+
+    const mapId = (v: string | null | undefined): string | null | undefined => {
+      if (v === undefined) {
+        return undefined;
+      }
+      if (v === null) {
+        return null;
+      }
+      const t = v.trim();
+      return t.length === 0 ? null : t;
+    };
+    const nextPr = mapId(patch.notionPrDatabaseId);
+    const nextRel = mapId(patch.notionReleasesDatabaseId);
+
+    const existing = await input.db
+      .select({ id: workspaceSettingsTable.id })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, wsId))
+      .limit(1);
+    const existingRow = existing[0];
+
+    if (existingRow !== undefined) {
+      await input.db
+        .update(workspaceSettingsTable)
+        .set({
+          ...(nextPr !== undefined ? { notionPrDatabaseId: nextPr } : {}),
+          ...(nextRel !== undefined ? { notionReleasesDatabaseId: nextRel } : {}),
+          updatedAt: now,
+        })
+        .where(eq(workspaceSettingsTable.id, existingRow.id));
+    } else {
+      await input.db.insert(workspaceSettingsTable).values({
+        workspaceId: wsId,
+        notionPrDatabaseId: nextPr === undefined ? null : nextPr,
+        notionReleasesDatabaseId: nextRel === undefined ? null : nextRel,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const rows = await input.db
+      .select({
+        notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
+        notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+      })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, wsId))
+      .limit(1);
+    const row = rows[0];
+    return reply.send({
+      settings: {
+        notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
+        notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
+      },
+    });
   });
 
   instance.get("/api/me/workspaces/by-slug/:slug", async (request, reply) => {
