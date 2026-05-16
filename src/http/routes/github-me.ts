@@ -5,10 +5,11 @@ import { z } from "zod";
 
 import { signGithubOAuthState, verifyGithubOAuthState } from "@/auth/github-oauth-state.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
-import { sealSecret, openSecret } from "@/auth/token-aes.js";
+import { sealSecret } from "@/auth/token-aes.js";
 import type { Env } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
 import { userGithubAccountsTable } from "@/db/schema.js";
+import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { inferRepoKind } from "@/github/repo-kind-infer.js";
 
 const GITHUB_OAUTH_SCOPES = "read:user repo";
@@ -121,23 +122,6 @@ const fetchGithubUserLogin = async (accessToken: string): Promise<{ id: string; 
     throw new Error("github_user_missing_fields");
   }
   return { id: String(json.id), login: json.login };
-};
-
-const loadGithubAccessToken = async (
-  db: Database,
-  userId: string,
-  jwtSecret: string,
-): Promise<string | null> => {
-  const rows = await db
-    .select()
-    .from(userGithubAccountsTable)
-    .where(eq(userGithubAccountsTable.userId, userId))
-    .limit(1);
-  const row = rows[0];
-  if (row === undefined) {
-    return null;
-  }
-  return openSecret(row.accessTokenCiphertext, jwtSecret);
 };
 
 export const handler = async (
@@ -294,7 +278,7 @@ export const handler = async (
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const accessToken = await loadGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
     if (accessToken === null) {
       return reply.status(400).send({ error: "github_not_connected" });
     }
@@ -344,7 +328,7 @@ export const handler = async (
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const accessToken = await loadGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
     if (accessToken === null) {
       return reply.status(400).send({ error: "github_not_connected" });
     }

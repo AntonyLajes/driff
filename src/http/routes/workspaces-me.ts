@@ -1,11 +1,17 @@
 import type { FastifyInstance } from "fastify";
+import { Octokit } from "@octokit/rest";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
-import { releaseProjectKindSchema } from "@/config/release-project-kind.js";
+import {
+  applyReleaseKindAndFilePath,
+  isSupportedReleaseProjectKind,
+  releaseProjectKindSchema,
+} from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable, workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
+import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 
 export interface WorkspacesMeRegistrationInput {
@@ -70,8 +76,57 @@ const patchWorkspaceSettingsBodySchema = z
   .object({
     notionPrDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
     notionReleasesDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
+    releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
+    releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
+    releaseVersionBranch: z.union([z.string().max(255), z.null()]).optional(),
   })
-  .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" });
+  .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" })
+  .superRefine((body, ctx) => {
+    const k = body.releaseProjectKind;
+    const p = body.releaseVersionFilePath;
+    if (k === undefined && p === undefined) {
+      return;
+    }
+    if (k === undefined || p === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "release_kind_and_path_together",
+        path: ["releaseProjectKind"],
+      });
+      return;
+    }
+    const kNull = k === null;
+    const pNull = p === null;
+    if (kNull !== pNull) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "release_kind_path_mismatch",
+        path: ["releaseProjectKind"],
+      });
+      return;
+    }
+    if (k !== null && p !== null) {
+      if (!isSupportedReleaseProjectKind(k)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "unsupported_release_kind",
+          path: ["releaseProjectKind"],
+        });
+      }
+      if (!p.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "empty_release_version_file_path",
+          path: ["releaseVersionFilePath"],
+        });
+      }
+    }
+  });
+
+const repoContentsQuerySchema = z.object({
+  path: z.string().max(2048).optional().default(""),
+  ref: z.string().min(1).max(255).optional(),
+});
 
 const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugParam: string) => {
   const slug = normalizeWorkspaceSlug(slugParam);
@@ -213,6 +268,9 @@ export const handler = async (
       .select({
         notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
         notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+        releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
+        releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
+        releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -222,8 +280,114 @@ export const handler = async (
       settings: {
         notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
         notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
+        releaseProjectKind: row?.releaseProjectKind ?? null,
+        releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
+        releaseVersionBranch: row?.releaseVersionBranch ?? null,
       },
     });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/repo/contents", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const repoFull = loaded.workspace.githubRepoFullName?.trim();
+    if (repoFull === undefined || repoFull.length === 0) {
+      return reply.status(400).send({ error: "workspace_repo_not_linked" });
+    }
+
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+
+    const parsedQuery = repoContentsQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply.status(400).send({ error: "invalid_query" });
+    }
+    const pathParam = parsedQuery.data.path.trim();
+    const refParam =
+      parsedQuery.data.ref?.trim() ||
+      loaded.workspace.githubRepoDefaultBranch?.trim() ||
+      "main";
+
+    const slash = repoFull.indexOf("/");
+    if (slash <= 0 || slash === repoFull.length - 1) {
+      return reply.status(400).send({ error: "invalid_repo_full_name" });
+    }
+    const owner = repoFull.slice(0, slash);
+    const repo = repoFull.slice(slash + 1);
+
+    const octokit = new Octokit({ auth: accessToken });
+    try {
+      const { data } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path: pathParam.length > 0 ? pathParam : "",
+        ref: refParam,
+      });
+      if (!Array.isArray(data)) {
+        const name = "name" in data && typeof data.name === "string" ? data.name : "";
+        const path =
+          "path" in data && typeof data.path === "string" ? data.path : pathParam;
+        return reply.send({
+          ref: refParam,
+          requestedPath: pathParam,
+          entries: [{ name, path, type: "file" as const }],
+        });
+      }
+      const entries = data
+        .filter((e) => e.type === "file" || e.type === "dir")
+        .map((e) => ({
+          name: e.name,
+          path: e.path,
+          type: e.type as "file" | "dir",
+        }))
+        .sort((a, b) => {
+          if (a.type !== b.type) {
+            return a.type === "dir" ? -1 : 1;
+          }
+          return a.name.localeCompare(b.name);
+        });
+      return reply.send({
+        ref: refParam,
+        requestedPath: pathParam,
+        entries,
+      });
+    } catch (err: unknown) {
+      const status =
+        typeof err === "object" && err !== null && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      if (status === 404) {
+        return reply.status(404).send({ error: "repo_path_not_found" });
+      }
+      request.log.warn({ err }, "workspace_repo_contents_failed");
+      return reply.status(500).send({ error: "repo_contents_failed" });
+    }
   });
 
   instance.patch("/api/me/workspaces/by-slug/:slug/settings", async (request, reply) => {
@@ -269,6 +433,48 @@ export const handler = async (
     };
     const nextPr = mapId(patch.notionPrDatabaseId);
     const nextRel = mapId(patch.notionReleasesDatabaseId);
+    const nextBranch = mapId(patch.releaseVersionBranch);
+
+    const nonBlankOrNull = (s: string | null): string | null => {
+      const t = s?.trim();
+      return t && t.length > 0 ? t : null;
+    };
+
+    let releasePatch: {
+      releaseProjectKind?: string | null;
+      releaseVersionFilePath?: string | null;
+      releaseInfoPlistPath?: string | null;
+      releaseProjectPbxprojPath?: string | null;
+      releaseExpoAppConfigPath?: string | null;
+      releaseVersionBranch?: string | null;
+    } = {};
+
+    if (patch.releaseProjectKind !== undefined && patch.releaseVersionFilePath !== undefined) {
+      if (patch.releaseProjectKind === null && patch.releaseVersionFilePath === null) {
+        releasePatch = {
+          releaseProjectKind: null,
+          releaseVersionFilePath: null,
+          releaseInfoPlistPath: null,
+          releaseProjectPbxprojPath: null,
+          releaseExpoAppConfigPath: null,
+        };
+      } else if (patch.releaseProjectKind !== null && patch.releaseVersionFilePath !== null) {
+        const applied = applyReleaseKindAndFilePath(
+          patch.releaseProjectKind,
+          patch.releaseVersionFilePath,
+        );
+        releasePatch = {
+          releaseProjectKind: patch.releaseProjectKind,
+          releaseVersionFilePath: patch.releaseVersionFilePath.trim(),
+          releaseInfoPlistPath: nonBlankOrNull(applied.releaseInfoPlistPath),
+          releaseProjectPbxprojPath: nonBlankOrNull(applied.releaseProjectPbxprojPath),
+          releaseExpoAppConfigPath: nonBlankOrNull(applied.releaseExpoAppConfigPath),
+        };
+      }
+    }
+    if (nextBranch !== undefined) {
+      releasePatch = { ...releasePatch, releaseVersionBranch: nextBranch };
+    }
 
     const existing = await input.db
       .select({ id: workspaceSettingsTable.id })
@@ -283,6 +489,7 @@ export const handler = async (
         .set({
           ...(nextPr !== undefined ? { notionPrDatabaseId: nextPr } : {}),
           ...(nextRel !== undefined ? { notionReleasesDatabaseId: nextRel } : {}),
+          ...releasePatch,
           updatedAt: now,
         })
         .where(eq(workspaceSettingsTable.id, existingRow.id));
@@ -291,6 +498,24 @@ export const handler = async (
         workspaceId: wsId,
         notionPrDatabaseId: nextPr === undefined ? null : nextPr,
         notionReleasesDatabaseId: nextRel === undefined ? null : nextRel,
+        releaseProjectKind:
+          releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
+        releaseVersionFilePath:
+          releasePatch.releaseVersionFilePath === undefined
+            ? null
+            : releasePatch.releaseVersionFilePath,
+        releaseInfoPlistPath:
+          releasePatch.releaseInfoPlistPath === undefined ? null : releasePatch.releaseInfoPlistPath,
+        releaseProjectPbxprojPath:
+          releasePatch.releaseProjectPbxprojPath === undefined
+            ? null
+            : releasePatch.releaseProjectPbxprojPath,
+        releaseExpoAppConfigPath:
+          releasePatch.releaseExpoAppConfigPath === undefined
+            ? null
+            : releasePatch.releaseExpoAppConfigPath,
+        releaseVersionBranch:
+          releasePatch.releaseVersionBranch === undefined ? null : releasePatch.releaseVersionBranch,
         createdAt: now,
         updatedAt: now,
       });
@@ -300,6 +525,9 @@ export const handler = async (
       .select({
         notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
         notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+        releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
+        releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
+        releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -309,6 +537,9 @@ export const handler = async (
       settings: {
         notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
         notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
+        releaseProjectKind: row?.releaseProjectKind ?? null,
+        releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
+        releaseVersionBranch: row?.releaseVersionBranch ?? null,
       },
     });
   });
