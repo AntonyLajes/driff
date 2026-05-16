@@ -5,7 +5,7 @@ import { z } from "zod";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { releaseProjectKindSchema } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
-import { workspacesTable } from "@/db/schema.js";
+import { pullRequestsTable, releasesTable, workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 
 export interface WorkspacesMeRegistrationInput {
@@ -66,6 +66,23 @@ const workspaceRowSelect = {
   updatedAt: workspacesTable.updatedAt,
 };
 
+const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugParam: string) => {
+  const slug = normalizeWorkspaceSlug(slugParam);
+  if (slug.length === 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+    return { kind: "invalid_slug" as const };
+  }
+  const rows = await db
+    .select(workspaceRowSelect)
+    .from(workspacesTable)
+    .where(and(eq(workspacesTable.userId, userId), eq(workspacesTable.slug, slug)))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined) {
+    return { kind: "not_found" as const };
+  }
+  return { kind: "ok" as const, workspace: row };
+};
+
 export const handler = async (
   instance: FastifyInstance,
   input: WorkspacesMeRegistrationInput,
@@ -87,6 +104,103 @@ export const handler = async (
       .orderBy(desc(workspacesTable.createdAt));
 
     return reply.send({ workspaces: [...rows] });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/summary", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const repo = loaded.workspace.githubRepoFullName?.trim();
+    if (repo === undefined || repo.length === 0) {
+      return reply.send({ releases: [], pullRequests: [] });
+    }
+
+    const releaseRows = await input.db
+      .select({
+        id: releasesTable.id,
+        shortVersion: releasesTable.shortVersion,
+        buildVersion: releasesTable.buildVersion,
+        branch: releasesTable.branch,
+        headSha: releasesTable.headSha,
+        createdAt: releasesTable.createdAt,
+        changelog: releasesTable.changelog,
+      })
+      .from(releasesTable)
+      .where(eq(releasesTable.repo, repo))
+      .orderBy(desc(releasesTable.createdAt))
+      .limit(15);
+
+    const prRows = await input.db
+      .select({
+        id: pullRequestsTable.id,
+        prNumber: pullRequestsTable.prNumber,
+        title: pullRequestsTable.title,
+        author: pullRequestsTable.author,
+        mergedAt: pullRequestsTable.mergedAt,
+        summaryUserFacing: pullRequestsTable.summaryUserFacing,
+      })
+      .from(pullRequestsTable)
+      .where(eq(pullRequestsTable.repo, repo))
+      .orderBy(desc(pullRequestsTable.mergedAt))
+      .limit(15);
+
+    const maxChangelog = 480;
+    const releases = releaseRows.map((r) => ({
+      id: r.id,
+      shortVersion: r.shortVersion,
+      buildVersion: r.buildVersion,
+      branch: r.branch,
+      headSha: r.headSha,
+      createdAt: r.createdAt,
+      changelogPreview:
+        r.changelog.length > maxChangelog ? `${r.changelog.slice(0, maxChangelog)}…` : r.changelog,
+    }));
+
+    return reply.send({ releases, pullRequests: prRows });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+    return reply.send({ workspace: loaded.workspace });
   });
 
   instance.post("/api/me/workspaces", async (request, reply) => {
