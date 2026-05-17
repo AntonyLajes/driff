@@ -18,8 +18,8 @@ const BROWSER_API_METHODS = [
 ] as const;
 
 const corsOptions = {
-  methods: [...BROWSER_API_METHODS],
-} as const;
+  methods: [...BROWSER_API_METHODS] as string[],
+};
 
 export const execute = async (
   server: FastifyInstance,
