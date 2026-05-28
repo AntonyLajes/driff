@@ -113,18 +113,6 @@ vi.mock("@/destinations/notion/notion-destination.js", () => ({
   execute: mocks.createNotionDestination,
 }));
 
-vi.mock("@/config/workspace-settings.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/config/workspace-settings.js")>();
-  return {
-    ...actual,
-    execute: async (_db: unknown, env: import("@/config/env.js").Env) => {
-      const merged = actual.mergeWorkspaceSettings(undefined, env);
-      actual.validateMergedWorkspaceSettings(merged);
-      return merged;
-    },
-  };
-});
-
 import { execute } from "@/index.js";
 
 describe("index execute runtime wiring", () => {
