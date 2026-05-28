@@ -366,4 +366,53 @@ describe("http/routes/webhooks handler", () => {
       branch: "develop",
     });
   });
+
+  it("should return skip reason when workspace settings are missing for repository", async () => {
+    const secret = "webhook-secret";
+    const serverMissingSettings = fastify({ logger: false });
+    servers.push(serverMissingSettings);
+    serverMissingSettings.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+    const enqueueProcessPrJob = vi.fn(async () => undefined);
+    await handler(serverMissingSettings, {
+      webhookSecret: secret,
+      resolveWebhookSettings: async () => null,
+      findWebhookEventByDeliveryId: vi.fn(async () => false),
+      insertWebhookEvent: vi.fn(async () => undefined),
+      enqueueProcessPrJob,
+      enqueueProcessReleaseJob: vi.fn(async () => undefined),
+    });
+    await serverMissingSettings.ready();
+    const payload = JSON.stringify({
+      action: "closed",
+      pull_request: {
+        merged: true,
+        number: 5,
+        base: { ref: "main" },
+      },
+      repository: { full_name: "acme/mobile-app" },
+    });
+    const response = await serverMissingSettings.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        "x-github-delivery": "delivery-missing-settings",
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": buildSignature(payload, secret),
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ok: true,
+      skipped: "workspace_settings_missing_for_repo",
+    });
+    expect(enqueueProcessPrJob).not.toHaveBeenCalled();
+  });
 });

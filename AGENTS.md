@@ -145,7 +145,7 @@ docs/
 src/
   config/
     env.ts                  # Env var validation with Zod (secrets + infra)
-    workspace-settings.ts   # Merge `workspace_settings` row with env fallbacks; validated at boot
+    workspace-settings.ts   # Resolve strict per-workspace settings (no global fallback)
     release-project-kind.ts # Tipo de projeto + path único → campos legados plist/pbx/expo
   db/
     schema.ts               # Drizzle schemas
@@ -234,7 +234,7 @@ npm run format             # prettier --write
 
 ## Environment variables
 
-Validated in `src/config/env.ts` with Zod. **Secrets and infra** (database URL, GitHub App, webhook secret, Anthropic, Notion token, port/log level) stay here. **Integration IDs and release paths** can live in the `workspace_settings` table instead; env keys with the same names remain as **optional fallbacks** when a column is null or blank (see `src/config/workspace-settings.ts`).
+Validated in `src/config/env.ts` with Zod. **Secrets and infra** (database URL, GitHub App, webhook secret, Anthropic, Notion token, port/log level) stay here. **Workspace behavior/configuration** (Notion database IDs, PR base branches, release branch, release version file/kind, repo filters) must live in `workspace_settings` and is resolved per repository.
 
 ```
 # Postgres (Railway provides automatically when you attach the DB)
@@ -248,19 +248,8 @@ GITHUB_WEBHOOK_SECRET=     # Secret defined when creating the app
 # Anthropic
 ANTHROPIC_API_KEY=
 
-# Notion (token stays in env; database IDs optional here if set in workspace_settings)
+# Notion (token stays in env; database IDs are per-workspace in Postgres)
 NOTION_TOKEN=
-# NOTION_DATABASE_ID=
-# Optional fallbacks (same semantics as workspace_settings columns):
-# PR_SUMMARY_BASE_BRANCHES=develop
-# NOTION_RELEASES_DATABASE_ID=
-# RELEASE_PROJECT_KIND=react_native_expo
-# RELEASE_VERSION_FILE_PATH=app.json
-# RELEASE_INFO_PLIST_PATH=Info.plist
-# RELEASE_VERSION_BRANCH=develop
-# RELEASE_PROJECT_PBXPROJ_PATH=
-# RELEASE_MONITORED_REPO=
-# RELEASE_COMPARE_ROOT_SHA=
 
 # App
 PORT=3000
@@ -313,12 +302,13 @@ This is **not** the same integration as the **GitHub App** (`GITHUB_APP_*`) used
 
 ### `workspace_settings` (Postgres)
 
-Integration rows optionally reference **`workspace_id`** → `workspaces.id` (at most one settings row per workspace). The worker and GitHub webhooks still read only **legacy global** settings: the newest row where **`workspace_id` IS NULL**, merged with env. **Non-blank DB values override env** for: Notion PR / releases database ids, release paths, version branch, monitored repo, compare root SHA, `pr_summary_base_branches` (JSON array of strings), and the **unified release fields** below.
+Every workspace must have its own row in `workspace_settings` via `workspace_id` (1:1 by unique index). Runtime webhook + worker resolution is strict by repository (`workspaces.github_repo_full_name`) and **does not** fall back to global/env behavior settings.
 
-After `npm run db:migrate`, insert one row (adjust UUID if you prefer a fixed id). Example:
+After `npm run db:migrate`, create/update settings for each workspace id. Example:
 
 ```sql
 INSERT INTO workspace_settings (
+  workspace_id,
   notion_pr_database_id,
   notion_releases_database_id,
   release_project_kind,
@@ -326,12 +316,13 @@ INSERT INTO workspace_settings (
   release_version_branch,
   pr_summary_base_branches
 ) VALUES (
+  'workspace-uuid-here',
   'your-notion-pr-database-id',
   'your-notion-releases-database-id',
   'ios_plist',
   'ios/App/Info.plist',
-  'develop',
-  '["develop", "release"]'::jsonb
+  'main',
+  '["main"]'::jsonb
 );
 ```
 
@@ -339,7 +330,7 @@ INSERT INTO workspace_settings (
 
 **Legado:** ainda podes preencher só `release_info_plist_path`, `release_project_pbxproj_path`, ou `release_expo_app_config_path` (ou envs equivalentes); o boot infere `release_project_kind` + `release_version_file_path` para UI.
 
-Validation: `notion_pr_database_id` must be set in **either** the row or `NOTION_DATABASE_ID`. If `notion_releases_database_id` is set, `release_version_branch` must be set, and **at least one** fonte de versão: o par unificado (`release_project_kind` + `release_version_file_path`) **ou** qualquer um dos três caminhos legados.
+Validation: `notion_pr_database_id` must be set in the workspace row. If `notion_releases_database_id` is set, `release_version_branch` must be set, and **at least one** fonte de versão: o par unificado (`release_project_kind` + `release_version_file_path`) **ou** qualquer um dos três caminhos legados.
 
 **Expo / React Native:** Com `react_native_expo` + path, `gather-release-context` lê `expo.version` e build a partir desse ficheiro (JSON fiável; `.js`/`.ts` usa extração estática por regex — preferir `app.json`/`app.config.json` quando o config é dinâmico). Webhooks `push` observam `versionWatchPaths` derivados desses caminhos.
 

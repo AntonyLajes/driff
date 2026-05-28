@@ -37,8 +37,8 @@ export interface WebhookEnqueueSettings {
 export interface HandlerInput extends WebhookDependencies {
   webhookSecret: string;
   /**
-   * When set, branch filters and release enqueue rules follow the workspace linked to the
-   * webhook repository (then global `workspace_settings` + env).
+   * Branch filters and release enqueue rules resolved from the workspace linked to
+   * `repository.full_name`. Returning null skips enqueue for this webhook.
    */
   resolveWebhookSettings?: (repoFullName: string) => Promise<WebhookEnqueueSettings | null>;
   /**
@@ -236,7 +236,7 @@ export const execute = async (
       { repo: repoFullName, eventType: parsedHeaders.eventType },
       "webhook skipped enqueue: workspace settings not configured for repository",
     );
-    reply.status(200).send({ ok: true });
+    reply.status(200).send({ ok: true, skipped: "workspace_settings_missing_for_repo" });
     return;
   }
 
