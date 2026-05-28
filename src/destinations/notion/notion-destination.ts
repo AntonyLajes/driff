@@ -36,22 +36,14 @@ const getNotionClientFactory = (
 const getCredentials = (input: ExecuteInput): { token: string; databaseId: string } => {
   const tokenFromInput = input.token?.trim();
   const databaseIdFromInput = input.databaseId?.trim();
-  if (tokenFromInput && databaseIdFromInput) {
-    return { token: tokenFromInput, databaseId: databaseIdFromInput };
-  }
-
-  const env = loadEnv();
-  const token = tokenFromInput && tokenFromInput.length > 0 ? tokenFromInput : env.NOTION_TOKEN;
-  const databaseId =
-    databaseIdFromInput && databaseIdFromInput.length > 0
-      ? databaseIdFromInput
-      : (env.NOTION_DATABASE_ID?.trim() ?? "");
-  if (!databaseId) {
+  if (!databaseIdFromInput) {
     throw new Error(
-      "Notion PR database id is not configured; pass databaseId to the destination factory or set NOTION_DATABASE_ID / workspace_settings.",
+      "Notion PR database id is not configured; pass databaseId from workspace settings.",
     );
   }
-  return { token, databaseId };
+  const token =
+    tokenFromInput && tokenFromInput.length > 0 ? tokenFromInput : loadEnv().NOTION_TOKEN;
+  return { token, databaseId: databaseIdFromInput };
 };
 
 const getReleasesDatabaseId = (input: ExecuteInput): string | null => {
@@ -59,7 +51,7 @@ const getReleasesDatabaseId = (input: ExecuteInput): string | null => {
   if (fromInput && fromInput.length > 0) {
     return fromInput;
   }
-  return loadEnv().NOTION_RELEASES_DATABASE_ID?.trim() ?? null;
+  return null;
 };
 
 const toReleaseProperties = (summary: ReleaseNotesSummary): Record<string, unknown> => {
@@ -153,7 +145,9 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishRelease: async (summary) => {
       const releasesId = getReleasesDatabaseId(input);
       if (!releasesId) {
-        throw new Error("NOTION_RELEASES_DATABASE_ID is not configured; cannot publish release notes.");
+        throw new Error(
+          "Notion releases database id is not configured; pass releasesDatabaseId from workspace settings.",
+        );
       }
       const createInput = {
         parent: { database_id: releasesId },
