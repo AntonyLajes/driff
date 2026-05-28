@@ -175,6 +175,9 @@ describe("resolveWorkspaceSettingsForRepo", () => {
     const merged = await resolveWorkspaceSettingsForRepo(db, "AntonyLajes/ride-pack");
 
     expect(merged).not.toBeNull();
+    if (merged === null) {
+      throw new Error("expected merged workspace settings");
+    }
     expect(merged.releaseVersionBranch).toBe("main");
     expect(merged.notionPrDatabaseId).toBe("pr-ws");
     expect(select).toHaveBeenCalledTimes(2);
