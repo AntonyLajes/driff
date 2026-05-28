@@ -4,6 +4,7 @@ import { execute as parseEnv } from "@/config/env.js";
 import {
   execute as loadWorkspaceSettings,
   mergeWorkspaceSettings,
+  resolveMergedSettingsForRepo,
   validateMergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
 import type { workspaceSettingsTable } from "@/db/schema.js";
@@ -193,6 +194,47 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       buildEnv({ NOTION_DATABASE_ID: undefined, NOTION_RELEASES_DATABASE_ID: undefined }),
     );
     expect(() => validateMergedWorkspaceSettings(merged)).not.toThrow();
+  });
+});
+
+describe("resolveMergedSettingsForRepo", () => {
+  it("should prefer workspace_settings for a matching github_repo_full_name", async () => {
+    const wsId = "ws-ride";
+    const workspaceFrom = vi.fn(() => ({
+      where: vi.fn(() => ({ limit: vi.fn(async () => [{ id: wsId }]) })),
+    }));
+    const perWorkspaceFrom = vi.fn(() => ({
+      where: vi.fn(() => ({
+        limit: vi.fn(async () => [
+          row({
+            workspaceId: wsId,
+            releaseVersionBranch: "main",
+            notionPrDatabaseId: "pr-ws",
+          }),
+        ]),
+      })),
+    }));
+    const globalFrom = vi.fn(() => ({
+      where: vi.fn(() => ({
+        orderBy: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+      })),
+    }));
+    const select = vi
+      .fn()
+      .mockImplementationOnce(() => ({ from: workspaceFrom }))
+      .mockImplementationOnce(() => ({ from: perWorkspaceFrom }))
+      .mockImplementationOnce(() => ({ from: globalFrom }));
+    const db = { select } as never;
+
+    const merged = await resolveMergedSettingsForRepo(
+      db,
+      buildEnv({ RELEASE_VERSION_BRANCH: "develop", NOTION_DATABASE_ID: "env-pr" }),
+      "AntonyLajes/ride-pack",
+    );
+
+    expect(merged.releaseVersionBranch).toBe("main");
+    expect(merged.notionPrDatabaseId).toBe("pr-ws");
+    expect(select).toHaveBeenCalledTimes(2);
   });
 });
 

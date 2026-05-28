@@ -1,4 +1,4 @@
-import { desc, isNull } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 
 import type { Env } from "@/config/env.js";
 import {
@@ -9,7 +9,7 @@ import {
   type ReleaseProjectKind,
 } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
-import { workspaceSettingsTable } from "@/db/schema.js";
+import { workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 
 export interface MergedWorkspaceSettings {
   notionPrDatabaseId: string;
@@ -168,14 +168,59 @@ export const validateMergedWorkspaceSettings = (merged: MergedWorkspaceSettings)
  * Loads the newest **global** `workspace_settings` row (`workspace_id` null) and merges with env.
  * Per-user workspace rows are ignored until the worker reads settings by workspace.
  */
-export const execute = async (db: Database, env: Env): Promise<MergedWorkspaceSettings> => {
+const loadNewestGlobalWorkspaceSettingsRow = async (
+  db: Database,
+): Promise<typeof workspaceSettingsTable.$inferSelect | undefined> => {
   const rows = await db
     .select()
     .from(workspaceSettingsTable)
     .where(isNull(workspaceSettingsTable.workspaceId))
     .orderBy(desc(workspaceSettingsTable.updatedAt))
     .limit(1);
-  const merged = mergeWorkspaceSettings(rows[0], env);
+  return rows[0];
+};
+
+/**
+ * Settings for webhook enqueue: prefers `workspace_settings` linked to a workspace
+ * whose `github_repo_full_name` matches `repoFullName`, then falls back to global row + env.
+ */
+export const resolveMergedSettingsForRepo = async (
+  db: Database,
+  env: Env,
+  repoFullName: string,
+): Promise<MergedWorkspaceSettings> => {
+  const normalized = repoFullName.trim();
+  if (normalized.length === 0) {
+    return mergeWorkspaceSettings(await loadNewestGlobalWorkspaceSettingsRow(db), env);
+  }
+
+  const workspaceRows = await db
+    .select({ id: workspacesTable.id })
+    .from(workspacesTable)
+    .where(eq(workspacesTable.githubRepoFullName, normalized))
+    .limit(1);
+
+  const workspaceId = workspaceRows[0]?.id;
+  let settingsRow: typeof workspaceSettingsTable.$inferSelect | undefined;
+
+  if (workspaceId !== undefined) {
+    const perWorkspace = await db
+      .select()
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, workspaceId))
+      .limit(1);
+    settingsRow = perWorkspace[0];
+  }
+
+  if (settingsRow === undefined) {
+    settingsRow = await loadNewestGlobalWorkspaceSettingsRow(db);
+  }
+
+  return mergeWorkspaceSettings(settingsRow, env);
+};
+
+export const execute = async (db: Database, env: Env): Promise<MergedWorkspaceSettings> => {
+  const merged = mergeWorkspaceSettings(await loadNewestGlobalWorkspaceSettingsRow(db), env);
   validateMergedWorkspaceSettings(merged);
   return merged;
 };

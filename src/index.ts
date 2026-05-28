@@ -4,6 +4,7 @@ import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
   execute as loadWorkspaceSettings,
+  resolveMergedSettingsForRepo,
   type MergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
 import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
@@ -96,14 +97,25 @@ const buildCorsFromEnv = (env: Env): CorsRegistrationInput => {
 
 const buildWebhookInput = (
   input: ExecuteInput,
+  env: Env,
   webhookSecret: string,
   prSummaryBaseBranches: string[] | null,
   releaseConfig: import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null,
   db: Database,
 ): WebhookHandlerInput => {
+  const resolveWebhookSettings = async (repoFullName: string) => {
+    const merged = await resolveMergedSettingsForRepo(db, env, repoFullName);
+    const releaseNotesEnabled = Boolean(merged.notionReleasesDatabaseId?.trim());
+    return {
+      prSummaryBaseBranches: merged.prSummaryBaseBranches,
+      releaseConfig: releaseNotesEnabled ? buildReleaseConfig(merged) : null,
+    };
+  };
+
   if (input.webhook) {
     return {
       ...input.webhook,
+      resolveWebhookSettings: input.webhook.resolveWebhookSettings ?? resolveWebhookSettings,
       prSummaryBaseBranches: input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
       releaseConfig: input.webhook.releaseConfig !== undefined ? input.webhook.releaseConfig : releaseConfig,
     };
@@ -111,6 +123,7 @@ const buildWebhookInput = (
 
   return {
     webhookSecret,
+    resolveWebhookSettings,
     prSummaryBaseBranches,
     releaseConfig,
     ...createWebhookDependencies({ db }),
@@ -130,6 +143,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   const releaseNotesEnabled = Boolean(workspace.notionReleasesDatabaseId?.trim());
   const webhook = buildWebhookInput(
     input,
+    env,
     env.GITHUB_WEBHOOK_SECRET,
     workspace.prSummaryBaseBranches,
     releaseNotesEnabled ? buildReleaseConfig(workspace) : null,
