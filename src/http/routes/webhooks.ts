@@ -40,7 +40,7 @@ export interface HandlerInput extends WebhookDependencies {
    * When set, branch filters and release enqueue rules follow the workspace linked to the
    * webhook repository (then global `workspace_settings` + env).
    */
-  resolveWebhookSettings?: (repoFullName: string) => Promise<WebhookEnqueueSettings>;
+  resolveWebhookSettings?: (repoFullName: string) => Promise<WebhookEnqueueSettings | null>;
   /**
    * When set to a non-empty list, only merged PRs targeting one of these base branches
    * (`pull_request.base.ref`) are summarized. Omitted or `null` means any base branch.
@@ -170,7 +170,7 @@ const buildProcessPrJobInput = (
 const resolveEnqueueSettings = async (
   input: HandlerInput,
   payload: Record<string, unknown>,
-): Promise<WebhookEnqueueSettings> => {
+): Promise<WebhookEnqueueSettings | null> => {
   const repoFullName = extractRepositoryFullName(payload);
   if (repoFullName && input.resolveWebhookSettings) {
     return input.resolveWebhookSettings(repoFullName);
@@ -231,6 +231,14 @@ export const execute = async (
 
   const enqueueSettings = await resolveEnqueueSettings(input, payload);
   const repoFullName = extractRepositoryFullName(payload);
+  if (enqueueSettings === null) {
+    request.log?.warn?.(
+      { repo: repoFullName, eventType: parsedHeaders.eventType },
+      "webhook skipped enqueue: workspace settings not configured for repository",
+    );
+    reply.status(200).send({ ok: true });
+    return;
+  }
 
   const processPrJobInput = buildProcessPrJobInput(
     parsedHeaders.eventType,

@@ -219,6 +219,125 @@ export const resolveMergedSettingsForRepo = async (
   return mergeWorkspaceSettings(settingsRow, env);
 };
 
+const mergeWorkspaceSettingsWithoutEnvFallback = (
+  row: typeof workspaceSettingsTable.$inferSelect,
+): MergedWorkspaceSettings => {
+  const notionPrDatabaseId = firstNonBlank(row.notionPrDatabaseId) ?? "";
+  const notionReleasesDatabaseId = firstNonBlank(row.notionReleasesDatabaseId);
+  const releaseVersionBranch = firstNonBlank(row.releaseVersionBranch);
+  const releaseMonitoredRepo = firstNonBlank(row.releaseMonitoredRepo);
+  const releaseCompareRootSha = firstNonBlank(row.releaseCompareRootSha);
+
+  const unifiedKindRaw = firstNonBlank(row.releaseProjectKind);
+  const unifiedPathRaw = firstNonBlank(row.releaseVersionFilePath);
+
+  if (unifiedKindRaw && !unifiedPathRaw) {
+    throw new Error(
+      "Workspace: `release_project_kind` is set but `release_version_file_path` is missing.",
+    );
+  }
+  if (!unifiedKindRaw && unifiedPathRaw) {
+    throw new Error(
+      "Workspace: `release_version_file_path` is set but `release_project_kind` is missing.",
+    );
+  }
+
+  let releaseInfoPlistPath = firstNonBlank(row.releaseInfoPlistPath);
+  let releaseProjectPbxprojPath = firstNonBlank(row.releaseProjectPbxprojPath);
+  let releaseExpoAppConfigPath = firstNonBlank(row.releaseExpoAppConfigPath);
+
+  let releaseProjectKind: ReleaseProjectKind | null = null;
+  let releaseVersionFilePath: string | null = null;
+
+  if (unifiedKindRaw && unifiedPathRaw) {
+    const kind = parseReleaseProjectKind(unifiedKindRaw);
+    if (!isSupportedReleaseProjectKind(kind)) {
+      throw new Error(
+        `Workspace: release_project_kind "${kind}" is not supported yet. Use ios_plist, ios_pbx, or react_native_expo.`,
+      );
+    }
+    const applied = applyReleaseKindAndFilePath(kind, unifiedPathRaw);
+    releaseInfoPlistPath = applied.releaseInfoPlistPath;
+    releaseProjectPbxprojPath = applied.releaseProjectPbxprojPath;
+    releaseExpoAppConfigPath = applied.releaseExpoAppConfigPath;
+    releaseProjectKind = kind;
+    releaseVersionFilePath = unifiedPathRaw.trim();
+  } else {
+    const inferred = inferKindAndPathFromLegacyPaths(
+      releaseInfoPlistPath,
+      releaseProjectPbxprojPath,
+      releaseExpoAppConfigPath,
+    );
+    if (inferred) {
+      releaseProjectKind = inferred.kind;
+      releaseVersionFilePath = inferred.path;
+    }
+  }
+
+  let prSummaryBaseBranches: string[] | null = null;
+  const dbBranches = row.prSummaryBaseBranches;
+  if (Array.isArray(dbBranches)) {
+    const cleaned = dbBranches
+      .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+      .map((b) => b.trim());
+    if (cleaned.length > 0) {
+      prSummaryBaseBranches = cleaned;
+    }
+  }
+
+  return {
+    notionPrDatabaseId,
+    notionReleasesDatabaseId,
+    prSummaryBaseBranches,
+    releaseInfoPlistPath,
+    releaseVersionBranch,
+    releaseMonitoredRepo,
+    releaseProjectPbxprojPath,
+    releaseExpoAppConfigPath,
+    releaseCompareRootSha,
+    releaseProjectKind,
+    releaseVersionFilePath,
+  };
+};
+
+/**
+ * Strict repo->workspace resolver used in webhook/job runtime.
+ * No global row and no env fallback: if workspace or settings are missing, returns null.
+ */
+export const resolveWorkspaceSettingsForRepo = async (
+  db: Database,
+  repoFullName: string,
+): Promise<MergedWorkspaceSettings | null> => {
+  const normalized = repoFullName.trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  const workspaceRows = await db
+    .select({ id: workspacesTable.id })
+    .from(workspacesTable)
+    .where(eq(workspacesTable.githubRepoFullName, normalized))
+    .limit(1);
+  const workspaceId = workspaceRows[0]?.id;
+  if (workspaceId === undefined) {
+    return null;
+  }
+
+  const settingsRows = await db
+    .select()
+    .from(workspaceSettingsTable)
+    .where(eq(workspaceSettingsTable.workspaceId, workspaceId))
+    .limit(1);
+  const settingsRow = settingsRows[0];
+  if (settingsRow === undefined) {
+    return null;
+  }
+
+  const merged = mergeWorkspaceSettingsWithoutEnvFallback(settingsRow);
+  validateMergedWorkspaceSettings(merged);
+  return merged;
+};
+
 export const execute = async (db: Database, env: Env): Promise<MergedWorkspaceSettings> => {
   const merged = mergeWorkspaceSettings(await loadNewestGlobalWorkspaceSettingsRow(db), env);
   validateMergedWorkspaceSettings(merged);

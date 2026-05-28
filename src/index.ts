@@ -4,7 +4,7 @@ import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
   execute as loadWorkspaceSettings,
-  resolveMergedSettingsForRepo,
+  resolveWorkspaceSettingsForRepo,
   type MergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
 import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
@@ -104,7 +104,10 @@ const buildWebhookInput = (
   db: Database,
 ): WebhookHandlerInput => {
   const resolveWebhookSettings = async (repoFullName: string) => {
-    const merged = await resolveMergedSettingsForRepo(db, env, repoFullName);
+    const merged = await resolveWorkspaceSettingsForRepo(db, repoFullName);
+    if (merged === null) {
+      return null;
+    }
     const releaseNotesEnabled = Boolean(merged.notionReleasesDatabaseId?.trim());
     return {
       prSummaryBaseBranches: merged.prSummaryBaseBranches,
