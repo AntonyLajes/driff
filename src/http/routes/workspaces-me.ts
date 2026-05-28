@@ -145,6 +145,110 @@ const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugPara
   return { kind: "ok" as const, workspace: row };
 };
 
+type WorkspaceDiagnosticsIssue = {
+  code: string;
+  severity: "error" | "warning";
+  message: string;
+};
+
+const buildWorkspaceDiagnostics = (input: {
+  githubRepoFullName: string | null;
+  githubRepoDefaultBranch: string | null;
+  settings:
+    | {
+        notionPrDatabaseId: string | null;
+        notionReleasesDatabaseId: string | null;
+        releaseProjectKind: string | null;
+        releaseVersionFilePath: string | null;
+        releaseVersionBranch: string | null;
+      }
+    | undefined;
+}) => {
+  const repo = input.githubRepoFullName?.trim() ?? "";
+  const defaultBranch = input.githubRepoDefaultBranch?.trim() || "main";
+  const settings = input.settings;
+
+  const prDb = settings?.notionPrDatabaseId?.trim() ?? "";
+  const releasesDb = settings?.notionReleasesDatabaseId?.trim() ?? "";
+  const releaseKind = settings?.releaseProjectKind?.trim() ?? "";
+  const releasePath = settings?.releaseVersionFilePath?.trim() ?? "";
+  const releaseBranch = settings?.releaseVersionBranch?.trim() ?? "";
+
+  const issues: WorkspaceDiagnosticsIssue[] = [];
+
+  if (repo.length === 0) {
+    issues.push({
+      code: "workspace_repo_not_linked",
+      severity: "error",
+      message: "Link a GitHub repository to this workspace.",
+    });
+  }
+  if (!settings) {
+    issues.push({
+      code: "workspace_settings_missing",
+      severity: "error",
+      message: "Create workspace settings for this workspace.",
+    });
+  }
+  if (!prDb) {
+    issues.push({
+      code: "notion_pr_database_id_missing",
+      severity: "error",
+      message: "Set Notion PR database id in workspace settings.",
+    });
+  }
+  if (releasesDb && !releaseBranch) {
+    issues.push({
+      code: "release_branch_missing",
+      severity: "error",
+      message: "Release database is configured but release branch is missing.",
+    });
+  }
+  if (releasesDb && (!releaseKind || !releasePath)) {
+    issues.push({
+      code: "release_version_source_missing",
+      severity: "error",
+      message: "Release database is configured but release project kind/file path is missing.",
+    });
+  }
+  if (!releasesDb) {
+    issues.push({
+      code: "notion_releases_database_id_missing",
+      severity: "warning",
+      message: "Set Notion releases database id to enable version summaries.",
+    });
+  }
+
+  const prSummaryReady = repo.length > 0 && !!settings && prDb.length > 0;
+  const releaseSummaryReady =
+    prSummaryReady &&
+    releasesDb.length > 0 &&
+    releaseBranch.length > 0 &&
+    releaseKind.length > 0 &&
+    releasePath.length > 0;
+
+  return {
+    repo: repo || null,
+    defaultBranch,
+    status: issues.some((i) => i.severity === "error")
+      ? "error"
+      : issues.length > 0
+        ? "warning"
+        : "ready",
+    checks: {
+      repoLinked: repo.length > 0,
+      workspaceSettingsPresent: Boolean(settings),
+      prSummaryReady,
+      releaseSummaryReady,
+    },
+    suggested: {
+      prBaseBranches: [defaultBranch],
+      releaseBranch: defaultBranch,
+    },
+    issues,
+  };
+};
+
 export const handler = async (
   instance: FastifyInstance,
   input: WorkspacesMeRegistrationInput,
@@ -285,6 +389,49 @@ export const handler = async (
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
       },
     });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/diagnostics", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const wsId = loaded.workspace.id;
+    const rows = await input.db
+      .select({
+        notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
+        notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+        releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
+        releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
+        releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
+      })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, wsId))
+      .limit(1);
+    const diagnostics = buildWorkspaceDiagnostics({
+      githubRepoFullName: loaded.workspace.githubRepoFullName,
+      githubRepoDefaultBranch: loaded.workspace.githubRepoDefaultBranch,
+      settings: rows[0],
+    });
+    return reply.send({ diagnostics });
   });
 
   instance.get("/api/me/workspaces/by-slug/:slug/repo/contents", async (request, reply) => {

@@ -149,4 +149,106 @@ describe("http/routes/workspaces-me", () => {
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: "workspace_slug_taken" });
   });
+
+  it("returns diagnostics with warning when releases config is missing", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+    const workspaceRow = {
+      id: "00000000-0000-4000-8000-0000000000ab",
+      name: "Acme",
+      slug: "acme",
+      workspaceKind: "react_native_expo" as string | null,
+      githubRepoFullName: "acme/mobile",
+      githubRepoDefaultBranch: "main",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const settingsRow = {
+      notionPrDatabaseId: "notion-pr-db",
+      notionReleasesDatabaseId: null,
+      releaseProjectKind: "react_native_expo",
+      releaseVersionFilePath: "app.json",
+      releaseVersionBranch: "main",
+    };
+
+    const select = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [workspaceRow]) })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [settingsRow]) })),
+        })),
+      }));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/acme/diagnostics",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      diagnostics: {
+        repo: "acme/mobile",
+        status: "warning",
+        checks: {
+          repoLinked: true,
+          workspaceSettingsPresent: true,
+          prSummaryReady: true,
+          releaseSummaryReady: false,
+        },
+        suggested: {
+          prBaseBranches: ["main"],
+          releaseBranch: "main",
+        },
+      },
+    });
+  });
+
+  it("returns 404 diagnostics when workspace slug is not found", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+      })),
+    }));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/missing/diagnostics",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "workspace_not_found" });
+  });
 });
