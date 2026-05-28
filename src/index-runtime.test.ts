@@ -176,13 +176,10 @@ describe("index execute runtime wiring", () => {
     expect(mocks.createSummarizer).toHaveBeenCalledWith({
       apiKey: "anthropic-key",
     });
-    expect(mocks.createNotionDestination).toHaveBeenCalledWith({
-      token: "notion-token",
-      databaseId: "database-id",
-      releasesDatabaseId: undefined,
-    });
+    expect(mocks.createNotionDestination).not.toHaveBeenCalled();
     expect(mocks.createQueue).toHaveBeenCalledWith({ db: mocks.db });
-    expect(mocks.createProcessPr).toHaveBeenCalledOnce();
+    expect(mocks.createProcessPr).not.toHaveBeenCalled();
+    expect(mocks.createProcessRelease).not.toHaveBeenCalled();
     expect(mocks.createWorker).toHaveBeenCalledOnce();
     expect(mocks.worker.run).toHaveBeenCalledOnce();
 

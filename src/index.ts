@@ -3,7 +3,6 @@ import "dotenv/config";
 import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
-  execute as loadWorkspaceSettings,
   resolveWorkspaceSettingsForRepo,
   type MergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
@@ -133,6 +132,25 @@ const buildWebhookInput = (
   };
 };
 
+const readRepoFromJobPayload = (payload: Record<string, unknown>, jobType: string): string => {
+  const repoRaw = payload.repo;
+  if (typeof repoRaw !== "string" || repoRaw.trim().length === 0) {
+    throw new Error(`Invalid ${jobType} payload: repo must be a non-empty string.`);
+  }
+  return repoRaw.trim();
+};
+
+const createDestinationForWorkspace = (
+  env: Env,
+  workspace: MergedWorkspaceSettings,
+): Destination => {
+  return createNotionDestination({
+    token: env.NOTION_TOKEN,
+    databaseId: workspace.notionPrDatabaseId,
+    releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
+  });
+};
+
 const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDependencies> => {
   const env = loadEnv();
   const dbBundle =
@@ -141,15 +159,12 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       : createDbClient({ databaseUrl: env.DATABASE_URL });
   const db = input.db ?? dbBundle.db;
   const dbClient = input.dbClient ?? dbBundle.client ?? createNoopDbClient();
-
-  const workspace = await loadWorkspaceSettings(db, env);
-  const releaseNotesEnabled = Boolean(workspace.notionReleasesDatabaseId?.trim());
   const webhook = buildWebhookInput(
     input,
     env,
     env.GITHUB_WEBHOOK_SECRET,
-    workspace.prSummaryBaseBranches,
-    releaseNotesEnabled ? buildReleaseConfig(workspace) : null,
+    null,
+    null,
     db,
   );
   const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
@@ -173,32 +188,53 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
     }
 
     const queue = input.queue ?? createQueue({ db });
+    const source =
+      input.source ??
+      createGithubSource({
+        appId: env.GITHUB_APP_ID,
+        privateKey: env.GITHUB_APP_PRIVATE_KEY,
+      });
+    const summarizer = input.summarizer ?? (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
+    const releaseSummarizer =
+      input.releaseSummarizer ??
+      (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
+
+    const resolveWorkspaceOrThrow = async (repo: string): Promise<MergedWorkspaceSettings> => {
+      const workspace = await resolveWorkspaceSettingsForRepo(db, repo);
+      if (workspace === null) {
+        throw new Error(`Workspace settings not configured for repository "${repo}".`);
+      }
+      return workspace;
+    };
+
     const processPrHandler =
       input.processPrHandler ??
-      createProcessPrJob({
-        db,
-        source:
-          input.source ??
-          createGithubSource({
-            appId: env.GITHUB_APP_ID,
-            privateKey: env.GITHUB_APP_PRIVATE_KEY,
-          }),
-        summarizer:
-          input.summarizer ?? (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY })),
-        destination:
-          input.destination ??
-          createNotionDestination({
-            token: env.NOTION_TOKEN,
-            databaseId: workspace.notionPrDatabaseId,
-            releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
-          }),
-        promptVersion: input.promptVersion ?? 1,
-      });
+      {
+        execute: async (payload: Record<string, unknown>) => {
+          const repo = readRepoFromJobPayload(payload, "process_pr");
+          const workspace = await resolveWorkspaceOrThrow(repo);
+          const destination =
+            input.destination ?? createDestinationForWorkspace(env, workspace);
+          const handler = createProcessPrJob({
+            db,
+            source,
+            summarizer,
+            destination,
+            promptVersion: input.promptVersion ?? 1,
+          });
+          await handler.execute(payload);
+        },
+      };
 
     const processReleaseHandler =
       input.processReleaseHandler ??
-      (releaseNotesEnabled
-        ? createProcessReleaseJob({
+      {
+        execute: async (payload: Record<string, unknown>) => {
+          const repo = readRepoFromJobPayload(payload, "process_release");
+          const workspace = await resolveWorkspaceOrThrow(repo);
+          const destination =
+            input.destination ?? createDestinationForWorkspace(env, workspace);
+          const handler = createProcessReleaseJob({
             db,
             appId: env.GITHUB_APP_ID,
             privateKey: env.GITHUB_APP_PRIVATE_KEY,
@@ -207,19 +243,13 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
             releasesNotionDatabaseId: workspace.notionReleasesDatabaseId,
             releaseCompareRootSha: workspace.releaseCompareRootSha,
-            releaseSummarizer:
-              input.releaseSummarizer ??
-              (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY })),
-            destination:
-              input.destination ??
-              createNotionDestination({
-                token: env.NOTION_TOKEN,
-                databaseId: workspace.notionPrDatabaseId,
-                releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
-              }),
+            releaseSummarizer,
+            destination,
             promptVersion: input.releasePromptVersion ?? 1,
-          })
-        : { execute: async () => undefined });
+          });
+          await handler.execute(payload);
+        },
+      };
 
     return createWorker({
       queue,
