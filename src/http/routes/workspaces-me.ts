@@ -13,6 +13,7 @@ import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable, workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
+import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
@@ -126,6 +127,10 @@ const patchWorkspaceSettingsBodySchema = z
 const repoContentsQuerySchema = z.object({
   path: z.string().max(2048).optional().default(""),
   ref: z.string().min(1).max(255).optional(),
+});
+
+const inferWorkspaceSettingsBodySchema = z.object({
+  apply: z.boolean().optional().default(true),
 });
 
 const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugParam: string) => {
@@ -432,6 +437,111 @@ export const handler = async (
       settings: rows[0],
     });
     return reply.send({ diagnostics });
+  });
+
+  instance.post("/api/me/workspaces/by-slug/:slug/settings/infer", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const repoFull = loaded.workspace.githubRepoFullName?.trim();
+    if (repoFull === undefined || repoFull.length === 0) {
+      return reply.status(400).send({ error: "workspace_repo_not_linked" });
+    }
+
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+
+    const parsedBody = inferWorkspaceSettingsBodySchema.safeParse(request.body ?? {});
+    if (!parsedBody.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+
+    const octokit = new Octokit({ auth: accessToken });
+    try {
+      const result = await inferAndApplyWorkspaceSettings({
+        db: input.db,
+        octokit,
+        workspaceId: loaded.workspace.id,
+        repoFullName: repoFull,
+        workspaceDefaultBranch: loaded.workspace.githubRepoDefaultBranch ?? null,
+        workspaceKind: loaded.workspace.workspaceKind ?? null,
+        apply: parsedBody.data.apply,
+      });
+
+      const settingsRows = await input.db
+        .select({
+          notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
+          notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+          releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
+          releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
+          releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
+        })
+        .from(workspaceSettingsTable)
+        .where(eq(workspaceSettingsTable.workspaceId, loaded.workspace.id))
+        .limit(1);
+
+      const workspaceRows = await input.db
+        .select({
+          githubRepoFullName: workspacesTable.githubRepoFullName,
+          githubRepoDefaultBranch: workspacesTable.githubRepoDefaultBranch,
+        })
+        .from(workspacesTable)
+        .where(eq(workspacesTable.id, loaded.workspace.id))
+        .limit(1);
+      const workspaceRow = workspaceRows[0];
+
+      const diagnostics = buildWorkspaceDiagnostics({
+        githubRepoFullName: workspaceRow?.githubRepoFullName ?? loaded.workspace.githubRepoFullName,
+        githubRepoDefaultBranch:
+          workspaceRow?.githubRepoDefaultBranch ?? loaded.workspace.githubRepoDefaultBranch,
+        settings: settingsRows[0],
+      });
+
+      return reply.send({
+        inference: result.inference,
+        applied: result.applied,
+        skipReason: result.skipReason,
+        settings: result.settings,
+        diagnostics,
+        workspaceDefaultBranchUpdated: result.workspaceDefaultBranchUpdated,
+        workspaceKindUpdated: result.workspaceKindUpdated,
+      });
+    } catch (err: unknown) {
+      request.log.warn({ err }, "workspace_settings_infer_failed");
+      const status =
+        typeof err === "object" && err !== null && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      if (status === 404) {
+        return reply.status(404).send({ error: "repo_not_found_or_no_access" });
+      }
+      return reply.status(500).send({ error: "infer_failed" });
+    }
   });
 
   instance.get("/api/me/workspaces/by-slug/:slug/repo/contents", async (request, reply) => {

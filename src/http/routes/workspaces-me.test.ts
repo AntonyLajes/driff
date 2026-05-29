@@ -4,12 +4,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { signSessionJwt } from "@/auth/session-jwt.js";
 import { handler } from "@/http/routes/workspaces-me.js";
 
+vi.mock("@/workspaces/infer-workspace-settings.js", () => ({
+  inferAndApplyWorkspaceSettings: vi.fn(),
+}));
+
+vi.mock("@/github/load-user-github-access-token.js", () => ({
+  loadUserGithubAccessToken: vi.fn(),
+}));
+
+import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
+import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
+
 describe("http/routes/workspaces-me", () => {
   const servers: Array<ReturnType<typeof fastify>> = [];
 
   afterEach(async () => {
     await Promise.all(servers.map((server) => server.close()));
     servers.length = 0;
+    vi.mocked(inferAndApplyWorkspaceSettings).mockReset();
+    vi.mocked(loadUserGithubAccessToken).mockReset();
   });
 
   const jwtSecret = "a".repeat(32);
@@ -219,6 +232,111 @@ describe("http/routes/workspaces-me", () => {
         },
       },
     });
+  });
+
+  it("applies inferred settings and returns diagnostics", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+    const workspaceRow = {
+      id: "00000000-0000-4000-8000-0000000000ac",
+      name: "Ride",
+      slug: "ride-pack",
+      workspaceKind: null as string | null,
+      githubRepoFullName: "acme/ride-pack",
+      githubRepoDefaultBranch: "main",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const settingsRow = {
+      notionPrDatabaseId: "pr-db",
+      notionReleasesDatabaseId: null,
+      releaseProjectKind: "react_native_expo",
+      releaseVersionFilePath: "app.json",
+      releaseVersionBranch: "main",
+    };
+
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("gh-token");
+    vi.mocked(inferAndApplyWorkspaceSettings).mockResolvedValue({
+      inference: {
+        suggestedKind: "react_native_expo",
+        confidence: "high",
+        defaultBranch: "main",
+        versionFilePath: "app.json",
+        signals: [],
+      },
+      applied: true,
+      skipReason: null,
+      settings: {
+        notionPrDatabaseId: null,
+        notionReleasesDatabaseId: null,
+        releaseProjectKind: "react_native_expo",
+        releaseVersionFilePath: "app.json",
+        releaseVersionBranch: "main",
+      },
+      workspaceDefaultBranchUpdated: false,
+      workspaceKindUpdated: true,
+    });
+
+    const select = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [workspaceRow]) })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [settingsRow]) })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [
+              {
+                githubRepoFullName: "acme/ride-pack",
+                githubRepoDefaultBranch: "main",
+              },
+            ]),
+          })),
+        })),
+      }));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings/infer",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { apply: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      applied: true,
+      skipReason: null,
+      settings: {
+        releaseProjectKind: "react_native_expo",
+        releaseVersionFilePath: "app.json",
+      },
+      diagnostics: {
+        checks: {
+          repoLinked: true,
+          prSummaryReady: true,
+        },
+      },
+    });
+    expect(inferAndApplyWorkspaceSettings).toHaveBeenCalledOnce();
   });
 
   it("returns 404 diagnostics when workspace slug is not found", async () => {
