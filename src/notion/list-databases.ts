@@ -80,10 +80,15 @@ export const listNotionDatabasesWithClient = async (
 
     for (const result of response.results) {
       if (isFullDatabase(result)) {
-        byId.set(normalizeId(result.id), {
-          id: result.id,
-          title: extractRichText(result.title),
-          url: result.url ?? null,
+        const database = result as {
+          id: string;
+          title: Array<{ plain_text?: string }>;
+          url: string | null;
+        };
+        byId.set(normalizeId(database.id), {
+          id: database.id,
+          title: extractRichText(database.title),
+          url: database.url ?? null,
         });
         continue;
       }
