@@ -9,11 +9,16 @@ import {
   isSupportedReleaseProjectKind,
   releaseProjectKindSchema,
 } from "@/config/release-project-kind.js";
+import { execute as loadEnv } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable, workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
+import {
+  listNotionDatabases,
+  suggestNotionDatabaseRoles,
+} from "@/notion/list-databases.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
@@ -541,6 +546,81 @@ export const handler = async (
         return reply.status(404).send({ error: "repo_not_found_or_no_access" });
       }
       return reply.status(500).send({ error: "infer_failed" });
+    }
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/integrations/notion/status", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const notionToken = loadEnv().NOTION_TOKEN.trim();
+    if (notionToken.length === 0) {
+      return reply.send({ status: { tokenConfigured: false, reachable: false } });
+    }
+
+    try {
+      await listNotionDatabases(notionToken);
+      return reply.send({ status: { tokenConfigured: true, reachable: true } });
+    } catch (err) {
+      request.log.warn({ err }, "notion_status_check_failed");
+      return reply.send({ status: { tokenConfigured: true, reachable: false } });
+    }
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/integrations/notion/databases", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const notionToken = loadEnv().NOTION_TOKEN.trim();
+    if (notionToken.length === 0) {
+      return reply.status(503).send({ error: "notion_not_configured" });
+    }
+
+    try {
+      const databases = await listNotionDatabases(notionToken);
+      const suggestions = suggestNotionDatabaseRoles(databases);
+      return reply.send({ databases, suggestions });
+    } catch (err) {
+      request.log.warn({ err }, "notion_list_databases_failed");
+      return reply.status(502).send({ error: "notion_list_failed" });
     }
   });
 
