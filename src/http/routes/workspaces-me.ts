@@ -82,6 +82,8 @@ const patchWorkspaceSettingsBodySchema = z
   .object({
     notionPrDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
     notionReleasesDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
+    notionPushesDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
+    pushSummaryBranches: z.union([z.array(z.string().min(1).max(255)).max(50), z.null()]).optional(),
     releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
     releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
     releaseVersionBranch: z.union([z.string().max(255), z.null()]).optional(),
@@ -168,6 +170,8 @@ const buildWorkspaceDiagnostics = (input: {
     | {
         notionPrDatabaseId: string | null;
         notionReleasesDatabaseId: string | null;
+        notionPushesDatabaseId?: string | null;
+        pushSummaryBranches?: string[] | null;
         releaseProjectKind: string | null;
         releaseVersionFilePath: string | null;
         releaseVersionBranch: string | null;
@@ -183,6 +187,10 @@ const buildWorkspaceDiagnostics = (input: {
   const releaseKind = settings?.releaseProjectKind?.trim() ?? "";
   const releasePath = settings?.releaseVersionFilePath?.trim() ?? "";
   const releaseBranch = settings?.releaseVersionBranch?.trim() ?? "";
+  const pushesDb = settings?.notionPushesDatabaseId?.trim() ?? "";
+  const pushBranches = (settings?.pushSummaryBranches ?? [])
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0);
 
   const issues: WorkspaceDiagnosticsIssue[] = [];
 
@@ -228,6 +236,13 @@ const buildWorkspaceDiagnostics = (input: {
       message: "Set Notion releases database id to enable version summaries.",
     });
   }
+  if (!pushesDb) {
+    issues.push({
+      code: "notion_pushes_database_id_missing",
+      severity: "warning",
+      message: "Set Notion pushes database id to enable direct-push summaries.",
+    });
+  }
 
   const prSummaryReady = repo.length > 0 && !!settings && prDb.length > 0;
   const releaseSummaryReady =
@@ -236,6 +251,12 @@ const buildWorkspaceDiagnostics = (input: {
     releaseBranch.length > 0 &&
     releaseKind.length > 0 &&
     releasePath.length > 0;
+  // Push summaries fall back to the repo default branch when no explicit branch list is set.
+  const pushSummaryReady =
+    repo.length > 0 &&
+    !!settings &&
+    pushesDb.length > 0 &&
+    (pushBranches.length > 0 || defaultBranch.length > 0);
 
   return {
     repo: repo || null,
@@ -250,10 +271,12 @@ const buildWorkspaceDiagnostics = (input: {
       workspaceSettingsPresent: Boolean(settings),
       prSummaryReady,
       releaseSummaryReady,
+      pushSummaryReady,
     },
     suggested: {
       prBaseBranches: [defaultBranch],
       releaseBranch: defaultBranch,
+      pushBranches: [defaultBranch],
     },
     issues,
   };
@@ -382,6 +405,8 @@ export const handler = async (
       .select({
         notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
         notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+        notionPushesDatabaseId: workspaceSettingsTable.notionPushesDatabaseId,
+        pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -394,6 +419,8 @@ export const handler = async (
       settings: {
         notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
         notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
+        notionPushesDatabaseId: row?.notionPushesDatabaseId ?? null,
+        pushSummaryBranches: row?.pushSummaryBranches ?? null,
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
@@ -429,6 +456,8 @@ export const handler = async (
       .select({
         notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
         notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+        notionPushesDatabaseId: workspaceSettingsTable.notionPushesDatabaseId,
+        pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -770,7 +799,22 @@ export const handler = async (
     };
     const nextPr = mapId(patch.notionPrDatabaseId);
     const nextRel = mapId(patch.notionReleasesDatabaseId);
+    const nextPushes = mapId(patch.notionPushesDatabaseId);
     const nextBranch = mapId(patch.releaseVersionBranch);
+
+    const mapBranchList = (
+      v: string[] | null | undefined,
+    ): string[] | null | undefined => {
+      if (v === undefined) {
+        return undefined;
+      }
+      if (v === null) {
+        return null;
+      }
+      const cleaned = v.map((b) => b.trim()).filter((b) => b.length > 0);
+      return cleaned.length > 0 ? cleaned : null;
+    };
+    const nextPushBranches = mapBranchList(patch.pushSummaryBranches);
 
     const nonBlankOrNull = (s: string | null): string | null => {
       const t = s?.trim();
@@ -826,6 +870,8 @@ export const handler = async (
         .set({
           ...(nextPr !== undefined ? { notionPrDatabaseId: nextPr } : {}),
           ...(nextRel !== undefined ? { notionReleasesDatabaseId: nextRel } : {}),
+          ...(nextPushes !== undefined ? { notionPushesDatabaseId: nextPushes } : {}),
+          ...(nextPushBranches !== undefined ? { pushSummaryBranches: nextPushBranches } : {}),
           ...releasePatch,
           updatedAt: now,
         })
@@ -835,6 +881,8 @@ export const handler = async (
         workspaceId: wsId,
         notionPrDatabaseId: nextPr === undefined ? null : nextPr,
         notionReleasesDatabaseId: nextRel === undefined ? null : nextRel,
+        notionPushesDatabaseId: nextPushes === undefined ? null : nextPushes,
+        pushSummaryBranches: nextPushBranches === undefined ? null : nextPushBranches,
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
         releaseVersionFilePath:
@@ -862,6 +910,8 @@ export const handler = async (
       .select({
         notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
         notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+        notionPushesDatabaseId: workspaceSettingsTable.notionPushesDatabaseId,
+        pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -874,6 +924,8 @@ export const handler = async (
       settings: {
         notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
         notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
+        notionPushesDatabaseId: row?.notionPushesDatabaseId ?? null,
+        pushSummaryBranches: row?.pushSummaryBranches ?? null,
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
