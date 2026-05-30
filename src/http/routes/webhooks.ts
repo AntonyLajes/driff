@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import { buildProcessReleaseJobInput, type ReleaseWebhookConfig } from "@/http/routes/webhook-release.js";
+import { buildProcessPushJobInput, type PushWebhookConfig } from "@/http/routes/webhook-push.js";
 import {
   type ProcessPrJobInput,
   type WebhookDependencies,
@@ -32,6 +33,7 @@ interface HeaderInput {
 export interface WebhookEnqueueSettings {
   prSummaryBaseBranches: string[] | null;
   releaseConfig: ReleaseWebhookConfig | null;
+  pushConfig: PushWebhookConfig | null;
 }
 
 export interface HandlerInput extends WebhookDependencies {
@@ -52,6 +54,11 @@ export interface HandlerInput extends WebhookDependencies {
    * @deprecated Prefer `resolveWebhookSettings` for per-repo workspace settings.
    */
   releaseConfig?: ReleaseWebhookConfig | null;
+  /**
+   * When set, a `push` to one of the configured branches enqueues `process_push`.
+   * @deprecated Prefer `resolveWebhookSettings` for per-repo workspace settings.
+   */
+  pushConfig?: PushWebhookConfig | null;
 }
 
 const getHeaderValue = (value: string | string[] | undefined): string | undefined => {
@@ -179,6 +186,7 @@ const resolveEnqueueSettings = async (
   return {
     prSummaryBaseBranches: input.prSummaryBaseBranches ?? null,
     releaseConfig: input.releaseConfig ?? null,
+    pushConfig: input.pushConfig ?? null,
   };
 };
 
@@ -278,6 +286,26 @@ export const execute = async (
         versionPaths: enqueueSettings.releaseConfig.versionWatchPaths,
       },
       "webhook skipped process_release enqueue",
+    );
+  }
+
+  const processPushInput = buildProcessPushJobInput(
+    parsedHeaders.eventType,
+    payload,
+    enqueueSettings.pushConfig,
+  );
+  if (processPushInput) {
+    await input.enqueueProcessPushJob(processPushInput);
+  } else if (parsedHeaders.eventType === "push" && enqueueSettings.pushConfig) {
+    const branch = typeof payload.ref === "string" ? payload.ref : null;
+    request.log?.warn?.(
+      {
+        repo: repoFullName,
+        ref: branch,
+        pushBranches: enqueueSettings.pushConfig.branches,
+        defaultBranch: enqueueSettings.pushConfig.defaultBranch,
+      },
+      "webhook skipped process_push enqueue",
     );
   }
 

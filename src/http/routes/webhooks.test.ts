@@ -23,6 +23,7 @@ describe("http/routes/webhooks handler", () => {
     const insertWebhookEvent = vi.fn(async () => undefined);
     const enqueueProcessPrJob = vi.fn(async () => undefined);
     const enqueueProcessReleaseJob = vi.fn(async () => undefined);
+    const enqueueProcessPushJob = vi.fn(async () => undefined);
     const secret = "webhook-secret";
     const server = fastify({ logger: false });
     servers.push(server);
@@ -43,6 +44,7 @@ describe("http/routes/webhooks handler", () => {
       insertWebhookEvent,
       enqueueProcessPrJob,
       enqueueProcessReleaseJob,
+      enqueueProcessPushJob,
     });
     await server.ready();
 
@@ -225,6 +227,7 @@ describe("http/routes/webhooks handler", () => {
       insertWebhookEvent: insertWebhookEventForFilter,
       enqueueProcessPrJob: enqueueProcessPrJobForFilter,
       enqueueProcessReleaseJob: vi.fn(async () => undefined),
+      enqueueProcessPushJob: vi.fn(async () => undefined),
     });
     await serverWithFilter.ready();
 
@@ -279,6 +282,7 @@ describe("http/routes/webhooks handler", () => {
       insertWebhookEvent: insertWebhookEventForFilter,
       enqueueProcessPrJob: enqueueProcessPrJobForFilter,
       enqueueProcessReleaseJob: vi.fn(async () => undefined),
+      enqueueProcessPushJob: vi.fn(async () => undefined),
     });
     await serverWithFilter.ready();
 
@@ -326,6 +330,7 @@ describe("http/routes/webhooks handler", () => {
       },
     );
     const enqueueProcessReleaseJob = vi.fn(async () => undefined);
+    const enqueueProcessPushJob = vi.fn(async () => undefined);
     await handler(serverPush, {
       webhookSecret: secret,
       prSummaryBaseBranches: null,
@@ -338,6 +343,7 @@ describe("http/routes/webhooks handler", () => {
       insertWebhookEvent: vi.fn(async () => undefined),
       enqueueProcessPrJob: vi.fn(async () => undefined),
       enqueueProcessReleaseJob,
+      enqueueProcessPushJob,
     });
     await serverPush.ready();
     const payload = JSON.stringify({
@@ -367,6 +373,64 @@ describe("http/routes/webhooks handler", () => {
     });
   });
 
+  it("should enqueue process_push on push when pushConfig matches", async () => {
+    const secret = "webhook-secret";
+    const serverPush = fastify({ logger: false });
+    servers.push(serverPush);
+    serverPush.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_request, body, done) => {
+        done(null, body);
+      },
+    );
+    const enqueueProcessPushJob = vi.fn(async () => undefined);
+    await handler(serverPush, {
+      webhookSecret: secret,
+      prSummaryBaseBranches: null,
+      releaseConfig: null,
+      pushConfig: {
+        branches: ["main"],
+        defaultBranch: "main",
+        monitoredRepo: null,
+      },
+      findWebhookEventByDeliveryId: vi.fn(async () => false),
+      insertWebhookEvent: vi.fn(async () => undefined),
+      enqueueProcessPrJob: vi.fn(async () => undefined),
+      enqueueProcessReleaseJob: vi.fn(async () => undefined),
+      enqueueProcessPushJob,
+    });
+    await serverPush.ready();
+    const payload = JSON.stringify({
+      ref: "refs/heads/main",
+      before: "a".repeat(40),
+      after: "b".repeat(40),
+      repository: { full_name: "acme/app" },
+      pusher: { name: "octocat" },
+      head_commit: { timestamp: "2026-05-29T12:00:00Z" },
+    });
+    const response = await serverPush.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        "x-github-delivery": "delivery-push-direct",
+        "x-github-event": "push",
+        "x-hub-signature-256": buildSignature(payload, secret),
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(enqueueProcessPushJob).toHaveBeenCalledWith({
+      repo: "acme/app",
+      beforeSha: "a".repeat(40),
+      afterSha: "b".repeat(40),
+      branch: "main",
+      pusher: "octocat",
+      pushedAt: "2026-05-29T12:00:00Z",
+    });
+  });
+
   it("should return skip reason when workspace settings are missing for repository", async () => {
     const secret = "webhook-secret";
     const serverMissingSettings = fastify({ logger: false });
@@ -386,6 +450,7 @@ describe("http/routes/webhooks handler", () => {
       insertWebhookEvent: vi.fn(async () => undefined),
       enqueueProcessPrJob,
       enqueueProcessReleaseJob: vi.fn(async () => undefined),
+      enqueueProcessPushJob: vi.fn(async () => undefined),
     });
     await serverMissingSettings.ready();
     const payload = JSON.stringify({

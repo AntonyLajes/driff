@@ -25,11 +25,21 @@ export interface ProcessReleaseJobInput {
   branch: string;
 }
 
+export interface ProcessPushJobInput {
+  repo: string;
+  beforeSha: string;
+  afterSha: string;
+  branch: string;
+  pusher: string | null;
+  pushedAt: string | null;
+}
+
 export interface WebhookDependencies {
   findWebhookEventByDeliveryId: (deliveryId: string) => Promise<boolean>;
   insertWebhookEvent: (input: WebhookEventInput) => Promise<void>;
   enqueueProcessPrJob: (input: ProcessPrJobInput) => Promise<void>;
   enqueueProcessReleaseJob: (input: ProcessReleaseJobInput) => Promise<void>;
+  enqueueProcessPushJob: (input: ProcessPushJobInput) => Promise<void>;
 }
 
 export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
@@ -61,6 +71,13 @@ export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
       await db.insert(jobsTable).values({
         type: "process_release",
         payload: { repo, beforeSha, afterSha, branch },
+        status: "pending",
+      });
+    },
+    enqueueProcessPushJob: async ({ repo, beforeSha, afterSha, branch, pusher, pushedAt }) => {
+      await db.insert(jobsTable).values({
+        type: "process_push",
+        payload: { repo, beforeSha, afterSha, branch, pusher, pushedAt },
         status: "pending",
       });
     },
