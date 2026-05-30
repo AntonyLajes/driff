@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   applyReleaseKindAndFilePath,
   inferKindAndPathFromLegacyPaths,
@@ -16,7 +16,7 @@ export interface MergedWorkspaceSettings {
   prSummaryBaseBranches: string[] | null;
   pushSummaryBranches: string[] | null;
   /** Repo default branch from the linked workspace; used as push-summary branch fallback. */
-  githubRepoDefaultBranch: string | null;
+  repoDefaultBranch: string | null;
   releaseInfoPlistPath: string | null;
   releaseVersionBranch: string | null;
   releaseMonitoredRepo: string | null;
@@ -117,7 +117,7 @@ export const mergeWorkspaceSettingsRow = (
     notionPushesDatabaseId,
     prSummaryBaseBranches,
     pushSummaryBranches,
-    githubRepoDefaultBranch: null,
+    repoDefaultBranch: null,
     releaseInfoPlistPath,
     releaseVersionBranch,
     releaseMonitoredRepo,
@@ -154,31 +154,38 @@ export const validateMergedWorkspaceSettings = (merged: MergedWorkspaceSettings)
 };
 
 /**
- * Strict repo->workspace resolver used in webhook/job runtime.
+ * Strict (provider, repo)->workspace resolver used in webhook/job runtime.
  * No global row and no env fallback: if workspace or settings are missing, returns null.
  */
 export const resolveWorkspaceSettingsForRepo = async (
   db: Database,
+  sourceProvider: string,
   repoFullName: string,
 ): Promise<MergedWorkspaceSettings | null> => {
   const normalized = repoFullName.trim();
-  if (normalized.length === 0) {
+  const provider = sourceProvider.trim();
+  if (normalized.length === 0 || provider.length === 0) {
     return null;
   }
 
   const workspaceRows = await db
     .select({
       id: workspacesTable.id,
-      githubRepoDefaultBranch: workspacesTable.githubRepoDefaultBranch,
+      repoDefaultBranch: workspacesTable.repoDefaultBranch,
     })
     .from(workspacesTable)
-    .where(eq(workspacesTable.githubRepoFullName, normalized))
+    .where(
+      and(
+        eq(workspacesTable.sourceProvider, provider),
+        eq(workspacesTable.repoFullName, normalized),
+      ),
+    )
     .limit(1);
   const workspaceId = workspaceRows[0]?.id;
   if (workspaceId === undefined) {
     return null;
   }
-  const githubRepoDefaultBranch = workspaceRows[0]?.githubRepoDefaultBranch ?? null;
+  const repoDefaultBranch = workspaceRows[0]?.repoDefaultBranch ?? null;
 
   const settingsRows = await db
     .select()
@@ -191,7 +198,7 @@ export const resolveWorkspaceSettingsForRepo = async (
   }
 
   const merged = mergeWorkspaceSettingsRow(settingsRow);
-  merged.githubRepoDefaultBranch = githubRepoDefaultBranch;
+  merged.repoDefaultBranch = repoDefaultBranch;
   validateMergedWorkspaceSettings(merged);
   return merged;
 };

@@ -6,7 +6,7 @@ import {
   jobsTable,
   promptsTable,
   pullRequestsTable,
-  userGithubAccountsTable,
+  userSourceConnectionsTable,
   usersTable,
   webhookEventsTable,
   workspacesTable,
@@ -73,14 +73,24 @@ describe("db/schema tables", () => {
     expect(columns.userId).toBeDefined();
     expect(columns.slug).toBeDefined();
     expect(columns.workspaceKind).toBeDefined();
-    expect(columns.githubRepoFullName).toBeDefined();
+    expect(columns.sourceProvider).toBeDefined();
+    expect(columns.repoFullName).toBeDefined();
+    expect(columns.repoDefaultBranch).toBeDefined();
     expect(config.uniqueConstraints.length).toBe(1);
-    expect(config.indexes.length).toBe(1);
+    // userIdIdx + partial unique index on (sourceProvider, repoFullName)
+    expect(config.indexes.length).toBe(2);
   });
 
-  it("should define user_github_accounts for GitHub user OAuth tokens", () => {
-    const columns = getTableColumns(userGithubAccountsTable);
+  it("should define user_source_connections for per-provider OAuth tokens", () => {
+    const columns = getTableColumns(userSourceConnectionsTable);
+    const config = getTableConfig(userSourceConnectionsTable);
+
+    expect(columns.userId).toBeDefined();
+    expect(columns.provider).toBeDefined();
     expect(columns.accessTokenCiphertext).toBeDefined();
-    expect(columns.githubLogin).toBeDefined();
+    expect(columns.externalLogin).toBeDefined();
+    expect(columns.externalAccountId).toBeDefined();
+    // composite primary key (user_id, provider)
+    expect(config.primaryKeys.length).toBe(1);
   });
 });

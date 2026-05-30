@@ -212,7 +212,7 @@ export const inferAndApplyWorkspaceSettings = async (input: {
     if (current.length === 0) {
       await input.db
         .update(workspacesTable)
-        .set({ githubRepoDefaultBranch: defaultBranch, updatedAt: new Date() })
+        .set({ repoDefaultBranch: defaultBranch, updatedAt: new Date() })
         .where(eq(workspacesTable.id, input.workspaceId));
       workspaceDefaultBranchUpdated = true;
     }

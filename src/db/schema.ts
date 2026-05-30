@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -189,22 +190,32 @@ export const usersTable = pgTable(
 );
 
 /**
- * GitHub OAuth (user-to-server) tokens for listing repos and reading public metadata.
- * Access tokens are stored sealed with `AUTH_JWT_SECRET` (see `token-aes.ts`).
+ * Per-provider source OAuth (user-to-server) tokens for listing repos and reading metadata.
+ * One row per (user, provider). Access tokens are stored sealed with `AUTH_JWT_SECRET`
+ * (see `token-aes.ts`). `provider` is `github` today; `gitlab`/`bitbucket` later.
  */
-export const userGithubAccountsTable = pgTable("user_github_accounts", {
-  userId: uuid("user_id")
-    .primaryKey()
-    .references(() => usersTable.id, { onDelete: "cascade" }),
-  accessTokenCiphertext: text("access_token_ciphertext").notNull(),
-  refreshTokenCiphertext: text("refresh_token_ciphertext"),
-  scope: text("scope"),
-  tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
-  githubUserId: text("github_user_id"),
-  githubLogin: text("github_login"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const userSourceConnectionsTable = pgTable(
+  "user_source_connections",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    accessTokenCiphertext: text("access_token_ciphertext").notNull(),
+    refreshTokenCiphertext: text("refresh_token_ciphertext"),
+    scope: text("scope"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    /** Provider-side account id (e.g. GitHub user id). */
+    externalAccountId: text("external_account_id"),
+    /** Provider-side login/handle (e.g. GitHub login). */
+    externalLogin: text("external_login"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.userId, table.provider] }),
+  }),
+);
 
 /**
  * Per-user workspaces (apps / projects). Integration settings for each row live in
@@ -220,20 +231,28 @@ export const workspacesTable = pgTable(
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     /**
+     * Source provider the linked repo belongs to (`github` today; `gitlab`/`bitbucket` later).
+     */
+    sourceProvider: text("source_provider").notNull().default("github"),
+    /**
      * Optional app kind for onboarding / releases (`ios_plist`, `ios_pbx`, `react_native_expo`, …).
      * Null until detection or manual selection.
      */
     workspaceKind: text("workspace_kind"),
-    /** Linked GitHub repo (`owner/name`) after onboarding. */
-    githubRepoFullName: text("github_repo_full_name"),
-    /** Default branch from GitHub metadata (optional cache). */
-    githubRepoDefaultBranch: text("github_repo_default_branch"),
+    /** Linked repo full name (`owner/name`) after onboarding. */
+    repoFullName: text("repo_full_name"),
+    /** Default branch from the source provider metadata (optional cache). */
+    repoDefaultBranch: text("repo_default_branch"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
     userSlugUnique: unique("workspaces_user_id_slug_unique").on(table.userId, table.slug),
     userIdIdx: index("workspaces_user_id_idx").on(table.userId),
+    // One workspace per linked repo, globally per provider (webhook routing is repo-keyed).
+    providerRepoUnique: uniqueIndex("workspaces_provider_repo_unique")
+      .on(table.sourceProvider, table.repoFullName)
+      .where(sql`${table.repoFullName} IS NOT NULL`),
   }),
 );
 
@@ -273,7 +292,7 @@ export const workspaceSettingsTable = pgTable(
     prSummaryBaseBranches: jsonb("pr_summary_base_branches").$type<string[]>(),
     /**
      * Branch names that trigger direct-push summaries. Empty/null falls back to the repo
-     * default branch (`workspaces.github_repo_default_branch`).
+     * default branch (`workspaces.repo_default_branch`).
      */
     pushSummaryBranches: jsonb("push_summary_branches").$type<string[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

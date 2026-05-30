@@ -78,6 +78,13 @@
       "when": 1780087313786,
       "tag": "0010_spicy_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1780088000000,
+      "tag": "0011_provider_agnostic_workspaces",
+      "breakpoints": true
     }
   ]
 }

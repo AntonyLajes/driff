@@ -97,7 +97,7 @@ const buildPushConfig = (
   }
   return {
     branches: workspace.pushSummaryBranches ?? [],
-    defaultBranch: workspace.githubRepoDefaultBranch,
+    defaultBranch: workspace.repoDefaultBranch,
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
 };
@@ -121,7 +121,8 @@ const buildWebhookInput = (
   db: Database,
 ): WebhookHandlerInput => {
   const resolveWebhookSettings = async (repoFullName: string) => {
-    const merged = await resolveWorkspaceSettingsForRepo(db, repoFullName);
+    // GitHub is the only provider with a webhook ingress today.
+    const merged = await resolveWorkspaceSettingsForRepo(db, "github", repoFullName);
     if (merged === null) {
       return null;
     }
@@ -225,7 +226,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       (await createPushSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
 
     const resolveWorkspaceOrThrow = async (repo: string): Promise<MergedWorkspaceSettings> => {
-      const workspace = await resolveWorkspaceSettingsForRepo(db, repo);
+      // GitHub is the only provider with a job pipeline today.
+      const workspace = await resolveWorkspaceSettingsForRepo(db, "github", repo);
       if (workspace === null) {
         throw new Error(`Workspace settings not configured for repository "${repo}".`);
       }

@@ -14,6 +14,7 @@ import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable, workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
+import { isImplementedProvider, sourceProviderSchema } from "@/sources/registry.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
 import {
   listNotionDatabases,
@@ -33,22 +34,20 @@ const readBearerToken = (authorization: string | undefined): string | null => {
   return token.length > 0 ? token : null;
 };
 
-const createWorkspaceBodySchema = z.object({
-  name: z.string().min(1).max(200),
-  slug: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-    .optional(),
-  workspaceKind: z.string().min(1).max(64).optional(),
-});
-
 const isUniqueViolation = (err: unknown): boolean =>
   typeof err === "object" &&
   err !== null &&
   "code" in err &&
   (err as { code?: string }).code === "23505";
+
+/** Name of the unique constraint/index that was violated, if any (postgres-js exposes both). */
+const uniqueViolationTarget = (err: unknown): string | null => {
+  if (!isUniqueViolation(err)) {
+    return null;
+  }
+  const e = err as { constraint_name?: string; constraint?: string };
+  return e.constraint_name ?? e.constraint ?? null;
+};
 
 const workspaceIdParamSchema = z.string().uuid();
 
@@ -58,12 +57,34 @@ const repoFullNameSchema = z
   .max(241)
   .regex(/^[\w.-]+\/[\w.-]+$/u, "expected owner/repo");
 
+const createWorkspaceBodySchema = z.object({
+  sourceProvider: sourceProviderSchema.default("github"),
+  repoFullName: repoFullNameSchema,
+  repoDefaultBranch: z.string().min(1).max(255).optional(),
+  name: z.string().min(1).max(200).optional(),
+  workspaceKind: z.string().min(1).max(64).optional(),
+});
+
+/** Derives a workspace slug from a repo full name's `name` part (`owner/name` -> `name`). */
+const slugFromRepoFullName = (repoFullName: string): string => {
+  const namePart = repoFullName.includes("/")
+    ? repoFullName.slice(repoFullName.indexOf("/") + 1)
+    : repoFullName;
+  return slugifyWorkspaceName(namePart);
+};
+
+/** Derives a display name from a repo full name's `name` part when none is provided. */
+const nameFromRepoFullName = (repoFullName: string): string => {
+  const namePart = repoFullName.includes("/")
+    ? repoFullName.slice(repoFullName.indexOf("/") + 1)
+    : repoFullName;
+  return namePart.trim().length > 0 ? namePart.trim() : repoFullName;
+};
+
 const patchWorkspaceBodySchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     workspaceKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
-    githubRepoFullName: z.union([repoFullNameSchema, z.null()]).optional(),
-    githubRepoDefaultBranch: z.union([z.string().min(1).max(255), z.null()]).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" });
 
@@ -71,9 +92,10 @@ const workspaceRowSelect = {
   id: workspacesTable.id,
   name: workspacesTable.name,
   slug: workspacesTable.slug,
+  sourceProvider: workspacesTable.sourceProvider,
   workspaceKind: workspacesTable.workspaceKind,
-  githubRepoFullName: workspacesTable.githubRepoFullName,
-  githubRepoDefaultBranch: workspacesTable.githubRepoDefaultBranch,
+  repoFullName: workspacesTable.repoFullName,
+  repoDefaultBranch: workspacesTable.repoDefaultBranch,
   createdAt: workspacesTable.createdAt,
   updatedAt: workspacesTable.updatedAt,
 };
@@ -164,8 +186,8 @@ type WorkspaceDiagnosticsIssue = {
 };
 
 const buildWorkspaceDiagnostics = (input: {
-  githubRepoFullName: string | null;
-  githubRepoDefaultBranch: string | null;
+  repoFullName: string | null;
+  repoDefaultBranch: string | null;
   settings:
     | {
         notionPrDatabaseId: string | null;
@@ -178,8 +200,8 @@ const buildWorkspaceDiagnostics = (input: {
       }
     | undefined;
 }) => {
-  const repo = input.githubRepoFullName?.trim() ?? "";
-  const defaultBranch = input.githubRepoDefaultBranch?.trim() || "main";
+  const repo = input.repoFullName?.trim() ?? "";
+  const defaultBranch = input.repoDefaultBranch?.trim() || "main";
   const settings = input.settings;
 
   const prDb = settings?.notionPrDatabaseId?.trim() ?? "";
@@ -328,7 +350,7 @@ export const handler = async (
       return reply.status(404).send({ error: "workspace_not_found" });
     }
 
-    const repo = loaded.workspace.githubRepoFullName?.trim();
+    const repo = loaded.workspace.repoFullName?.trim();
     if (repo === undefined || repo.length === 0) {
       return reply.send({ releases: [], pullRequests: [] });
     }
@@ -466,8 +488,8 @@ export const handler = async (
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
       .limit(1);
     const diagnostics = buildWorkspaceDiagnostics({
-      githubRepoFullName: loaded.workspace.githubRepoFullName,
-      githubRepoDefaultBranch: loaded.workspace.githubRepoDefaultBranch,
+      repoFullName: loaded.workspace.repoFullName,
+      repoDefaultBranch: loaded.workspace.repoDefaultBranch,
       settings: rows[0],
     });
     return reply.send({ diagnostics });
@@ -496,7 +518,7 @@ export const handler = async (
       return reply.status(404).send({ error: "workspace_not_found" });
     }
 
-    const repoFull = loaded.workspace.githubRepoFullName?.trim();
+    const repoFull = loaded.workspace.repoFullName?.trim();
     if (repoFull === undefined || repoFull.length === 0) {
       return reply.status(400).send({ error: "workspace_repo_not_linked" });
     }
@@ -522,7 +544,7 @@ export const handler = async (
         octokit,
         workspaceId: loaded.workspace.id,
         repoFullName: repoFull,
-        workspaceDefaultBranch: loaded.workspace.githubRepoDefaultBranch ?? null,
+        workspaceDefaultBranch: loaded.workspace.repoDefaultBranch ?? null,
         workspaceKind: loaded.workspace.workspaceKind ?? null,
         apply: parsedBody.data.apply,
       });
@@ -541,8 +563,8 @@ export const handler = async (
 
       const workspaceRows = await input.db
         .select({
-          githubRepoFullName: workspacesTable.githubRepoFullName,
-          githubRepoDefaultBranch: workspacesTable.githubRepoDefaultBranch,
+          repoFullName: workspacesTable.repoFullName,
+          repoDefaultBranch: workspacesTable.repoDefaultBranch,
         })
         .from(workspacesTable)
         .where(eq(workspacesTable.id, loaded.workspace.id))
@@ -550,9 +572,9 @@ export const handler = async (
       const workspaceRow = workspaceRows[0];
 
       const diagnostics = buildWorkspaceDiagnostics({
-        githubRepoFullName: workspaceRow?.githubRepoFullName ?? loaded.workspace.githubRepoFullName,
-        githubRepoDefaultBranch:
-          workspaceRow?.githubRepoDefaultBranch ?? loaded.workspace.githubRepoDefaultBranch,
+        repoFullName: workspaceRow?.repoFullName ?? loaded.workspace.repoFullName,
+        repoDefaultBranch:
+          workspaceRow?.repoDefaultBranch ?? loaded.workspace.repoDefaultBranch,
         settings: settingsRows[0],
       });
 
@@ -676,7 +698,7 @@ export const handler = async (
       return reply.status(404).send({ error: "workspace_not_found" });
     }
 
-    const repoFull = loaded.workspace.githubRepoFullName?.trim();
+    const repoFull = loaded.workspace.repoFullName?.trim();
     if (repoFull === undefined || repoFull.length === 0) {
       return reply.status(400).send({ error: "workspace_repo_not_linked" });
     }
@@ -697,7 +719,7 @@ export const handler = async (
     const pathParam = parsedQuery.data.path.trim();
     const refParam =
       parsedQuery.data.ref?.trim() ||
-      loaded.workspace.githubRepoDefaultBranch?.trim() ||
+      loaded.workspace.repoDefaultBranch?.trim() ||
       "main";
 
     const slash = repoFull.indexOf("/");
@@ -973,15 +995,24 @@ export const handler = async (
       return reply.status(400).send({ error: "invalid_body" });
     }
 
-    const { name, slug: slugInput, workspaceKind: kindRaw } = parsedBody.data;
-    let slug =
-      slugInput !== undefined ? normalizeWorkspaceSlug(slugInput) : slugifyWorkspaceName(name);
-    if (slug.length === 0) {
-      slug = "workspace";
+    const {
+      sourceProvider,
+      repoFullName,
+      repoDefaultBranch: branchRaw,
+      name: nameRaw,
+      workspaceKind: kindRaw,
+    } = parsedBody.data;
+
+    // Only providers with a runtime implementation can be linked today.
+    if (!isImplementedProvider(sourceProvider)) {
+      return reply.status(400).send({ error: "unsupported_provider" });
     }
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-      return reply.status(400).send({ error: "invalid_slug" });
-    }
+
+    const repoFull = repoFullName.trim();
+    const repoDefaultBranch = branchRaw?.trim() ? branchRaw.trim() : null;
+    const name = (nameRaw?.trim() ?? "").length > 0 ? nameRaw!.trim() : nameFromRepoFullName(repoFull);
+
+    const baseSlug = slugFromRepoFullName(repoFull);
 
     let workspaceKind: string | null = null;
     if (kindRaw !== undefined) {
@@ -993,31 +1024,48 @@ export const handler = async (
     }
 
     const now = new Date();
-    try {
-      const inserted = await input.db
-        .insert(workspacesTable)
-        .values({
-          userId: session.userId,
-          name: name.trim(),
-          slug,
-          workspaceKind,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning(workspaceRowSelect);
+    // Derive a per-user-unique slug; retry with a numeric suffix on slug collision.
+    const maxSlugAttempts = 25;
+    for (let attempt = 1; attempt <= maxSlugAttempts; attempt += 1) {
+      const slug = attempt === 1 ? baseSlug : `${baseSlug}-${attempt}`;
+      try {
+        const inserted = await input.db
+          .insert(workspacesTable)
+          .values({
+            userId: session.userId,
+            name,
+            slug,
+            sourceProvider,
+            workspaceKind,
+            repoFullName: repoFull,
+            repoDefaultBranch,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning(workspaceRowSelect);
 
-      const row = inserted[0];
-      if (row === undefined) {
-        return reply.status(500).send({ error: "insert_failed" });
+        const row = inserted[0];
+        if (row === undefined) {
+          return reply.status(500).send({ error: "insert_failed" });
+        }
+        return reply.status(201).send({ workspace: row });
+      } catch (err) {
+        const constraint = uniqueViolationTarget(err);
+        if (constraint === "workspaces_provider_repo_unique") {
+          return reply.status(409).send({ error: "repo_already_linked" });
+        }
+        if (constraint === "workspaces_user_id_slug_unique") {
+          // Slug collision for this user — try the next suffixed slug.
+          continue;
+        }
+        if (isUniqueViolation(err)) {
+          return reply.status(409).send({ error: "workspace_conflict" });
+        }
+        request.log.warn({ err }, "create_workspace_failed");
+        return reply.status(500).send({ error: "internal_error" });
       }
-      return reply.status(201).send({ workspace: row });
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        return reply.status(409).send({ error: "workspace_slug_taken" });
-      }
-      request.log.warn({ err }, "create_workspace_failed");
-      return reply.status(500).send({ error: "internal_error" });
     }
+    return reply.status(409).send({ error: "workspace_slug_taken" });
   });
 
   instance.patch("/api/me/workspaces/:workspaceId", async (request, reply) => {
@@ -1049,12 +1097,6 @@ export const handler = async (
       .set({
         ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
         ...(patch.workspaceKind !== undefined ? { workspaceKind: patch.workspaceKind } : {}),
-        ...(patch.githubRepoFullName !== undefined
-          ? { githubRepoFullName: patch.githubRepoFullName }
-          : {}),
-        ...(patch.githubRepoDefaultBranch !== undefined
-          ? { githubRepoDefaultBranch: patch.githubRepoDefaultBranch }
-          : {}),
         updatedAt: now,
       })
       .where(
