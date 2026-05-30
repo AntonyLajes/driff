@@ -421,6 +421,10 @@ export const handler = async (
       try {
         const databases = await listNotionDatabases(token);
         const suggestions = suggestNotionDatabaseRoles(databases);
+        request.log.info(
+          { workspaceId: ws.id, count: databases.length },
+          "notion_databases_listed",
+        );
         return reply.send({ databases, suggestions });
       } catch (err) {
         request.log.warn({ err }, "notion_list_databases_failed");
