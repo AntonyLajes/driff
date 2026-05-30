@@ -88,7 +88,10 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
     const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
       notionPrDatabaseId: "pr-db",
       notionReleasesDatabaseId: "rel-db",
+      notionPushesDatabaseId: null,
       prSummaryBaseBranches: null,
+      pushSummaryBranches: null,
+      githubRepoDefaultBranch: null,
       releaseInfoPlistPath: null,
       releaseVersionBranch: "develop",
       releaseMonitoredRepo: null,
@@ -105,7 +108,10 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
     const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
       notionPrDatabaseId: "pr-db",
       notionReleasesDatabaseId: "rel-db",
+      notionPushesDatabaseId: null,
       prSummaryBaseBranches: null,
+      pushSummaryBranches: null,
+      githubRepoDefaultBranch: null,
       releaseInfoPlistPath: "Info.plist",
       releaseVersionBranch: null,
       releaseMonitoredRepo: null,
@@ -122,7 +128,10 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
     const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
       notionPrDatabaseId: "pr-db",
       notionReleasesDatabaseId: "rel-db",
+      notionPushesDatabaseId: null,
       prSummaryBaseBranches: null,
+      pushSummaryBranches: null,
+      githubRepoDefaultBranch: null,
       releaseInfoPlistPath: null,
       releaseVersionBranch: "develop",
       releaseMonitoredRepo: null,

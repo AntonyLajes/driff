@@ -12,7 +12,11 @@ import { workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 export interface MergedWorkspaceSettings {
   notionPrDatabaseId: string;
   notionReleasesDatabaseId: string | null;
+  notionPushesDatabaseId: string | null;
   prSummaryBaseBranches: string[] | null;
+  pushSummaryBranches: string[] | null;
+  /** Repo default branch from the linked workspace; used as push-summary branch fallback. */
+  githubRepoDefaultBranch: string | null;
   releaseInfoPlistPath: string | null;
   releaseVersionBranch: string | null;
   releaseMonitoredRepo: string | null;
@@ -43,6 +47,7 @@ export const mergeWorkspaceSettingsRow = (
 ): MergedWorkspaceSettings => {
   const notionPrDatabaseId = firstNonBlank(row.notionPrDatabaseId) ?? "";
   const notionReleasesDatabaseId = firstNonBlank(row.notionReleasesDatabaseId);
+  const notionPushesDatabaseId = firstNonBlank(row.notionPushesDatabaseId);
   const releaseVersionBranch = firstNonBlank(row.releaseVersionBranch);
   const releaseMonitoredRepo = firstNonBlank(row.releaseMonitoredRepo);
   const releaseCompareRootSha = firstNonBlank(row.releaseCompareRootSha);
@@ -93,21 +98,26 @@ export const mergeWorkspaceSettingsRow = (
     }
   }
 
-  let prSummaryBaseBranches: string[] | null = null;
-  const dbBranches = row.prSummaryBaseBranches;
-  if (Array.isArray(dbBranches)) {
-    const cleaned = dbBranches
+  const cleanBranchList = (value: unknown): string[] | null => {
+    if (!Array.isArray(value)) {
+      return null;
+    }
+    const cleaned = value
       .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
       .map((b) => b.trim());
-    if (cleaned.length > 0) {
-      prSummaryBaseBranches = cleaned;
-    }
-  }
+    return cleaned.length > 0 ? cleaned : null;
+  };
+
+  const prSummaryBaseBranches = cleanBranchList(row.prSummaryBaseBranches);
+  const pushSummaryBranches = cleanBranchList(row.pushSummaryBranches);
 
   return {
     notionPrDatabaseId,
     notionReleasesDatabaseId,
+    notionPushesDatabaseId,
     prSummaryBaseBranches,
+    pushSummaryBranches,
+    githubRepoDefaultBranch: null,
     releaseInfoPlistPath,
     releaseVersionBranch,
     releaseMonitoredRepo,
@@ -157,7 +167,10 @@ export const resolveWorkspaceSettingsForRepo = async (
   }
 
   const workspaceRows = await db
-    .select({ id: workspacesTable.id })
+    .select({
+      id: workspacesTable.id,
+      githubRepoDefaultBranch: workspacesTable.githubRepoDefaultBranch,
+    })
     .from(workspacesTable)
     .where(eq(workspacesTable.githubRepoFullName, normalized))
     .limit(1);
@@ -165,6 +178,7 @@ export const resolveWorkspaceSettingsForRepo = async (
   if (workspaceId === undefined) {
     return null;
   }
+  const githubRepoDefaultBranch = workspaceRows[0]?.githubRepoDefaultBranch ?? null;
 
   const settingsRows = await db
     .select()
@@ -177,6 +191,7 @@ export const resolveWorkspaceSettingsForRepo = async (
   }
 
   const merged = mergeWorkspaceSettingsRow(settingsRow);
+  merged.githubRepoDefaultBranch = githubRepoDefaultBranch;
   validateMergedWorkspaceSettings(merged);
   return merged;
 };
