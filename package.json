@@ -6,7 +6,7 @@
   "main": "dist/src/index.js",
   "scripts": {
     "dev": "tsx --watch src/index.ts",
-    "build": "tsc --project tsconfig.json && tsc-alias --project tsconfig.json && mkdir -p dist/src/llm/prompts && cp src/llm/prompts/pr-summary.md dist/src/llm/prompts/pr-summary.md && cp src/llm/prompts/release-changelog.md dist/src/llm/prompts/release-changelog.md",
+    "build": "tsc --project tsconfig.json && tsc-alias --project tsconfig.json && mkdir -p dist/src/llm/prompts && cp src/llm/prompts/*.md dist/src/llm/prompts/",
     "start": "node dist/src/index.js",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
