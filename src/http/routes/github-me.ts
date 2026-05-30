@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -8,7 +8,9 @@ import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { sealSecret } from "@/auth/token-aes.js";
 import type { Env } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
-import { userGithubAccountsTable } from "@/db/schema.js";
+import { userSourceConnectionsTable } from "@/db/schema.js";
+
+const GITHUB_PROVIDER = "github";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { inferRepoKind } from "@/github/repo-kind-infer.js";
 
@@ -191,27 +193,28 @@ export const handler = async (
           : null;
 
       await input.db
-        .insert(userGithubAccountsTable)
+        .insert(userSourceConnectionsTable)
         .values({
           userId: verified.userId,
+          provider: GITHUB_PROVIDER,
           accessTokenCiphertext: accessCipher,
           refreshTokenCiphertext: refreshCipher,
           scope: tokenBundle.scope ?? null,
           tokenExpiresAt: expiresAt,
-          githubUserId: ghUser.id,
-          githubLogin: ghUser.login,
+          externalAccountId: ghUser.id,
+          externalLogin: ghUser.login,
           createdAt: now,
           updatedAt: now,
         })
         .onConflictDoUpdate({
-          target: userGithubAccountsTable.userId,
+          target: [userSourceConnectionsTable.userId, userSourceConnectionsTable.provider],
           set: {
             accessTokenCiphertext: accessCipher,
             refreshTokenCiphertext: refreshCipher,
             scope: tokenBundle.scope ?? null,
             tokenExpiresAt: expiresAt,
-            githubUserId: ghUser.id,
-            githubLogin: ghUser.login,
+            externalAccountId: ghUser.id,
+            externalLogin: ghUser.login,
             updatedAt: now,
           },
         });
@@ -234,10 +237,15 @@ export const handler = async (
     }
     const rows = await input.db
       .select({
-        githubLogin: userGithubAccountsTable.githubLogin,
+        externalLogin: userSourceConnectionsTable.externalLogin,
       })
-      .from(userGithubAccountsTable)
-      .where(eq(userGithubAccountsTable.userId, session.userId))
+      .from(userSourceConnectionsTable)
+      .where(
+        and(
+          eq(userSourceConnectionsTable.userId, session.userId),
+          eq(userSourceConnectionsTable.provider, GITHUB_PROVIDER),
+        ),
+      )
       .limit(1);
     const row = rows[0];
     if (row === undefined) {
@@ -245,7 +253,7 @@ export const handler = async (
     }
     return reply.send({
       connected: true,
-      githubLogin: row.githubLogin ?? undefined,
+      githubLogin: row.externalLogin ?? undefined,
     });
   });
 
@@ -259,8 +267,13 @@ export const handler = async (
       return reply.status(401).send({ error: "invalid_session" });
     }
     await input.db
-      .delete(userGithubAccountsTable)
-      .where(eq(userGithubAccountsTable.userId, session.userId));
+      .delete(userSourceConnectionsTable)
+      .where(
+        and(
+          eq(userSourceConnectionsTable.userId, session.userId),
+          eq(userSourceConnectionsTable.provider, GITHUB_PROVIDER),
+        ),
+      );
     return reply.status(204).send();
   });
 

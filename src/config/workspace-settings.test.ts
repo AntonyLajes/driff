@@ -91,7 +91,7 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       notionPushesDatabaseId: null,
       prSummaryBaseBranches: null,
       pushSummaryBranches: null,
-      githubRepoDefaultBranch: null,
+      repoDefaultBranch: null,
       releaseInfoPlistPath: null,
       releaseVersionBranch: "develop",
       releaseMonitoredRepo: null,
@@ -111,7 +111,7 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       notionPushesDatabaseId: null,
       prSummaryBaseBranches: null,
       pushSummaryBranches: null,
-      githubRepoDefaultBranch: null,
+      repoDefaultBranch: null,
       releaseInfoPlistPath: "Info.plist",
       releaseVersionBranch: null,
       releaseMonitoredRepo: null,
@@ -131,7 +131,7 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
       notionPushesDatabaseId: null,
       prSummaryBaseBranches: null,
       pushSummaryBranches: null,
-      githubRepoDefaultBranch: null,
+      repoDefaultBranch: null,
       releaseInfoPlistPath: null,
       releaseVersionBranch: "develop",
       releaseMonitoredRepo: null,
@@ -159,7 +159,7 @@ describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
 });
 
 describe("resolveWorkspaceSettingsForRepo", () => {
-  it("should prefer workspace_settings for a matching github_repo_full_name", async () => {
+  it("should prefer workspace_settings for a matching (provider, repo_full_name)", async () => {
     const wsId = "ws-ride";
     const workspaceFrom = vi.fn(() => ({
       where: vi.fn(() => ({ limit: vi.fn(async () => [{ id: wsId }]) })),
@@ -181,7 +181,7 @@ describe("resolveWorkspaceSettingsForRepo", () => {
       .mockImplementationOnce(() => ({ from: settingsFrom }));
     const db = { select } as never;
 
-    const merged = await resolveWorkspaceSettingsForRepo(db, "AntonyLajes/ride-pack");
+    const merged = await resolveWorkspaceSettingsForRepo(db, "github", "AntonyLajes/ride-pack");
 
     expect(merged).not.toBeNull();
     if (merged === null) {
@@ -199,7 +199,7 @@ describe("resolveWorkspaceSettingsForRepo", () => {
       })),
     }));
     const db = { select } as never;
-    await expect(resolveWorkspaceSettingsForRepo(db, "acme/unknown")).resolves.toBeNull();
+    await expect(resolveWorkspaceSettingsForRepo(db, "github", "acme/unknown")).resolves.toBeNull();
   });
 
   it("should return null when workspace exists but settings row is missing", async () => {
@@ -217,6 +217,20 @@ describe("resolveWorkspaceSettingsForRepo", () => {
         })),
       }));
     const db = { select } as never;
-    await expect(resolveWorkspaceSettingsForRepo(db, "acme/repo")).resolves.toBeNull();
+    await expect(resolveWorkspaceSettingsForRepo(db, "github", "acme/repo")).resolves.toBeNull();
+  });
+
+  it("should scope the workspace lookup by provider", async () => {
+    const capturedWhere = vi.fn(() => ({ limit: vi.fn(async () => []) }));
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({ where: capturedWhere })),
+    }));
+    const db = { select } as never;
+
+    // Same repo name under a different provider must not resolve a github workspace.
+    await expect(
+      resolveWorkspaceSettingsForRepo(db, "gitlab", "acme/repo"),
+    ).resolves.toBeNull();
+    expect(capturedWhere).toHaveBeenCalledTimes(1);
   });
 });
