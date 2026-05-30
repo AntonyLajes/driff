@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     insertWebhookEvent: async () => undefined,
     enqueueProcessPrJob: async () => undefined,
     enqueueProcessReleaseJob: async () => undefined,
+    enqueueProcessPushJob: async () => undefined,
   }));
   const queue = {
     enqueue: vi.fn(async () => "job-1"),
@@ -215,6 +216,7 @@ describe("index execute runtime wiring", () => {
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
         enqueueProcessReleaseJob: async () => undefined,
+        enqueueProcessPushJob: async () => undefined,
       },
     });
 

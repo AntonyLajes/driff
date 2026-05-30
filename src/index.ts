@@ -16,7 +16,9 @@ import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dep
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
 import { execute as createProcessPrJob } from "@/jobs/process-pr.js";
 import { execute as createProcessReleaseJob } from "@/jobs/process-release.js";
+import { execute as createProcessPushJob } from "@/jobs/process-push.js";
 import { execute as createReleaseSummarizer, type ReleaseSummarizer } from "@/llm/release-summarizer.js";
+import { execute as createPushSummarizer, type PushSummarizer } from "@/llm/push-summarizer.js";
 import { execute as createSummarizer, type Summarizer } from "@/llm/summarizer.js";
 import { execute as createQueue, type QueueAdapter } from "@/queue/queue.js";
 import { execute as createWorker, type WorkerAdapter } from "@/queue/worker.js";
@@ -48,11 +50,14 @@ export interface ExecuteInput {
   source?: Source;
   summarizer?: Summarizer;
   releaseSummarizer?: ReleaseSummarizer;
+  pushSummarizer?: PushSummarizer;
   destination?: Destination;
   processPrHandler?: JobHandler;
   processReleaseHandler?: JobHandler;
+  processPushHandler?: JobHandler;
   promptVersion?: number;
   releasePromptVersion?: number;
+  pushPromptVersion?: number;
   startWorker?: boolean;
   registerSignalHandlers?: boolean;
 }
@@ -84,6 +89,19 @@ const buildReleaseConfig = (
   };
 };
 
+const buildPushConfig = (
+  workspace: MergedWorkspaceSettings,
+): import("@/http/routes/webhook-push.js").PushWebhookConfig | null => {
+  if (!workspace.notionPushesDatabaseId?.trim()) {
+    return null;
+  }
+  return {
+    branches: workspace.pushSummaryBranches ?? [],
+    defaultBranch: workspace.githubRepoDefaultBranch,
+    monitoredRepo: workspace.releaseMonitoredRepo ?? null,
+  };
+};
+
 const buildCorsFromEnv = (env: Env): CorsRegistrationInput => {
   if (env.CORS_ORIGINS.length > 0) {
     return { kind: "allowlist", origins: env.CORS_ORIGINS };
@@ -111,6 +129,7 @@ const buildWebhookInput = (
     return {
       prSummaryBaseBranches: merged.prSummaryBaseBranches,
       releaseConfig: releaseNotesEnabled ? buildReleaseConfig(merged) : null,
+      pushConfig: buildPushConfig(merged),
     };
   };
 
@@ -120,6 +139,7 @@ const buildWebhookInput = (
       resolveWebhookSettings: input.webhook.resolveWebhookSettings ?? resolveWebhookSettings,
       prSummaryBaseBranches: input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
       releaseConfig: input.webhook.releaseConfig !== undefined ? input.webhook.releaseConfig : releaseConfig,
+      pushConfig: input.webhook.pushConfig !== undefined ? input.webhook.pushConfig : null,
     };
   }
 
@@ -128,6 +148,7 @@ const buildWebhookInput = (
     resolveWebhookSettings,
     prSummaryBaseBranches,
     releaseConfig,
+    pushConfig: null,
     ...createWebhookDependencies({ db }),
   };
 };
@@ -148,6 +169,7 @@ const createDestinationForWorkspace = (
     token: env.NOTION_TOKEN,
     databaseId: workspace.notionPrDatabaseId,
     releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
+    pushesDatabaseId: workspace.notionPushesDatabaseId ?? undefined,
   });
 };
 
@@ -198,6 +220,9 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
     const releaseSummarizer =
       input.releaseSummarizer ??
       (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
+    const pushSummarizer =
+      input.pushSummarizer ??
+      (await createPushSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
 
     const resolveWorkspaceOrThrow = async (repo: string): Promise<MergedWorkspaceSettings> => {
       const workspace = await resolveWorkspaceSettingsForRepo(db, repo);
@@ -251,11 +276,33 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
         },
       };
 
+    const processPushHandler =
+      input.processPushHandler ??
+      {
+        execute: async (payload: Record<string, unknown>) => {
+          const repo = readRepoFromJobPayload(payload, "process_push");
+          const workspace = await resolveWorkspaceOrThrow(repo);
+          const destination =
+            input.destination ?? createDestinationForWorkspace(env, workspace);
+          const handler = createProcessPushJob({
+            db,
+            appId: env.GITHUB_APP_ID,
+            privateKey: env.GITHUB_APP_PRIVATE_KEY,
+            pushSummarizer,
+            destination,
+            promptVersion: input.pushPromptVersion ?? 1,
+            pushesNotionDatabaseId: workspace.notionPushesDatabaseId,
+          });
+          await handler.execute(payload);
+        },
+      };
+
     return createWorker({
       queue,
       handlers: {
         process_pr: processPrHandler,
         process_release: processReleaseHandler,
+        process_push: processPushHandler,
       },
     });
   })();

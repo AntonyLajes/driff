@@ -46,6 +46,7 @@ describe("index execute", () => {
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
         enqueueProcessReleaseJob: async () => undefined,
+        enqueueProcessPushJob: async () => undefined,
       },
     });
 
@@ -86,6 +87,7 @@ describe("index execute", () => {
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
         enqueueProcessReleaseJob: async () => undefined,
+        enqueueProcessPushJob: async () => undefined,
       },
       host: "127.0.0.1",
       port: 4000,
@@ -126,6 +128,7 @@ describe("index execute", () => {
         insertWebhookEvent: async () => undefined,
         enqueueProcessPrJob: async () => undefined,
         enqueueProcessReleaseJob: async () => undefined,
+        enqueueProcessPushJob: async () => undefined,
       },
       registerSignalHandlers: true,
       startWorker: false,

@@ -95,6 +95,7 @@ describe("http/server execute", () => {
     const insertWebhookEvent = async () => undefined;
     const enqueueProcessPrJob = async () => undefined;
     const enqueueProcessReleaseJob = async () => undefined;
+    const enqueueProcessPushJob = async () => undefined;
 
     const server = execute({
       logger: false,
@@ -106,6 +107,7 @@ describe("http/server execute", () => {
         insertWebhookEvent,
         enqueueProcessPrJob,
         enqueueProcessReleaseJob,
+        enqueueProcessPushJob,
       },
     });
     servers.push(server);
