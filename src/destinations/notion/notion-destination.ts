@@ -1,6 +1,5 @@
 import { Client } from "@notionhq/client";
 
-import { execute as loadEnv } from "@/config/env.js";
 import type {
   Destination,
   PRSummary,
@@ -41,17 +40,17 @@ const getNotionClientFactory = (
   return (token) => new Client({ auth: token }) as unknown as NotionClientLike;
 };
 
-const getCredentials = (input: ExecuteInput): { token: string; databaseId: string } => {
+const getToken = (input: ExecuteInput): string => {
   const tokenFromInput = input.token?.trim();
-  const databaseIdFromInput = input.databaseId?.trim();
-  if (!databaseIdFromInput) {
-    throw new Error(
-      "Notion PR database id is not configured; pass databaseId from workspace settings.",
-    );
+  if (!tokenFromInput) {
+    throw new Error("Notion token is not configured; pass token from the workspace destination.");
   }
-  const token =
-    tokenFromInput && tokenFromInput.length > 0 ? tokenFromInput : loadEnv().NOTION_TOKEN;
-  return { token, databaseId: databaseIdFromInput };
+  return tokenFromInput;
+};
+
+const getPrDatabaseId = (input: ExecuteInput): string | null => {
+  const fromInput = input.databaseId?.trim();
+  return fromInput && fromInput.length > 0 ? fromInput : null;
 };
 
 const getReleasesDatabaseId = (input: ExecuteInput): string | null => {
@@ -188,11 +187,17 @@ const toProperties = (summary: PRSummary): Record<string, unknown> => {
 };
 
 export const execute = (input: ExecuteInput = {}): Destination => {
-  const { token, databaseId } = getCredentials(input);
+  const token = getToken(input);
   const notion = getNotionClientFactory(input.notionClientFactory)(token);
 
   return {
     publishPR: async (summary) => {
+      const databaseId = getPrDatabaseId(input);
+      if (!databaseId) {
+        throw new Error(
+          "Notion PR database id is not configured; set the PR database on the Notion destination.",
+        );
+      }
       const createInput = {
         parent: { database_id: databaseId },
         properties: toProperties(summary),

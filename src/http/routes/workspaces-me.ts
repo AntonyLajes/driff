@@ -9,12 +9,12 @@ import {
   isSupportedReleaseProjectKind,
   releaseProjectKindSchema,
 } from "@/config/release-project-kind.js";
-import { execute as loadEnv } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
 import {
   pullRequestsTable,
   pushesTable,
   releasesTable,
+  workspaceDestinationsTable,
   workspaceSettingsTable,
   workspacesTable,
 } from "@/db/schema.js";
@@ -22,10 +22,6 @@ import { loadUserGithubAccessToken } from "@/github/load-user-github-access-toke
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import { isImplementedProvider, sourceProviderSchema } from "@/sources/registry.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
-import {
-  listNotionDatabases,
-  suggestNotionDatabaseRoles,
-} from "@/notion/list-databases.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
@@ -108,9 +104,6 @@ const workspaceRowSelect = {
 
 const patchWorkspaceSettingsBodySchema = z
   .object({
-    notionPrDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
-    notionReleasesDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
-    notionPushesDatabaseId: z.union([z.string().max(128), z.null()]).optional(),
     pushSummaryBranches: z.union([z.array(z.string().min(1).max(255)).max(50), z.null()]).optional(),
     releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
     releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
@@ -194,11 +187,9 @@ type WorkspaceDiagnosticsIssue = {
 const buildWorkspaceDiagnostics = (input: {
   repoFullName: string | null;
   repoDefaultBranch: string | null;
+  hasEnabledDestination: boolean;
   settings:
     | {
-        notionPrDatabaseId: string | null;
-        notionReleasesDatabaseId: string | null;
-        notionPushesDatabaseId?: string | null;
         pushSummaryBranches?: string[] | null;
         releaseProjectKind: string | null;
         releaseVersionFilePath: string | null;
@@ -209,16 +200,15 @@ const buildWorkspaceDiagnostics = (input: {
   const repo = input.repoFullName?.trim() ?? "";
   const defaultBranch = input.repoDefaultBranch?.trim() || "main";
   const settings = input.settings;
+  const destinationConnected = input.hasEnabledDestination;
 
-  const prDb = settings?.notionPrDatabaseId?.trim() ?? "";
-  const releasesDb = settings?.notionReleasesDatabaseId?.trim() ?? "";
   const releaseKind = settings?.releaseProjectKind?.trim() ?? "";
   const releasePath = settings?.releaseVersionFilePath?.trim() ?? "";
   const releaseBranch = settings?.releaseVersionBranch?.trim() ?? "";
-  const pushesDb = settings?.notionPushesDatabaseId?.trim() ?? "";
   const pushBranches = (settings?.pushSummaryBranches ?? [])
     .map((b) => b.trim())
     .filter((b) => b.length > 0);
+  const releaseSourceConfigured = releaseKind.length > 0 && releasePath.length > 0;
 
   const issues: WorkspaceDiagnosticsIssue[] = [];
 
@@ -226,65 +216,35 @@ const buildWorkspaceDiagnostics = (input: {
     issues.push({
       code: "workspace_repo_not_linked",
       severity: "error",
-      message: "Link a GitHub repository to this workspace.",
+      message: "Link a repository to this workspace.",
     });
   }
-  if (!settings) {
+  if (!destinationConnected) {
     issues.push({
-      code: "workspace_settings_missing",
+      code: "destination_not_connected",
       severity: "error",
-      message: "Create workspace settings for this workspace.",
+      message: "Connect an output destination (e.g. Notion) to publish summaries.",
     });
   }
-  if (!prDb) {
-    issues.push({
-      code: "notion_pr_database_id_missing",
-      severity: "error",
-      message: "Set Notion PR database id in workspace settings.",
-    });
-  }
-  if (releasesDb && !releaseBranch) {
+  if (releaseSourceConfigured && !releaseBranch) {
     issues.push({
       code: "release_branch_missing",
       severity: "error",
-      message: "Release database is configured but release branch is missing.",
+      message: "Release version source is set but the release branch is missing.",
     });
   }
-  if (releasesDb && (!releaseKind || !releasePath)) {
+  if (!releaseSourceConfigured) {
     issues.push({
       code: "release_version_source_missing",
-      severity: "error",
-      message: "Release database is configured but release project kind/file path is missing.",
-    });
-  }
-  if (!releasesDb) {
-    issues.push({
-      code: "notion_releases_database_id_missing",
       severity: "warning",
-      message: "Set Notion releases database id to enable version summaries.",
-    });
-  }
-  if (!pushesDb) {
-    issues.push({
-      code: "notion_pushes_database_id_missing",
-      severity: "warning",
-      message: "Set Notion pushes database id to enable direct-push summaries.",
+      message: "Set a release version source (project kind + file) to enable version summaries.",
     });
   }
 
-  const prSummaryReady = repo.length > 0 && !!settings && prDb.length > 0;
+  const prSummaryReady = repo.length > 0 && destinationConnected;
   const releaseSummaryReady =
-    prSummaryReady &&
-    releasesDb.length > 0 &&
-    releaseBranch.length > 0 &&
-    releaseKind.length > 0 &&
-    releasePath.length > 0;
-  // Push summaries fall back to the repo default branch when no explicit branch list is set.
-  const pushSummaryReady =
-    repo.length > 0 &&
-    !!settings &&
-    pushesDb.length > 0 &&
-    (pushBranches.length > 0 || defaultBranch.length > 0);
+    prSummaryReady && releaseSourceConfigured && releaseBranch.length > 0;
+  const pushSummaryReady = repo.length > 0 && destinationConnected && pushBranches.length > 0;
 
   return {
     repo: repo || null,
@@ -296,7 +256,7 @@ const buildWorkspaceDiagnostics = (input: {
         : "ready",
     checks: {
       repoLinked: repo.length > 0,
-      workspaceSettingsPresent: Boolean(settings),
+      destinationConnected,
       prSummaryReady,
       releaseSummaryReady,
       pushSummaryReady,
@@ -308,6 +268,20 @@ const buildWorkspaceDiagnostics = (input: {
     },
     issues,
   };
+};
+
+const hasEnabledDestination = async (db: Database, workspaceId: string): Promise<boolean> => {
+  const rows = await db
+    .select({ id: workspaceDestinationsTable.id })
+    .from(workspaceDestinationsTable)
+    .where(
+      and(
+        eq(workspaceDestinationsTable.workspaceId, workspaceId),
+        eq(workspaceDestinationsTable.enabled, true),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 };
 
 export const handler = async (
@@ -431,9 +405,6 @@ export const handler = async (
     const wsId = loaded.workspace.id;
     const rows = await input.db
       .select({
-        notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
-        notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
-        notionPushesDatabaseId: workspaceSettingsTable.notionPushesDatabaseId,
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
@@ -445,9 +416,6 @@ export const handler = async (
     const row = rows[0];
     return reply.send({
       settings: {
-        notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
-        notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
-        notionPushesDatabaseId: row?.notionPushesDatabaseId ?? null,
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
@@ -482,9 +450,6 @@ export const handler = async (
     const wsId = loaded.workspace.id;
     const rows = await input.db
       .select({
-        notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
-        notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
-        notionPushesDatabaseId: workspaceSettingsTable.notionPushesDatabaseId,
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
@@ -496,6 +461,7 @@ export const handler = async (
     const diagnostics = buildWorkspaceDiagnostics({
       repoFullName: loaded.workspace.repoFullName,
       repoDefaultBranch: loaded.workspace.repoDefaultBranch,
+      hasEnabledDestination: await hasEnabledDestination(input.db, wsId),
       settings: rows[0],
     });
     return reply.send({ diagnostics });
@@ -557,8 +523,7 @@ export const handler = async (
 
       const settingsRows = await input.db
         .select({
-          notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
-          notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
+          pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
           releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
           releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
           releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -581,6 +546,7 @@ export const handler = async (
         repoFullName: workspaceRow?.repoFullName ?? loaded.workspace.repoFullName,
         repoDefaultBranch:
           workspaceRow?.repoDefaultBranch ?? loaded.workspace.repoDefaultBranch,
+        hasEnabledDestination: await hasEnabledDestination(input.db, loaded.workspace.id),
         settings: settingsRows[0],
       });
 
@@ -603,81 +569,6 @@ export const handler = async (
         return reply.status(404).send({ error: "repo_not_found_or_no_access" });
       }
       return reply.status(500).send({ error: "infer_failed" });
-    }
-  });
-
-  instance.get("/api/me/workspaces/by-slug/:slug/integrations/notion/status", async (request, reply) => {
-    const token = readBearerToken(request.headers.authorization);
-    if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
-    }
-    const session = verifySessionJwt(token, input.jwtSecret);
-    if (session === null) {
-      return reply.status(401).send({ error: "invalid_session" });
-    }
-
-    const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
-      input.db,
-      session.userId,
-      params.slug ?? "",
-    );
-    if (loaded.kind === "invalid_slug") {
-      return reply.status(400).send({ error: "invalid_slug" });
-    }
-    if (loaded.kind === "not_found") {
-      return reply.status(404).send({ error: "workspace_not_found" });
-    }
-
-    const notionToken = loadEnv().NOTION_TOKEN.trim();
-    if (notionToken.length === 0) {
-      return reply.send({ status: { tokenConfigured: false, reachable: false } });
-    }
-
-    try {
-      await listNotionDatabases(notionToken);
-      return reply.send({ status: { tokenConfigured: true, reachable: true } });
-    } catch (err) {
-      request.log.warn({ err }, "notion_status_check_failed");
-      return reply.send({ status: { tokenConfigured: true, reachable: false } });
-    }
-  });
-
-  instance.get("/api/me/workspaces/by-slug/:slug/integrations/notion/databases", async (request, reply) => {
-    const token = readBearerToken(request.headers.authorization);
-    if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
-    }
-    const session = verifySessionJwt(token, input.jwtSecret);
-    if (session === null) {
-      return reply.status(401).send({ error: "invalid_session" });
-    }
-
-    const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
-      input.db,
-      session.userId,
-      params.slug ?? "",
-    );
-    if (loaded.kind === "invalid_slug") {
-      return reply.status(400).send({ error: "invalid_slug" });
-    }
-    if (loaded.kind === "not_found") {
-      return reply.status(404).send({ error: "workspace_not_found" });
-    }
-
-    const notionToken = loadEnv().NOTION_TOKEN.trim();
-    if (notionToken.length === 0) {
-      return reply.status(503).send({ error: "notion_not_configured" });
-    }
-
-    try {
-      const databases = await listNotionDatabases(notionToken);
-      const suggestions = suggestNotionDatabaseRoles(databases);
-      return reply.send({ databases, suggestions });
-    } catch (err) {
-      request.log.warn({ err }, "notion_list_databases_failed");
-      return reply.status(502).send({ error: "notion_list_failed" });
     }
   });
 
@@ -825,9 +716,6 @@ export const handler = async (
       const t = v.trim();
       return t.length === 0 ? null : t;
     };
-    const nextPr = mapId(patch.notionPrDatabaseId);
-    const nextRel = mapId(patch.notionReleasesDatabaseId);
-    const nextPushes = mapId(patch.notionPushesDatabaseId);
     const nextBranch = mapId(patch.releaseVersionBranch);
 
     const mapBranchList = (
@@ -896,9 +784,6 @@ export const handler = async (
       await input.db
         .update(workspaceSettingsTable)
         .set({
-          ...(nextPr !== undefined ? { notionPrDatabaseId: nextPr } : {}),
-          ...(nextRel !== undefined ? { notionReleasesDatabaseId: nextRel } : {}),
-          ...(nextPushes !== undefined ? { notionPushesDatabaseId: nextPushes } : {}),
           ...(nextPushBranches !== undefined ? { pushSummaryBranches: nextPushBranches } : {}),
           ...releasePatch,
           updatedAt: now,
@@ -907,9 +792,6 @@ export const handler = async (
     } else {
       await input.db.insert(workspaceSettingsTable).values({
         workspaceId: wsId,
-        notionPrDatabaseId: nextPr === undefined ? null : nextPr,
-        notionReleasesDatabaseId: nextRel === undefined ? null : nextRel,
-        notionPushesDatabaseId: nextPushes === undefined ? null : nextPushes,
         pushSummaryBranches: nextPushBranches === undefined ? null : nextPushBranches,
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
@@ -936,9 +818,6 @@ export const handler = async (
 
     const rows = await input.db
       .select({
-        notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
-        notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
-        notionPushesDatabaseId: workspaceSettingsTable.notionPushesDatabaseId,
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
@@ -950,9 +829,6 @@ export const handler = async (
     const row = rows[0];
     return reply.send({
       settings: {
-        notionPrDatabaseId: row?.notionPrDatabaseId ?? null,
-        notionReleasesDatabaseId: row?.notionReleasesDatabaseId ?? null,
-        notionPushesDatabaseId: row?.notionPushesDatabaseId ?? null,
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,

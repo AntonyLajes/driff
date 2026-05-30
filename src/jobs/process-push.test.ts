@@ -53,7 +53,6 @@ const buildDeps = (dbMock: ReturnType<typeof buildDbMock>) => {
     pushSummarizer: { summarizePush, prompt: "p" },
     destination: { publishPR: vi.fn(), publishRelease: vi.fn(), publishPush },
     promptVersion: 1,
-    pushesNotionDatabaseId: "push-db",
     summarizePush,
     publishPush,
   };
@@ -125,14 +124,6 @@ describe("jobs/process-push execute", () => {
 
     expect(deps.publishPush).not.toHaveBeenCalled();
     expect(dbMock.insert).not.toHaveBeenCalled();
-  });
-
-  it("throws when the pushes database id is not configured", async () => {
-    const dbMock = buildDbMock();
-    const deps = { ...buildDeps(dbMock), pushesNotionDatabaseId: null };
-    const handler = execute(deps);
-
-    await expect(handler.execute(payload)).rejects.toThrow(/Push summaries are not configured/);
   });
 
   it("throws when the payload is invalid", async () => {

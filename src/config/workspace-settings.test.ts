@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  hasReleaseVersionSource,
   mergeWorkspaceSettingsRow,
   resolveWorkspaceSettingsForRepo,
-  validateMergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
 import type { workspaceSettingsTable } from "@/db/schema.js";
 
@@ -13,8 +13,6 @@ const row = (
   ({
     id: "00000000-0000-4000-8000-000000000001",
     workspaceId: null,
-    notionPrDatabaseId: null,
-    notionReleasesDatabaseId: null,
     releaseInfoPlistPath: null,
     releaseVersionBranch: null,
     releaseMonitoredRepo: null,
@@ -24,6 +22,7 @@ const row = (
     releaseVersionFilePath: null,
     releaseCompareRootSha: null,
     prSummaryBaseBranches: null,
+    pushSummaryBranches: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...partial,
@@ -33,12 +32,10 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
   it("should normalize a workspace row without env fallback", () => {
     const merged = mergeWorkspaceSettingsRow(
       row({
-        notionPrDatabaseId: "from-db",
         releaseProjectKind: "react_native_expo",
         releaseVersionFilePath: "app.json",
       }),
     );
-    expect(merged.notionPrDatabaseId).toBe("from-db");
     expect(merged.releaseProjectKind).toBe("react_native_expo");
     expect(merged.releaseVersionFilePath).toBe("app.json");
   });
@@ -61,10 +58,7 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
   it("should throw when only RELEASE_PROJECT_KIND is set without path", () => {
     expect(() =>
       mergeWorkspaceSettingsRow(
-        row({
-          releaseProjectKind: "ios_plist",
-          releaseVersionFilePath: null,
-        }),
+        row({ releaseProjectKind: "ios_plist", releaseVersionFilePath: null }),
       ),
     ).toThrow(/release_version_file_path/);
   });
@@ -78,101 +72,29 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
   });
 });
 
-describe("config/workspace-settings validateMergedWorkspaceSettings", () => {
-  it("should throw when notion PR database id is missing", () => {
-    const merged = mergeWorkspaceSettingsRow(row({ notionPrDatabaseId: null }));
-    expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/Notion PR database id is missing/);
-  });
-
-  it("should throw when releases enabled without any version source", () => {
-    const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
-      notionPrDatabaseId: "pr-db",
-      notionReleasesDatabaseId: "rel-db",
-      notionPushesDatabaseId: null,
-      prSummaryBaseBranches: null,
-      pushSummaryBranches: null,
-      repoDefaultBranch: null,
-      releaseInfoPlistPath: null,
-      releaseVersionBranch: "develop",
-      releaseMonitoredRepo: null,
-      releaseProjectPbxprojPath: null,
-      releaseExpoAppConfigPath: null,
-      releaseCompareRootSha: null,
-      releaseProjectKind: null,
-      releaseVersionFilePath: null,
-    };
-    expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/no version source is configured/);
-  });
-
-  it("should throw when releases enabled without branch", () => {
-    const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
-      notionPrDatabaseId: "pr-db",
-      notionReleasesDatabaseId: "rel-db",
-      notionPushesDatabaseId: null,
-      prSummaryBaseBranches: null,
-      pushSummaryBranches: null,
-      repoDefaultBranch: null,
-      releaseInfoPlistPath: "Info.plist",
-      releaseVersionBranch: null,
-      releaseMonitoredRepo: null,
-      releaseProjectPbxprojPath: null,
-      releaseExpoAppConfigPath: null,
-      releaseCompareRootSha: null,
-      releaseProjectKind: null,
-      releaseVersionFilePath: null,
-    };
-    expect(() => validateMergedWorkspaceSettings(merged)).toThrow(/release_version_branch/);
-  });
-
-  it("should accept releases with only Expo app config path", () => {
-    const merged: Parameters<typeof validateMergedWorkspaceSettings>[0] = {
-      notionPrDatabaseId: "pr-db",
-      notionReleasesDatabaseId: "rel-db",
-      notionPushesDatabaseId: null,
-      prSummaryBaseBranches: null,
-      pushSummaryBranches: null,
-      repoDefaultBranch: null,
-      releaseInfoPlistPath: null,
-      releaseVersionBranch: "develop",
-      releaseMonitoredRepo: null,
-      releaseProjectPbxprojPath: null,
-      releaseExpoAppConfigPath: "app.config.js",
-      releaseCompareRootSha: null,
-      releaseProjectKind: "react_native_expo",
-      releaseVersionFilePath: "app.config.js",
-    };
-    expect(() => validateMergedWorkspaceSettings(merged)).not.toThrow();
-  });
-
-  it("should accept valid merged settings with releases enabled", () => {
+describe("hasReleaseVersionSource", () => {
+  it("is true when a kind + a version path are present", () => {
     const merged = mergeWorkspaceSettingsRow(
-      row({
-        notionPrDatabaseId: "pr-from-db",
-        notionReleasesDatabaseId: "rel",
-        releaseInfoPlistPath: "ios/App/Info.plist",
-        releaseVersionBranch: "develop",
-        releaseExpoAppConfigPath: null,
-      }),
+      row({ releaseProjectKind: "react_native_expo", releaseVersionFilePath: "app.json" }),
     );
-    expect(() => validateMergedWorkspaceSettings(merged)).not.toThrow();
+    expect(hasReleaseVersionSource(merged)).toBe(true);
+  });
+
+  it("is false with no release source", () => {
+    const merged = mergeWorkspaceSettingsRow(row({}));
+    expect(hasReleaseVersionSource(merged)).toBe(false);
   });
 });
 
 describe("resolveWorkspaceSettingsForRepo", () => {
-  it("should prefer workspace_settings for a matching (provider, repo_full_name)", async () => {
+  it("should resolve workspace_settings for a matching (provider, repo_full_name)", async () => {
     const wsId = "ws-ride";
     const workspaceFrom = vi.fn(() => ({
       where: vi.fn(() => ({ limit: vi.fn(async () => [{ id: wsId }]) })),
     }));
     const settingsFrom = vi.fn(() => ({
       where: vi.fn(() => ({
-        limit: vi.fn(async () => [
-          row({
-            workspaceId: wsId,
-            releaseVersionBranch: "main",
-            notionPrDatabaseId: "pr-ws",
-          }),
-        ]),
+        limit: vi.fn(async () => [row({ workspaceId: wsId, releaseVersionBranch: "main" })]),
       })),
     }));
     const select = vi
@@ -187,22 +109,12 @@ describe("resolveWorkspaceSettingsForRepo", () => {
     if (merged === null) {
       throw new Error("expected merged workspace settings");
     }
+    expect(merged.workspaceId).toBe(wsId);
     expect(merged.releaseVersionBranch).toBe("main");
-    expect(merged.notionPrDatabaseId).toBe("pr-ws");
     expect(select).toHaveBeenCalledTimes(2);
   });
 
-  it("should return null when no workspace is linked to repository", async () => {
-    const select = vi.fn().mockImplementationOnce(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
-      })),
-    }));
-    const db = { select } as never;
-    await expect(resolveWorkspaceSettingsForRepo(db, "github", "acme/unknown")).resolves.toBeNull();
-  });
-
-  it("should return null when workspace exists but settings row is missing", async () => {
+  it("should resolve even when no workspace_settings row exists (defaults)", async () => {
     const wsId = "ws-no-settings";
     const select = vi
       .fn()
@@ -217,7 +129,21 @@ describe("resolveWorkspaceSettingsForRepo", () => {
         })),
       }));
     const db = { select } as never;
-    await expect(resolveWorkspaceSettingsForRepo(db, "github", "acme/repo")).resolves.toBeNull();
+
+    const merged = await resolveWorkspaceSettingsForRepo(db, "github", "acme/repo");
+    expect(merged).not.toBeNull();
+    expect(merged?.workspaceId).toBe(wsId);
+    expect(merged?.releaseProjectKind).toBeNull();
+  });
+
+  it("should return null when no workspace is linked to repository", async () => {
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+      })),
+    }));
+    const db = { select } as never;
+    await expect(resolveWorkspaceSettingsForRepo(db, "github", "acme/unknown")).resolves.toBeNull();
   });
 
   it("should scope the workspace lookup by provider", async () => {
@@ -227,7 +153,6 @@ describe("resolveWorkspaceSettingsForRepo", () => {
     }));
     const db = { select } as never;
 
-    // Same repo name under a different provider must not resolve a github workspace.
     await expect(
       resolveWorkspaceSettingsForRepo(db, "gitlab", "acme/repo"),
     ).resolves.toBeNull();

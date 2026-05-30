@@ -13,8 +13,6 @@ import type { RepoKindInference } from "@/github/repo-kind-infer.js";
 import { inferRepoKind } from "@/github/repo-kind-infer.js";
 
 export type WorkspaceSettingsPublic = {
-  notionPrDatabaseId: string | null;
-  notionReleasesDatabaseId: string | null;
   releaseProjectKind: string | null;
   releaseVersionFilePath: string | null;
   releaseVersionBranch: string | null;
@@ -108,8 +106,6 @@ export const mapInferenceToReleasePatch = (
 const readSettingsPublic = (
   row:
     | {
-        notionPrDatabaseId: string | null;
-        notionReleasesDatabaseId: string | null;
         releaseProjectKind: string | null;
         releaseVersionFilePath: string | null;
         releaseVersionBranch: string | null;
@@ -120,8 +116,6 @@ const readSettingsPublic = (
     return null;
   }
   return {
-    notionPrDatabaseId: row.notionPrDatabaseId ?? null,
-    notionReleasesDatabaseId: row.notionReleasesDatabaseId ?? null,
     releaseProjectKind: row.releaseProjectKind ?? null,
     releaseVersionFilePath: row.releaseVersionFilePath ?? null,
     releaseVersionBranch: row.releaseVersionBranch ?? null,
@@ -165,8 +159,6 @@ export const upsertInferredReleaseSettings = async (
   } else {
     await db.insert(workspaceSettingsTable).values({
       workspaceId,
-      notionPrDatabaseId: null,
-      notionReleasesDatabaseId: null,
       ...releasePatch,
       createdAt: now,
     });
@@ -174,8 +166,6 @@ export const upsertInferredReleaseSettings = async (
 
   const rows = await db
     .select({
-      notionPrDatabaseId: workspaceSettingsTable.notionPrDatabaseId,
-      notionReleasesDatabaseId: workspaceSettingsTable.notionReleasesDatabaseId,
       releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
       releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
       releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,

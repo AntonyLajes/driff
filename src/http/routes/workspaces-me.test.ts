@@ -322,7 +322,7 @@ describe("http/routes/workspaces-me", () => {
     expect(values).toHaveBeenNthCalledWith(2, expect.objectContaining({ slug: "app-2" }));
   });
 
-  it("returns diagnostics with warning when releases config is missing", async () => {
+  it("returns error diagnostics when no destination is connected", async () => {
     const userId = "00000000-0000-4000-8000-000000000099";
     const token = signSessionJwt({
       secret: jwtSecret,
@@ -342,23 +342,30 @@ describe("http/routes/workspaces-me", () => {
       updatedAt: new Date(),
     };
     const settingsRow = {
-      notionPrDatabaseId: "notion-pr-db",
-      notionReleasesDatabaseId: null,
       releaseProjectKind: "react_native_expo",
       releaseVersionFilePath: "app.json",
       releaseVersionBranch: "main",
+      pushSummaryBranches: null,
     };
 
     const select = vi
       .fn()
+      // workspace-by-slug lookup
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({ limit: vi.fn(async () => [workspaceRow]) })),
         })),
       }))
+      // workspace_settings
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({ limit: vi.fn(async () => [settingsRow]) })),
+        })),
+      }))
+      // hasEnabledDestination -> none
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
         })),
       }));
     const db = { select } as never;
@@ -378,16 +385,12 @@ describe("http/routes/workspaces-me", () => {
     expect(response.json()).toMatchObject({
       diagnostics: {
         repo: "acme/mobile",
-        status: "warning",
+        status: "error",
         checks: {
           repoLinked: true,
-          workspaceSettingsPresent: true,
-          prSummaryReady: true,
+          destinationConnected: false,
+          prSummaryReady: false,
           releaseSummaryReady: false,
-        },
-        suggested: {
-          prBaseBranches: ["main"],
-          releaseBranch: "main",
         },
       },
     });
@@ -413,11 +416,10 @@ describe("http/routes/workspaces-me", () => {
       updatedAt: new Date(),
     };
     const settingsRow = {
-      notionPrDatabaseId: "pr-db",
-      notionReleasesDatabaseId: null,
       releaseProjectKind: "react_native_expo",
       releaseVersionFilePath: "app.json",
       releaseVersionBranch: "main",
+      pushSummaryBranches: null,
     };
 
     vi.mocked(loadUserGithubAccessToken).mockResolvedValue("gh-token");
@@ -432,8 +434,6 @@ describe("http/routes/workspaces-me", () => {
       applied: true,
       skipReason: null,
       settings: {
-        notionPrDatabaseId: null,
-        notionReleasesDatabaseId: null,
         releaseProjectKind: "react_native_expo",
         releaseVersionFilePath: "app.json",
         releaseVersionBranch: "main",
@@ -444,26 +444,32 @@ describe("http/routes/workspaces-me", () => {
 
     const select = vi
       .fn()
+      // workspace-by-slug lookup
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({ limit: vi.fn(async () => [workspaceRow]) })),
         })),
       }))
+      // workspace_settings after infer
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({ limit: vi.fn(async () => [settingsRow]) })),
         })),
       }))
+      // workspace row (repo/branch)
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
           where: vi.fn(() => ({
             limit: vi.fn(async () => [
-              {
-                repoFullName: "acme/ride-pack",
-                repoDefaultBranch: "main",
-              },
+              { repoFullName: "acme/ride-pack", repoDefaultBranch: "main" },
             ]),
           })),
+        })),
+      }))
+      // hasEnabledDestination -> connected
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [{ id: "dest-1" }]) })),
         })),
       }));
     const db = { select } as never;

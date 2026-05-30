@@ -73,15 +73,36 @@ describe("destinations/notion/notion-destination execute", () => {
     expect(createInput.properties.Area.rich_text).toEqual([]);
   });
 
-  it("should throw when databaseId is missing", () => {
+  it("should throw when publishing a PR without a PR database id", async () => {
+    const destination = execute({
+      token: "notion-token",
+      notionClientFactory: () => ({
+        pages: { create: vi.fn(async () => ({ id: "x" })) },
+      }),
+    });
+    await expect(
+      destination.publishPR({
+        repo: "acme/app",
+        prNumber: 1,
+        title: "t",
+        author: "a",
+        mergedAt: new Date("2026-01-01T00:00:00.000Z"),
+        summaryUserFacing: "u",
+        summaryTechnical: "tech",
+        category: "feature",
+        area: null,
+        prUrl: "https://example.com/pr/1",
+      }),
+    ).rejects.toThrow(/PR database id is not configured/i);
+  });
+
+  it("should throw when token is missing", () => {
     expect(() =>
       execute({
-        token: "notion-token",
-        notionClientFactory: () => ({
-          pages: { create: vi.fn(async () => ({ id: "x" })) },
-        }),
+        databaseId: "db-1",
+        notionClientFactory: () => ({ pages: { create: vi.fn() } }),
       }),
-    ).toThrow(/database id is not configured/i);
+    ).toThrow(/token is not configured/i);
   });
 
   it("should create default notion client when factory is not provided", () => {

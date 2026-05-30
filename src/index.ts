@@ -3,14 +3,16 @@ import "dotenv/config";
 import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
+  hasReleaseVersionSource,
   resolveWorkspaceSettingsForRepo,
   type MergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
-import { execute as createNotionDestination } from "@/destinations/notion/notion-destination.js";
+import { loadWorkspaceDestination } from "@/destinations/load-workspace-destinations.js";
 import { execute as createDbClient } from "@/db/client.js";
 import type { CorsRegistrationInput } from "@/http/cors.js";
 import { buildGoogleOAuthRegistrationInput } from "@/http/routes/auth-google.js";
 import { buildGithubMeRegistrationInput } from "@/http/routes/github-me.js";
+import { buildDestinationsMeRegistrationInput } from "@/http/routes/destinations-me.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -75,11 +77,13 @@ const createNoopDbClient = (): DbClientLike => ({
 const buildReleaseConfig = (
   workspace: MergedWorkspaceSettings,
 ): import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null => {
-  if (!workspace.notionReleasesDatabaseId?.trim()) {
+  // Release notes run when a version source + branch are configured (input config),
+  // regardless of which output destination publishes them.
+  if (!hasReleaseVersionSource(workspace) || !workspace.releaseVersionBranch?.trim()) {
     return null;
   }
   return {
-    branch: workspace.releaseVersionBranch ?? "",
+    branch: workspace.releaseVersionBranch,
     versionWatchPaths: collectVersionWatchPaths(
       workspace.releaseInfoPlistPath,
       workspace.releaseProjectPbxprojPath,
@@ -92,11 +96,13 @@ const buildReleaseConfig = (
 const buildPushConfig = (
   workspace: MergedWorkspaceSettings,
 ): import("@/http/routes/webhook-push.js").PushWebhookConfig | null => {
-  if (!workspace.notionPushesDatabaseId?.trim()) {
+  // Push summaries are opt-in: enabled when the workspace configured push branches.
+  const branches = workspace.pushSummaryBranches ?? [];
+  if (branches.length === 0) {
     return null;
   }
   return {
-    branches: workspace.pushSummaryBranches ?? [],
+    branches,
     defaultBranch: workspace.repoDefaultBranch,
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
@@ -126,10 +132,9 @@ const buildWebhookInput = (
     if (merged === null) {
       return null;
     }
-    const releaseNotesEnabled = Boolean(merged.notionReleasesDatabaseId?.trim());
     return {
       prSummaryBaseBranches: merged.prSummaryBaseBranches,
-      releaseConfig: releaseNotesEnabled ? buildReleaseConfig(merged) : null,
+      releaseConfig: buildReleaseConfig(merged),
       pushConfig: buildPushConfig(merged),
     };
   };
@@ -162,16 +167,18 @@ const readRepoFromJobPayload = (payload: Record<string, unknown>, jobType: strin
   return repoRaw.trim();
 };
 
-const createDestinationForWorkspace = (
-  env: Env,
+const createDestinationForWorkspace = async (
+  db: Database,
+  jwtSecret: string,
   workspace: MergedWorkspaceSettings,
-): Destination => {
-  return createNotionDestination({
-    token: env.NOTION_TOKEN,
-    databaseId: workspace.notionPrDatabaseId,
-    releasesDatabaseId: workspace.notionReleasesDatabaseId ?? undefined,
-    pushesDatabaseId: workspace.notionPushesDatabaseId ?? undefined,
-  });
+): Promise<Destination> => {
+  const destination = await loadWorkspaceDestination(db, workspace.workspaceId, jwtSecret);
+  if (destination === null) {
+    throw new Error(
+      `No enabled output destination configured for workspace "${workspace.workspaceId}".`,
+    );
+  }
+  return destination;
 };
 
 const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDependencies> => {
@@ -196,6 +203,9 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   const githubMeBase = buildGithubMeRegistrationInput(env);
   const githubMe =
     githubMeBase !== undefined ? { ...githubMeBase, db } : undefined;
+  const destinationsMeBase = buildDestinationsMeRegistrationInput(env);
+  const destinationsMe =
+    destinationsMeBase !== undefined ? { ...destinationsMeBase, db } : undefined;
   const server =
     input.server ??
     createServer({
@@ -204,6 +214,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       googleOAuth,
       workspacesMe,
       githubMe,
+      destinationsMe,
     });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {
@@ -241,7 +252,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
           const repo = readRepoFromJobPayload(payload, "process_pr");
           const workspace = await resolveWorkspaceOrThrow(repo);
           const destination =
-            input.destination ?? createDestinationForWorkspace(env, workspace);
+            input.destination ??
+            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
           const handler = createProcessPrJob({
             db,
             source,
@@ -260,7 +272,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
           const repo = readRepoFromJobPayload(payload, "process_release");
           const workspace = await resolveWorkspaceOrThrow(repo);
           const destination =
-            input.destination ?? createDestinationForWorkspace(env, workspace);
+            input.destination ??
+            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
           const handler = createProcessReleaseJob({
             db,
             appId: env.GITHUB_APP_ID,
@@ -268,7 +281,6 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             infoPlistPath: workspace.releaseInfoPlistPath ?? "",
             projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
             expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
-            releasesNotionDatabaseId: workspace.notionReleasesDatabaseId,
             releaseCompareRootSha: workspace.releaseCompareRootSha,
             releaseSummarizer,
             destination,
@@ -285,7 +297,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
           const repo = readRepoFromJobPayload(payload, "process_push");
           const workspace = await resolveWorkspaceOrThrow(repo);
           const destination =
-            input.destination ?? createDestinationForWorkspace(env, workspace);
+            input.destination ??
+            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
           const handler = createProcessPushJob({
             db,
             appId: env.GITHUB_APP_ID,
@@ -293,7 +306,6 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             pushSummarizer,
             destination,
             promptVersion: input.pushPromptVersion ?? 1,
-            pushesNotionDatabaseId: workspace.notionPushesDatabaseId,
           });
           await handler.execute(payload);
         },
