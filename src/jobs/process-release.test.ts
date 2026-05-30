@@ -35,7 +35,7 @@ describe("jobs/process-release", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease: vi.fn(), prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease: vi.fn() },
+      destination: { publishPR: vi.fn(), publishRelease: vi.fn(), publishPush: vi.fn() },
     });
     await expect(handler.execute({ repo: "", beforeSha: "a", afterSha: "b", branch: "x" })).rejects.toThrow(
       /Invalid process_release payload/,

@@ -84,7 +84,7 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease },
+      destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
     });
     await handler.execute({
       repo: "o/r",
@@ -164,7 +164,7 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease },
+      destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
     });
     await handler.execute({
       repo: "acme/ios",
@@ -240,7 +240,7 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease },
+      destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
     }).execute({
       repo: "o/r",
       beforeSha: "a".repeat(40),
@@ -301,7 +301,7 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease },
+      destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
     });
     await handler.execute({
       repo: "o/r",
@@ -340,7 +340,7 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease: vi.fn() },
+      destination: { publishPR: vi.fn(), publishRelease: vi.fn(), publishPush: vi.fn() },
     });
     await handler.execute({
       repo: "o/r",
@@ -409,7 +409,7 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease },
+      destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
     }).execute({
       repo: "o/r",
       beforeSha: webhookBefore,
