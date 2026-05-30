@@ -30,7 +30,6 @@ describe("jobs/process-release", () => {
       privateKey: "k",
       infoPlistPath: "App/Info.plist",
       projectPbxprojPath: null,
-      releasesNotionDatabaseId: "rel-db",
       releaseCompareRootSha: null,
       expoAppConfigPath: null,
       promptVersion: 1,

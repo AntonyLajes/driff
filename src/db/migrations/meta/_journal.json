@@ -85,6 +85,13 @@
       "when": 1780088000000,
       "tag": "0011_provider_agnostic_workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1780089000000,
+      "tag": "0012_pluggable_destinations",
+      "breakpoints": true
     }
   ]
 }

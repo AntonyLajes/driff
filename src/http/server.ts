@@ -12,6 +12,10 @@ import {
   type GithubMeRegistrationInput,
 } from "@/http/routes/github-me.js";
 import {
+  handler as registerDestinationsMeRoute,
+  type DestinationsMeRegistrationInput,
+} from "@/http/routes/destinations-me.js";
+import {
   handler as registerWorkspacesMeRoute,
   type WorkspacesMeRegistrationInput,
 } from "@/http/routes/workspaces-me.js";
@@ -30,6 +34,8 @@ export interface ExecuteInput {
   workspacesMe?: WorkspacesMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
   githubMe?: GithubMeRegistrationInput;
+  /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
+  destinationsMe?: DestinationsMeRegistrationInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -53,6 +59,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.githubMe !== undefined) {
       await registerGithubMeRoute(instance, input.githubMe);
+    }
+    if (input.destinationsMe !== undefined) {
+      await registerDestinationsMeRoute(instance, input.destinationsMe);
     }
   });
   const webhookInput = input.webhook;

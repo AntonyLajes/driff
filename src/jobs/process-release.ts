@@ -25,8 +25,6 @@ export interface ExecuteInput {
   /** Expo / RN app config path; when set, version is read from this file (see `expo-app-config-version`). */
   expoAppConfigPath: string | null;
   promptVersion: number;
-  /** Notion database id for release pages; when empty, the job treats release publishing as disabled. */
-  releasesNotionDatabaseId: string | null;
   releaseCompareRootSha: string | null;
 }
 
@@ -63,11 +61,6 @@ export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
       const job = parsePayload(payload);
-      if (!input.releasesNotionDatabaseId?.trim()) {
-        throw new Error(
-          "Release notes are not configured (workspace_settings.notion_releases_database_id or NOTION_RELEASES_DATABASE_ID).",
-        );
-      }
 
       const narrow = await gatherReleaseContext({
         appId: input.appId,

@@ -9,6 +9,7 @@ import {
   userSourceConnectionsTable,
   usersTable,
   webhookEventsTable,
+  workspaceDestinationsTable,
   workspacesTable,
 } from "@/db/schema.js";
 
@@ -92,5 +93,19 @@ describe("db/schema tables", () => {
     expect(columns.externalAccountId).toBeDefined();
     // composite primary key (user_id, provider)
     expect(config.primaryKeys.length).toBe(1);
+  });
+
+  it("should define workspace_destinations for per-workspace outputs", () => {
+    const columns = getTableColumns(workspaceDestinationsTable);
+    const config = getTableConfig(workspaceDestinationsTable);
+
+    expect(columns.workspaceId).toBeDefined();
+    expect(columns.type).toBeDefined();
+    expect(columns.enabled).toBeDefined();
+    expect(columns.config).toBeDefined();
+    expect(columns.secretCiphertext).toBeDefined();
+    // unique(workspace_id, type)
+    expect(config.uniqueConstraints.length).toBe(1);
+    expect(config.indexes.length).toBe(1);
   });
 });

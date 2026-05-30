@@ -22,8 +22,6 @@ export interface ExecuteInput {
   pushSummarizer: PushSummarizer;
   destination: Destination;
   promptVersion: number;
-  /** Notion database id for push pages; when empty, the job treats push publishing as disabled. */
-  pushesNotionDatabaseId: string | null;
 }
 
 const parsePayload = (payload: Record<string, unknown>): ProcessPushJobPayload => {
@@ -65,11 +63,6 @@ export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
       const job = parsePayload(payload);
-      if (!input.pushesNotionDatabaseId?.trim()) {
-        throw new Error(
-          "Push summaries are not configured (workspace_settings.notion_pushes_database_id).",
-        );
-      }
 
       const existing = await input.db
         .select({ id: pushesTable.id })

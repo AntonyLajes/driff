@@ -6,12 +6,11 @@ const envFieldsSchema = z.object({
   GITHUB_APP_PRIVATE_KEY: z.string().min(1),
   GITHUB_WEBHOOK_SECRET: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
-  NOTION_TOKEN: z.string().min(1),
   /**
-   * Fallback when `workspace_settings.notion_pr_database_id` is unset.
-   * Prefer storing the id in the database for non-secret integration config.
+   * Deprecated: per-workspace Notion auth now lives in `workspace_destinations` (Notion OAuth).
+   * Kept optional for backward compatibility; no longer used by the runtime.
    */
-  NOTION_DATABASE_ID: z.string().min(1).optional(),
+  NOTION_TOKEN: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
@@ -86,6 +85,12 @@ const envFieldsSchema = z.object({
   AUTH_PUBLIC_URL: z.string().url().optional(),
   /** Vite / web app origin where users return after OAuth (e.g. http://localhost:5173). */
   FRONTEND_URL: z.string().url().optional(),
+  /**
+   * Notion public OAuth integration (optional). When set (with AUTH_JWT_SECRET, AUTH_PUBLIC_URL,
+   * FRONTEND_URL), the API exposes Notion destination connect endpoints.
+   */
+  NOTION_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  NOTION_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
   /**
    * GitHub OAuth App (user-to-server) for listing repos and repo metadata during workspace onboarding.
    * Separate from the GitHub App used for webhooks. Set both client vars together, or omit both.

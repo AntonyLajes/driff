@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -257,19 +258,14 @@ export const workspacesTable = pgTable(
 );
 
 /**
- * Per-workspace integration config (Notion DB ids, release paths, filters), or a legacy
- * global row when `workspace_id` is null (worker continues to load only those until multi-tenant wiring).
- * Non-secret values only; secrets stay in environment variables.
+ * Per-workspace INPUT config (release version source, branch filters). Output/destination
+ * config lives in `workspace_destinations`. Non-secret values only.
  */
 export const workspaceSettingsTable = pgTable(
   "workspace_settings",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     workspaceId: uuid("workspace_id").references(() => workspacesTable.id, { onDelete: "cascade" }),
-    notionPrDatabaseId: text("notion_pr_database_id"),
-    notionReleasesDatabaseId: text("notion_releases_database_id"),
-    /** Database for direct-push summary pages; when set, push summaries are enabled. */
-    notionPushesDatabaseId: text("notion_pushes_database_id"),
     releaseInfoPlistPath: text("release_info_plist_path"),
     releaseVersionBranch: text("release_version_branch"),
     releaseMonitoredRepo: text("release_monitored_repo"),
@@ -302,6 +298,42 @@ export const workspaceSettingsTable = pgTable(
     workspaceIdUniqueWhenSet: uniqueIndex("workspace_settings_workspace_id_key")
       .on(table.workspaceId)
       .where(sql`${table.workspaceId} IS NOT NULL`),
+  }),
+);
+
+/**
+ * Per-workspace OUTPUT destinations (where summaries are published). One row per (workspace, type);
+ * multiple types can be enabled at once (Notion + Slack + …). `type` is `notion` today.
+ * `config` holds non-secret per-type config; `secret_ciphertext` holds the sealed OAuth/bot token.
+ */
+export const workspaceDestinationsTable = pgTable(
+  "workspace_destinations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    /** Destination type: `notion` today; `slack`/`whatsapp` later. */
+    type: text("type").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    /**
+     * Non-secret per-type config. Notion:
+     * `{ prDatabaseId, releasesDatabaseId, pushesDatabaseId, workspaceName }`.
+     */
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    /** Sealed (AES via AUTH_JWT_SECRET) provider token, e.g. Notion OAuth bot token. */
+    secretCiphertext: text("secret_ciphertext"),
+    /** Provider-side account id (e.g. Notion workspace id). */
+    externalAccountId: text("external_account_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceTypeUnique: unique("workspace_destinations_workspace_id_type_unique").on(
+      table.workspaceId,
+      table.type,
+    ),
+    workspaceIdIdx: index("workspace_destinations_workspace_id_idx").on(table.workspaceId),
   }),
 );
 

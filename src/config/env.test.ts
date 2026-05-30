@@ -8,8 +8,6 @@ const buildValidEnv = () => ({
   GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
   GITHUB_WEBHOOK_SECRET: "webhook-secret",
   ANTHROPIC_API_KEY: "anthropic-key",
-  NOTION_TOKEN: "notion-token",
-  NOTION_DATABASE_ID: "notion-database-id",
 });
 
 describe("config/env execute", () => {
@@ -66,10 +64,9 @@ describe("config/env execute", () => {
     expect(result.RELEASE_COMPARE_ROOT_SHA).toBe(sha);
   });
 
-  it("should allow omitting NOTION_DATABASE_ID at parse time", () => {
-    const { NOTION_DATABASE_ID: _, ...rest } = buildValidEnv();
-    const result = execute(rest);
-    expect(result.NOTION_DATABASE_ID).toBeUndefined();
+  it("should allow omitting NOTION_TOKEN (per-workspace OAuth now)", () => {
+    const result = execute(buildValidEnv());
+    expect(result.NOTION_TOKEN).toBeUndefined();
   });
 
   it("should parse CORS_ORIGINS as a trimmed comma-separated list", () => {

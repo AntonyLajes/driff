@@ -10,9 +10,8 @@ import type { Database } from "@/db/client.js";
 import { workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
 
 export interface MergedWorkspaceSettings {
-  notionPrDatabaseId: string;
-  notionReleasesDatabaseId: string | null;
-  notionPushesDatabaseId: string | null;
+  /** Id of the workspace this config belongs to (used to load output destinations). */
+  workspaceId: string;
   prSummaryBaseBranches: string[] | null;
   pushSummaryBranches: string[] | null;
   /** Repo default branch from the linked workspace; used as push-summary branch fallback. */
@@ -31,6 +30,13 @@ export interface MergedWorkspaceSettings {
   releaseVersionFilePath: string | null;
 }
 
+/** True when the workspace has a release version source configured (release notes can run). */
+export const hasReleaseVersionSource = (merged: MergedWorkspaceSettings): boolean =>
+  Boolean(merged.releaseProjectKind) &&
+  (Boolean(merged.releaseInfoPlistPath?.trim()) ||
+    Boolean(merged.releaseProjectPbxprojPath?.trim()) ||
+    Boolean(merged.releaseExpoAppConfigPath?.trim()));
+
 const firstNonBlank = (...candidates: ReadonlyArray<string | null | undefined>): string | null => {
   for (const raw of candidates) {
     const t = raw?.trim();
@@ -41,13 +47,25 @@ const firstNonBlank = (...candidates: ReadonlyArray<string | null | undefined>):
   return null;
 };
 
-/** Builds normalized runtime settings from a workspace_settings row only (no env fallback). */
+const emptyMergedSettings = (workspaceId: string): MergedWorkspaceSettings => ({
+  workspaceId,
+  prSummaryBaseBranches: null,
+  pushSummaryBranches: null,
+  repoDefaultBranch: null,
+  releaseInfoPlistPath: null,
+  releaseVersionBranch: null,
+  releaseMonitoredRepo: null,
+  releaseProjectPbxprojPath: null,
+  releaseExpoAppConfigPath: null,
+  releaseCompareRootSha: null,
+  releaseProjectKind: null,
+  releaseVersionFilePath: null,
+});
+
+/** Builds normalized runtime settings from a workspace_settings row (no env fallback). */
 export const mergeWorkspaceSettingsRow = (
   row: typeof workspaceSettingsTable.$inferSelect,
 ): MergedWorkspaceSettings => {
-  const notionPrDatabaseId = firstNonBlank(row.notionPrDatabaseId) ?? "";
-  const notionReleasesDatabaseId = firstNonBlank(row.notionReleasesDatabaseId);
-  const notionPushesDatabaseId = firstNonBlank(row.notionPushesDatabaseId);
   const releaseVersionBranch = firstNonBlank(row.releaseVersionBranch);
   const releaseMonitoredRepo = firstNonBlank(row.releaseMonitoredRepo);
   const releaseCompareRootSha = firstNonBlank(row.releaseCompareRootSha);
@@ -112,9 +130,7 @@ export const mergeWorkspaceSettingsRow = (
   const pushSummaryBranches = cleanBranchList(row.pushSummaryBranches);
 
   return {
-    notionPrDatabaseId,
-    notionReleasesDatabaseId,
-    notionPushesDatabaseId,
+    workspaceId: row.workspaceId ?? "",
     prSummaryBaseBranches,
     pushSummaryBranches,
     repoDefaultBranch: null,
@@ -129,33 +145,11 @@ export const mergeWorkspaceSettingsRow = (
   };
 };
 
-export const validateMergedWorkspaceSettings = (merged: MergedWorkspaceSettings): void => {
-  if (!merged.notionPrDatabaseId.trim()) {
-    throw new Error(
-      "Notion PR database id is missing. Set workspace_settings.notion_pr_database_id for this workspace.",
-    );
-  }
-  if (merged.notionReleasesDatabaseId) {
-    if (!merged.releaseVersionBranch?.trim()) {
-      throw new Error(
-        "Release notes are enabled but release_version_branch is missing in workspace_settings.",
-      );
-    }
-    const hasVersionSource =
-      Boolean(merged.releaseInfoPlistPath?.trim()) ||
-      Boolean(merged.releaseProjectPbxprojPath?.trim()) ||
-      Boolean(merged.releaseExpoAppConfigPath?.trim());
-    if (!hasVersionSource) {
-      throw new Error(
-        "Release notes are enabled but no version source is configured. Prefer workspace_settings.release_project_kind + release_version_file_path (e.g. react_native_expo and app.json), or set release_info_plist_path, release_project_pbxproj_path, or release_expo_app_config_path.",
-      );
-    }
-  }
-};
-
 /**
  * Strict (provider, repo)->workspace resolver used in webhook/job runtime.
- * No global row and no env fallback: if workspace or settings are missing, returns null.
+ * Returns null only when no workspace is linked to the repo. A workspace with no
+ * `workspace_settings` row still resolves (PR summaries work with just a destination);
+ * release/push config defaults to empty. Output destinations are loaded separately.
  */
 export const resolveWorkspaceSettingsForRepo = async (
   db: Database,
@@ -193,12 +187,12 @@ export const resolveWorkspaceSettingsForRepo = async (
     .where(eq(workspaceSettingsTable.workspaceId, workspaceId))
     .limit(1);
   const settingsRow = settingsRows[0];
-  if (settingsRow === undefined) {
-    return null;
-  }
 
-  const merged = mergeWorkspaceSettingsRow(settingsRow);
+  const merged =
+    settingsRow === undefined
+      ? emptyMergedSettings(workspaceId)
+      : mergeWorkspaceSettingsRow(settingsRow);
+  merged.workspaceId = workspaceId;
   merged.repoDefaultBranch = repoDefaultBranch;
-  validateMergedWorkspaceSettings(merged);
   return merged;
 };
