@@ -28,7 +28,25 @@ export interface ReleaseNotesSummary {
   sections: Array<{ label: string; items: string[] }>;
 }
 
+export interface PushSummary {
+  repo: string;
+  branch: string;
+  beforeSha: string;
+  afterSha: string;
+  pusher: string | null;
+  pushedAt: Date;
+  title: string;
+  summaryUserFacing: string;
+  summaryTechnical: string;
+  category: PRCategory;
+  area: string | null;
+  commitCount: number;
+  prNumbers: number[];
+  compareUrl: string;
+}
+
 export interface Destination {
   publishPR: (summary: PRSummary) => Promise<{ pageId: string }>;
   publishRelease: (summary: ReleaseNotesSummary) => Promise<{ pageId: string }>;
+  publishPush: (summary: PushSummary) => Promise<{ pageId: string }>;
 }

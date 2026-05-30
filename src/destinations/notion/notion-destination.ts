@@ -1,8 +1,14 @@
 import { Client } from "@notionhq/client";
 
 import { execute as loadEnv } from "@/config/env.js";
-import type { Destination, PRSummary, ReleaseNotesSummary } from "@/destinations/destination.js";
+import type {
+  Destination,
+  PRSummary,
+  PushSummary,
+  ReleaseNotesSummary,
+} from "@/destinations/destination.js";
 import { execute as buildBlocks } from "@/destinations/notion/blocks.js";
+import { execute as buildPushBlocks } from "@/destinations/notion/push-blocks.js";
 import { execute as buildReleaseBlocks } from "@/destinations/notion/release-blocks.js";
 
 interface NotionCreatePageResult {
@@ -20,6 +26,8 @@ export interface ExecuteInput {
   databaseId?: string;
   /** Database for iOS / release note pages (Phase 2). */
   releasesDatabaseId?: string;
+  /** Database for direct-push summary pages. */
+  pushesDatabaseId?: string;
   notionClientFactory?: (token: string) => NotionClientLike;
 }
 
@@ -52,6 +60,58 @@ const getReleasesDatabaseId = (input: ExecuteInput): string | null => {
     return fromInput;
   }
   return null;
+};
+
+const getPushesDatabaseId = (input: ExecuteInput): string | null => {
+  const fromInput = input.pushesDatabaseId?.trim();
+  if (fromInput && fromInput.length > 0) {
+    return fromInput;
+  }
+  return null;
+};
+
+const toPushProperties = (summary: PushSummary): Record<string, unknown> => {
+  return {
+    Title: {
+      title: [{ type: "text", text: { content: summary.title } }],
+    },
+    Repo: {
+      rich_text: [{ type: "text", text: { content: summary.repo } }],
+    },
+    Branch: {
+      rich_text: [{ type: "text", text: { content: summary.branch } }],
+    },
+    Pusher: {
+      rich_text: summary.pusher
+        ? [{ type: "text", text: { content: summary.pusher } }]
+        : [],
+    },
+    "Pushed At": {
+      date: { start: summary.pushedAt.toISOString() },
+    },
+    Commits: {
+      number: summary.commitCount,
+    },
+    Category: {
+      select: { name: summary.category },
+    },
+    Area: {
+      rich_text: summary.area
+        ? [{ type: "text", text: { content: summary.area } }]
+        : [],
+    },
+    "PR Numbers": {
+      rich_text: [
+        {
+          type: "text",
+          text: { content: summary.prNumbers.length > 0 ? summary.prNumbers.join(", ") : "—" },
+        },
+      ],
+    },
+    URL: {
+      url: summary.compareUrl,
+    },
+  };
 };
 
 const toReleaseProperties = (summary: ReleaseNotesSummary): Record<string, unknown> => {
@@ -153,6 +213,22 @@ export const execute = (input: ExecuteInput = {}): Destination => {
         parent: { database_id: releasesId },
         properties: toReleaseProperties(summary),
         children: buildReleaseBlocks(summary),
+      };
+      const response = await notion.pages.create(createInput);
+
+      return { pageId: response.id };
+    },
+    publishPush: async (summary) => {
+      const pushesId = getPushesDatabaseId(input);
+      if (!pushesId) {
+        throw new Error(
+          "Notion pushes database id is not configured; pass pushesDatabaseId from workspace settings.",
+        );
+      }
+      const createInput = {
+        parent: { database_id: pushesId },
+        properties: toPushProperties(summary),
+        children: buildPushBlocks(summary),
       };
       const response = await notion.pages.create(createInput);
 
