@@ -498,6 +498,104 @@ describe("http/routes/workspaces-me", () => {
     expect(inferAndApplyWorkspaceSettings).toHaveBeenCalledOnce();
   });
 
+  it("deletes a workspace and its repo summary history", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const workspaceId = "00000000-0000-4000-8000-0000000000ae";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+    // ownership lookup -> returns the linked repo
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [{ repoFullName: "AntonyLajes/ride-pack" }]),
+        })),
+      })),
+    }));
+    const deleteWhere = vi.fn(async () => undefined);
+    const deleteFn = vi.fn(() => ({ where: deleteWhere }));
+    const db = { select, delete: deleteFn } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: `/api/me/workspaces/${workspaceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(204);
+    // 3 summary-table deletes + the workspace delete
+    expect(deleteFn).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns 404 when deleting a workspace the user does not own", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const workspaceId = "00000000-0000-4000-8000-0000000000af";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+      })),
+    }));
+    const deleteFn = vi.fn();
+    const db = { select, delete: deleteFn } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: `/api/me/workspaces/${workspaceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "workspace_not_found" });
+    expect(deleteFn).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when deleting with an invalid workspace id", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+    const db = { select: vi.fn(), delete: vi.fn() } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: "/api/me/workspaces/not-a-uuid",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_workspace_id" });
+  });
+
   it("returns 404 diagnostics when workspace slug is not found", async () => {
     const userId = "00000000-0000-4000-8000-000000000099";
     const token = signSessionJwt({

@@ -11,7 +11,13 @@ import {
 } from "@/config/release-project-kind.js";
 import { execute as loadEnv } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
-import { pullRequestsTable, releasesTable, workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
+import {
+  pullRequestsTable,
+  pushesTable,
+  releasesTable,
+  workspaceSettingsTable,
+  workspacesTable,
+} from "@/db/schema.js";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import { isImplementedProvider, sourceProviderSchema } from "@/sources/registry.js";
@@ -1109,5 +1115,51 @@ export const handler = async (
       return reply.status(404).send({ error: "workspace_not_found" });
     }
     return reply.send({ workspace: row });
+  });
+
+  instance.delete("/api/me/workspaces/:workspaceId", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { workspaceId?: string };
+    const workspaceIdParsed = workspaceIdParamSchema.safeParse(params.workspaceId);
+    if (!workspaceIdParsed.success) {
+      return reply.status(400).send({ error: "invalid_workspace_id" });
+    }
+    const workspaceId = workspaceIdParsed.data;
+
+    // Verify ownership and capture the linked repo before deleting anything.
+    const owned = await input.db
+      .select({ repoFullName: workspacesTable.repoFullName })
+      .from(workspacesTable)
+      .where(and(eq(workspacesTable.id, workspaceId), eq(workspacesTable.userId, session.userId)))
+      .limit(1);
+    const ownedRow = owned[0];
+    if (ownedRow === undefined) {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    // Wipe the repo's summary history so a recreated workspace reprocesses from scratch.
+    // Summary tables are keyed on `repo` only (no workspace FK); `(provider, repo)` uniqueness
+    // guarantees a single workspace owns the repo, so deleting by repo name is safe today.
+    const repo = ownedRow.repoFullName?.trim();
+    if (repo !== undefined && repo.length > 0) {
+      await input.db.delete(pullRequestsTable).where(eq(pullRequestsTable.repo, repo));
+      await input.db.delete(releasesTable).where(eq(releasesTable.repo, repo));
+      await input.db.delete(pushesTable).where(eq(pushesTable.repo, repo));
+    }
+
+    // Delete the workspace last (workspace_settings cascades via FK).
+    await input.db
+      .delete(workspacesTable)
+      .where(and(eq(workspacesTable.id, workspaceId), eq(workspacesTable.userId, session.userId)));
+
+    return reply.status(204).send();
   });
 };
