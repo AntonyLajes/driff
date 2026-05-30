@@ -127,6 +127,45 @@ export const releasesTable = pgTable(
 );
 
 /**
+ * Direct pushes to a tracked branch (hotfixes / single-branch workflows). Unlike releases,
+ * these are not gated on a version bump and are summarized per push range (`before_sha`..`after_sha`).
+ */
+export const pushesTable = pgTable(
+  "pushes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repo: text("repo").notNull(),
+    branch: text("branch").notNull(),
+    beforeSha: text("before_sha").notNull(),
+    afterSha: text("after_sha").notNull(),
+    pusher: text("pusher"),
+    pushedAt: timestamp("pushed_at", { withTimezone: true }).notNull(),
+    commitCount: integer("commit_count").notNull(),
+    prNumbers: jsonb("pr_numbers").$type<number[]>().notNull(),
+    title: text("title").notNull(),
+    summaryUserFacing: text("summary_user_facing"),
+    summaryTechnical: text("summary_technical"),
+    category: text("category"),
+    area: text("area"),
+    compareUrl: text("compare_url"),
+    notionPageId: text("notion_page_id"),
+    promptVersion: integer("prompt_version"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    repoAfterShaUnique: unique("pushes_repo_after_sha_unique").on(
+      table.repo,
+      table.afterSha,
+    ),
+  }),
+);
+
+/**
  * Operator accounts linked to Google Sign-In (`sub` from OIDC userinfo).
  */
 export const usersTable = pgTable(
@@ -210,6 +249,8 @@ export const workspaceSettingsTable = pgTable(
     workspaceId: uuid("workspace_id").references(() => workspacesTable.id, { onDelete: "cascade" }),
     notionPrDatabaseId: text("notion_pr_database_id"),
     notionReleasesDatabaseId: text("notion_releases_database_id"),
+    /** Database for direct-push summary pages; when set, push summaries are enabled. */
+    notionPushesDatabaseId: text("notion_pushes_database_id"),
     releaseInfoPlistPath: text("release_info_plist_path"),
     releaseVersionBranch: text("release_version_branch"),
     releaseMonitoredRepo: text("release_monitored_repo"),
@@ -230,6 +271,11 @@ export const workspaceSettingsTable = pgTable(
     releaseCompareRootSha: text("release_compare_root_sha"),
     /** Base branch names for PR summarization (`pull_request.base.ref`); empty means any branch. */
     prSummaryBaseBranches: jsonb("pr_summary_base_branches").$type<string[]>(),
+    /**
+     * Branch names that trigger direct-push summaries. Empty/null falls back to the repo
+     * default branch (`workspaces.github_repo_default_branch`).
+     */
+    pushSummaryBranches: jsonb("push_summary_branches").$type<string[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

@@ -71,6 +71,13 @@
       "when": 1777847000000,
       "tag": "0009_github_user_workspace_repo",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780087313786,
+      "tag": "0010_spicy_zemo",
+      "breakpoints": true
     }
   ]
 }
