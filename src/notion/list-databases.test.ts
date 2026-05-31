@@ -48,4 +48,43 @@ describe("listNotionDatabasesWithClient", () => {
     expect(items).toEqual([{ id: "db-1", title: "Mobile PRs", url: "https://notion.so/db-1" }]);
     expect(search).toHaveBeenCalledOnce();
   });
+
+  it("should map data_source results (Notion-Version 2025-09-03) to their database id", async () => {
+    const search = vi.fn(async () => ({
+      has_more: false,
+      next_cursor: null,
+      results: [
+        {
+          object: "data_source",
+          id: "ds-1",
+          database_id: "db-9",
+          title: [{ plain_text: "Releases" }],
+          // database_parent is the parent OF the database (a page), not a database_id
+          database_parent: { type: "page_id", page_id: "page-1" },
+          parent: { type: "database_id", database_id: "db-9" },
+        },
+      ],
+    }));
+
+    const items = await listNotionDatabasesWithClient({ search } as never);
+    expect(items).toEqual([{ id: "db-9", title: "Releases", url: null }]);
+  });
+
+  it("should fall back to parent.database_id when the direct field is absent", async () => {
+    const search = vi.fn(async () => ({
+      has_more: false,
+      next_cursor: null,
+      results: [
+        {
+          object: "data_source",
+          id: "ds-2",
+          title: [{ plain_text: "PRs" }],
+          parent: { type: "database_id", database_id: "db-7" },
+        },
+      ],
+    }));
+
+    const items = await listNotionDatabasesWithClient({ search } as never);
+    expect(items).toEqual([{ id: "db-7", title: "PRs", url: null }]);
+  });
 });

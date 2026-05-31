@@ -79,6 +79,7 @@ export const listNotionDatabasesWithClient = async (
     });
 
     for (const result of response.results) {
+      // Legacy API (Notion-Version <= 2022-06-28): search returns `database` objects.
       if (isFullDatabase(result)) {
         const database = result as {
           id: string;
@@ -92,13 +93,26 @@ export const listNotionDatabasesWithClient = async (
         });
         continue;
       }
-      if (isFullDataSource(result) && result.database_parent.type === "database_id") {
-        const databaseId = result.database_parent.database_id;
-        if (!byId.has(normalizeId(databaseId))) {
+      // Notion-Version 2025-09-03+: search returns `data_source` objects. The owning
+      // database id is the data source's own `database_id` field (NOT `database_parent`,
+      // which is the parent OF the database — a page/workspace).
+      if (isFullDataSource(result)) {
+        const ds = result as unknown as {
+          title?: Array<{ plain_text?: string }>;
+          database_id?: string;
+          parent?: { type?: string; database_id?: string };
+        };
+        const databaseId =
+          typeof ds.database_id === "string" && ds.database_id.length > 0
+            ? ds.database_id
+            : ds.parent?.type === "database_id"
+              ? ds.parent.database_id
+              : undefined;
+        if (typeof databaseId === "string" && databaseId.length > 0 && !byId.has(normalizeId(databaseId))) {
           byId.set(normalizeId(databaseId), {
             id: databaseId,
-            title: extractRichText(result.title),
-            url: result.url ?? null,
+            title: extractRichText(ds.title),
+            url: null,
           });
         }
       }
