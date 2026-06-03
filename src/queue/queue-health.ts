@@ -1,4 +1,4 @@
-import { and, eq, lte, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 
 import type { Database } from "@/db/client.js";
 import { jobsTable } from "@/db/schema.js";
@@ -84,7 +84,7 @@ export const computeQueueHealth = async (
     ),
     countRows(
       input.db,
-      and(eq(jobsTable.status, "failed"), sql`${jobsTable.updatedAt} >= ${failedCutoff}`),
+      and(eq(jobsTable.status, "failed"), gte(jobsTable.updatedAt, failedCutoff)),
     ),
     countRows(
       input.db,
