@@ -143,6 +143,39 @@ describe("queue/worker execute", () => {
     expect(sleeper).toHaveBeenCalledWith(50);
   });
 
+  it("should keep polling after a dequeue error instead of terminating", async () => {
+    const dequeue = vi
+      .fn<() => Promise<QueueJob | null>>()
+      .mockRejectedValueOnce(new Error("connection terminated"))
+      .mockResolvedValue(null);
+    const queue: QueueAdapter = {
+      enqueue: vi.fn(async () => "job-id"),
+      dequeue,
+      markDone: vi.fn(async () => undefined),
+      markFailed: vi.fn(async () => undefined),
+      reschedule: vi.fn(async () => undefined),
+    };
+    const logger = { info: vi.fn(), error: vi.fn() };
+    let sleeps = 0;
+    const sleeper = vi.fn(async () => {
+      sleeps += 1;
+      // First sleep is the post-error backoff; stop on the next idle poll so the
+      // test asserts the loop survived the throw rather than rejecting.
+      if (sleeps >= 2) {
+        worker.stop();
+      }
+    });
+    const worker = execute({ queue, handlers: {}, sleeper, logger });
+
+    await expect(worker.run()).resolves.toBeUndefined();
+
+    expect(dequeue).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalledWith(
+      "poll iteration failed; continuing",
+      expect.objectContaining({ errorMessage: "connection terminated" }),
+    );
+  });
+
   it("should fallback to unknown error message on non-error throw", async () => {
     const { markFailed, queue } = buildQueueMock(buildJob(3));
     const handler = {

@@ -343,7 +343,13 @@ export const execute = async (
   const env = loadEnv();
   const runtime = await buildRuntimeDependencies(input);
   const workerRunPromise =
-    input.startWorker === false ? undefined : runtime.worker.run().catch(() => undefined);
+    input.startWorker === false
+      ? undefined
+      : runtime.worker.run().catch((error) => {
+          // The run loop now survives transient errors on its own; reaching here
+          // means it terminated unexpectedly. Surface it instead of swallowing.
+          console.error("[worker] run loop terminated unexpectedly", error);
+        });
   const port = input.port ?? env.PORT;
   const host = input.host ?? "0.0.0.0";
   const address = await runtime.server.listen({ port, host });
