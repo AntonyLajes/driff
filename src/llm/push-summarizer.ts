@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { execute as loadEnv } from "@/config/env.js";
+import { extractUsage, type TokenUsage } from "@/llm/usage.js";
 import type { PushContext } from "@/sources/github/gather-push-context.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -36,6 +37,7 @@ type AnthropicResponseContent = AnthropicResponseContentText | AnthropicResponse
 
 interface AnthropicMessageResponse {
   content: AnthropicResponseContent[];
+  usage?: { input_tokens?: number; output_tokens?: number } | null;
 }
 
 export interface AnthropicClientLike {
@@ -56,7 +58,7 @@ export interface SummarizePushInput {
 }
 
 export interface PushSummarizer {
-  summarizePush: (input: SummarizePushInput) => Promise<PushSummaryResult>;
+  summarizePush: (input: SummarizePushInput) => Promise<PushSummaryResult & { usage: TokenUsage }>;
   prompt: string;
 }
 
@@ -175,7 +177,8 @@ export const execute = async (input: ExecuteInput = {}): Promise<PushSummarizer>
         });
 
         try {
-          return parseSummary(extractTextFromResponse(response));
+          const parsed = parseSummary(extractTextFromResponse(response));
+          return { ...parsed, usage: extractUsage(response, model) };
         } catch (error) {
           if (attempt === MAX_RETRIES) {
             throw new Error("Failed to parse LLM push summary response.", { cause: error });

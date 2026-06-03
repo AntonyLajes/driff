@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { execute as loadEnv } from "@/config/env.js";
+import { extractUsage, type TokenUsage } from "@/llm/usage.js";
 import type { PullRequestEvent } from "@/sources/source.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -34,6 +35,7 @@ type AnthropicResponseContent = AnthropicResponseContentText | AnthropicResponse
 
 interface AnthropicMessageResponse {
   content: AnthropicResponseContent[];
+  usage?: { input_tokens?: number; output_tokens?: number } | null;
 }
 
 export interface AnthropicClientLike {
@@ -52,7 +54,7 @@ export interface SummarizePullRequestInput {
 }
 
 export interface Summarizer {
-  summarizePR: (input: SummarizePullRequestInput) => Promise<PRSummary>;
+  summarizePR: (input: SummarizePullRequestInput) => Promise<PRSummary & { usage: TokenUsage }>;
   prompt: string;
 }
 
@@ -166,7 +168,8 @@ export const execute = async (input: ExecuteInput = {}): Promise<Summarizer> => 
         });
 
         try {
-          return parseSummary(extractTextFromResponse(response));
+          const parsed = parseSummary(extractTextFromResponse(response));
+          return { ...parsed, usage: extractUsage(response, model) };
         } catch (error) {
           if (attempt === MAX_RETRIES) {
             throw new Error("Failed to parse LLM summary response.", { cause: error });

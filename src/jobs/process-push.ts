@@ -4,6 +4,7 @@ import type { Database } from "@/db/client.js";
 import { pushesTable } from "@/db/schema.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { PushSummarizer } from "@/llm/push-summarizer.js";
+import { recordLlmUsage } from "@/llm/usage.js";
 import { findPushOverlap } from "@/jobs/push-dedup.js";
 import { execute as gatherPushContext } from "@/sources/github/gather-push-context.js";
 
@@ -149,6 +150,13 @@ export const execute = (input: ExecuteInput) => {
         .onConflictDoNothing({
           target: [pushesTable.repo, pushesTable.afterSha],
         });
+
+      await recordLlmUsage({
+        db: input.db,
+        repo: job.repo,
+        jobType: "process_push",
+        usage: summary.usage,
+      });
     },
   };
 };

@@ -2,6 +2,7 @@ import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable } from "@/db/schema.js";
 import type { Summarizer } from "@/llm/summarizer.js";
+import { recordLlmUsage } from "@/llm/usage.js";
 import type { Source } from "@/sources/source.js";
 
 export interface ProcessPrJobPayload {
@@ -59,6 +60,13 @@ export const execute = (input: ExecuteInput) => {
         summary,
         notionPageId: publishResult.pageId,
         promptVersion: input.promptVersion,
+      });
+
+      await recordLlmUsage({
+        db: input.db,
+        repo: pullRequest.repo,
+        jobType: "process_pr",
+        usage: summary.usage,
       });
     },
   };

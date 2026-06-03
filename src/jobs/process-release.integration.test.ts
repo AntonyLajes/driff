@@ -72,6 +72,7 @@ describe("jobs/process-release integration", () => {
       title: "R",
       changelog: "What's new.",
       sections: [],
+      usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
     const handler = execute({
       db,
@@ -100,7 +101,8 @@ describe("jobs/process-release integration", () => {
       }),
     );
     expect(publishRelease).toHaveBeenCalledOnce();
-    expect(insert).toHaveBeenCalledOnce();
+    // Two inserts now: the release row + the llm_usage metering row.
+    expect(insert).toHaveBeenCalledTimes(2);
     expect(values).toHaveBeenCalledWith(
       expect.objectContaining({
         beforeSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -149,6 +151,7 @@ describe("jobs/process-release integration", () => {
       title: "Rel",
       changelog: "Stuff.",
       sections: [],
+      usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
     const db = { select, insert } as never;
 
@@ -224,6 +227,7 @@ describe("jobs/process-release integration", () => {
       title: "T",
       changelog: "c",
       sections: [],
+      usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
     const db = { select, insert } as never;
 
@@ -390,6 +394,7 @@ describe("jobs/process-release integration", () => {
       title: "Wide",
       changelog: "More.",
       sections: [],
+      usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
     const publishRelease = vi.fn(async () => ({ pageId: "pw" }));
 

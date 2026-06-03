@@ -43,6 +43,7 @@ describe("llm/summarizer execute", () => {
           }),
         },
       ],
+      usage: { input_tokens: 1200, output_tokens: 300 },
     }));
     const summarizer = await execute({
       apiKey: "anthropic-key",
@@ -60,6 +61,7 @@ describe("llm/summarizer execute", () => {
       summaryTechnical: "Introduces checkout service and wiring.",
       category: "feature",
       area: "checkout",
+      usage: { model: "claude-sonnet-4-6", inputTokens: 1200, outputTokens: 300 },
     });
     expect(anthropic.create).toHaveBeenCalledOnce();
   });

@@ -168,6 +168,27 @@ export const pushesTable = pgTable(
 );
 
 /**
+ * Per-summary LLM token usage (metering only — no enforcement yet). Feeds future
+ * usage-based pricing/tiers; see the billing-tiers project note. One row per
+ * successful summarization (PR / release / push).
+ */
+export const llmUsageTable = pgTable(
+  "llm_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    repo: text("repo").notNull(),
+    jobType: text("job_type").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    repoCreatedAtIndex: index("llm_usage_repo_created_at_idx").on(table.repo, table.createdAt),
+  }),
+);
+
+/**
  * Operator accounts linked to Google Sign-In (`sub` from OIDC userinfo).
  */
 export const usersTable = pgTable(

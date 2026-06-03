@@ -49,6 +49,7 @@ const buildDeps = (dbMock: ReturnType<typeof buildDbMock>) => {
     summaryTechnical: "Guards a null session.",
     category: "bugfix" as const,
     area: "login",
+    usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
   }));
   const publishPush = vi.fn(async () => ({ pageId: "notion-push-1" }));
   return {

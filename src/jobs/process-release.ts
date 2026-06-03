@@ -3,6 +3,7 @@ import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable } from "@/db/schema.js";
 import type { ReleaseSummarizer } from "@/llm/release-summarizer.js";
+import { recordLlmUsage } from "@/llm/usage.js";
 import { execute as buildStandaloneHints } from "@/lib/release-commit-hints.js";
 import { execute as resolveReleaseCompareBefore } from "@/jobs/resolve-release-compare-before.js";
 import { execute as gatherReleaseContext } from "@/sources/github/gather-release-context.js";
@@ -225,6 +226,13 @@ export const execute = (input: ExecuteInput) => {
         promptVersion: input.promptVersion,
         marketingEraStartSha,
         updatedAt: new Date(),
+      });
+
+      await recordLlmUsage({
+        db: input.db,
+        repo: job.repo,
+        jobType: "process_release",
+        usage: notes.usage,
       });
     },
   };

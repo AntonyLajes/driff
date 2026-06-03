@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { execute as loadEnv } from "@/config/env.js";
+import { extractUsage, type TokenUsage } from "@/llm/usage.js";
 import type { ReleaseContext } from "@/sources/github/gather-release-context.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -28,6 +29,7 @@ export type ReleaseChangelogNotes = z.infer<typeof releaseChangelogSchema>;
 
 interface AnthropicMessageResponse {
   content: Array<{ type: string; text?: string }>;
+  usage?: { input_tokens?: number; output_tokens?: number } | null;
 }
 
 export interface AnthropicClientLike {
@@ -117,7 +119,9 @@ const buildUserMessage = (input: SummarizeReleaseInput): string => {
 };
 
 export interface ReleaseSummarizer {
-  summarizeRelease: (input: SummarizeReleaseInput) => Promise<ReleaseChangelogNotes>;
+  summarizeRelease: (
+    input: SummarizeReleaseInput,
+  ) => Promise<ReleaseChangelogNotes & { usage: TokenUsage }>;
   prompt: string;
 }
 
@@ -174,7 +178,8 @@ export const execute = async (input: ExecuteInput = {}): Promise<ReleaseSummariz
         });
 
         try {
-          return parseReleaseChangelogNotes(extractTextFromResponse(response));
+          const parsed = parseReleaseChangelogNotes(extractTextFromResponse(response));
+          return { ...parsed, usage: extractUsage(response, model) };
         } catch (error) {
           if (attempt === MAX_RETRIES) {
             throw new Error("Failed to parse LLM release changelog response.", { cause: error });

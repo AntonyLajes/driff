@@ -36,6 +36,7 @@ describe("jobs/process-pr execute", () => {
       summaryTechnical: "Adds checkout orchestration.",
       category: "feature" as const,
       area: "checkout",
+      usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
     const publishPR = vi.fn(async () => ({ pageId: "notion-page-1" }));
     const handler = execute({
