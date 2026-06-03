@@ -6,7 +6,10 @@ import {
   handler as registerAuthGoogleRoute,
   type GoogleOAuthRegistrationInput,
 } from "@/http/routes/auth-google.js";
-import { handler as registerHealthRoute } from "@/http/routes/health.js";
+import {
+  handler as registerHealthRoute,
+  type HealthRouteInput,
+} from "@/http/routes/health.js";
 import {
   handler as registerGithubMeRoute,
   type GithubMeRegistrationInput,
@@ -36,6 +39,8 @@ export interface ExecuteInput {
   githubMe?: GithubMeRegistrationInput;
   /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
   destinationsMe?: DestinationsMeRegistrationInput;
+  /** When set, registers `GET /health/queue` (job-queue liveness for external monitors). */
+  health?: HealthRouteInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -50,7 +55,7 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
   server.register(sensible);
   server.register(async (instance) => {
     await registerCors(instance, input.cors ?? { kind: "off" });
-    await registerHealthRoute(instance);
+    await registerHealthRoute(instance, input.health ?? {});
     if (input.googleOAuth !== undefined) {
       await registerAuthGoogleRoute(instance, input.googleOAuth);
     }

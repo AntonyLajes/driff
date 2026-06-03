@@ -215,6 +215,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       workspacesMe,
       githubMe,
       destinationsMe,
+      health: { db },
     });
   const worker = await (async (): Promise<WorkerAdapter> => {
     if (input.worker) {
