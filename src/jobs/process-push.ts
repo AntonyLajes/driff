@@ -4,6 +4,7 @@ import type { Database } from "@/db/client.js";
 import { pushesTable } from "@/db/schema.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { PushSummarizer } from "@/llm/push-summarizer.js";
+import { findPushOverlap } from "@/jobs/push-dedup.js";
 import { execute as gatherPushContext } from "@/sources/github/gather-push-context.js";
 
 export interface ProcessPushJobPayload {
@@ -82,6 +83,22 @@ export const execute = (input: ExecuteInput) => {
       });
 
       if (context.compareCommits.length === 0) {
+        return;
+      }
+
+      // Business rule: a push that is really a PR merge or a release version bump
+      // is already summarized by the PR/release pipeline — skip it here to avoid a
+      // duplicate push summary. Detected race-free via the sibling jobs.
+      const overlap = await findPushOverlap({
+        db: input.db,
+        repo: job.repo,
+        afterSha: job.afterSha,
+        prNumbers: context.prNumbers,
+      });
+      if (overlap.skip) {
+        console.log(
+          `[process_push] skipped ${job.repo}@${job.afterSha.slice(0, 7)} (${overlap.reason})`,
+        );
         return;
       }
 

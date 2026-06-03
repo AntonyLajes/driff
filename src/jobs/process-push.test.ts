@@ -7,10 +7,15 @@ import type { PushContext } from "@/sources/github/gather-push-context.js";
 vi.mock("@/sources/github/gather-push-context.js", () => ({
   execute: vi.fn(),
 }));
+vi.mock("@/jobs/push-dedup.js", () => ({
+  findPushOverlap: vi.fn(async () => ({ skip: false, reason: null })),
+}));
 
 import { execute as gatherPushContext } from "@/sources/github/gather-push-context.js";
+import { findPushOverlap } from "@/jobs/push-dedup.js";
 
 const mockedGather = vi.mocked(gatherPushContext);
+const mockedOverlap = vi.mocked(findPushOverlap);
 
 const buildContext = (overrides: Partial<PushContext> = {}): PushContext => ({
   compareCommits: [{ sha: "b".repeat(40), message: "fix: hotfix login" }],
@@ -70,6 +75,7 @@ const payload = {
 describe("jobs/process-push execute", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedOverlap.mockResolvedValue({ skip: false, reason: null });
   });
 
   it("summarizes a push, publishes it, and inserts a row", async () => {
@@ -110,6 +116,23 @@ describe("jobs/process-push execute", () => {
     await handler.execute(payload);
 
     expect(mockedGather).not.toHaveBeenCalled();
+    expect(deps.publishPush).not.toHaveBeenCalled();
+    expect(dbMock.insert).not.toHaveBeenCalled();
+  });
+
+  it("skips publishing when the push overlaps a PR merge / release", async () => {
+    mockedGather.mockResolvedValue(buildContext({ prNumbers: [7] }));
+    mockedOverlap.mockResolvedValue({ skip: true, reason: "pr_merge_push" });
+    const dbMock = buildDbMock();
+    const deps = buildDeps(dbMock);
+    const handler = execute(deps);
+
+    await handler.execute(payload);
+
+    expect(mockedOverlap).toHaveBeenCalledWith(
+      expect.objectContaining({ repo: "acme/app", afterSha: "b".repeat(40), prNumbers: [7] }),
+    );
+    expect(deps.summarizePush).not.toHaveBeenCalled();
     expect(deps.publishPush).not.toHaveBeenCalled();
     expect(dbMock.insert).not.toHaveBeenCalled();
   });
