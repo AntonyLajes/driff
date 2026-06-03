@@ -24,6 +24,27 @@ The product is being dogfooded inside a US-based mobile startup, with the goal o
 
 ---
 
+## Current architecture (as of 2026-06-03) — READ THIS FIRST
+
+The phased "Phase 1…8" sections further down are the **original build plan** and are partly historical. Where they conflict with this section, **this section wins**. Key facts about how the system actually works today:
+
+**Three summary pipelines, all live and validated end-to-end:**
+- `process_pr` — merged PR → AI summary → destinations. Base-branch filter via `workspace_settings.pr_summary_base_branches` (empty/null = any base).
+- `process_release` — push to the configured release branch that touches the version file (iOS plist/pbxproj or Expo `app.json`) → AI changelog → destinations. Config: `release_project_kind` + `release_version_file_path` (+ `release_version_branch`).
+- `process_push` — direct push to a configured branch → AI summary → destinations. Config: `workspace_settings.push_summary_branches`. **Gotcha:** when empty, `buildPushConfig` returns `null` and **no push job is ever enqueued** (it does NOT fall back to the default branch at that layer). Known overlap: a push to a branch that's also the release/PR-merge target fires `process_push` *in addition to* the others — a "skip pure PR-merge pushes" rule is a pending business decision.
+
+**Provider-agnostic workspaces (not GitHub-specific anymore):** `workspaces.sourceProvider` ('github'|'gitlab'|'bitbucket') + `repoFullName` + `repoDefaultBranch` (renamed from the old `github_*` columns). Unique `(sourceProvider, repoFullName)` = 1 repo → 1 workspace globally. Per-user OAuth tokens live in `user_source_connections` (provider-keyed). Source layer is abstracted behind `src/sources/registry.ts` (`getSource`); only GitHub is implemented.
+
+**Pluggable, multi-tenant output destinations** (mirror of the source registry): `src/destinations/registry.ts` (`getDestination`; only `notion` implemented — slack/whatsapp throw). `composite-destination.ts` fans one publish out to all enabled destinations with **per-destination error isolation**. New table `workspace_destinations` (one row per `(workspaceId, type)`, `config` jsonb + sealed `secret_ciphertext`). **Notion is OAuth multi-tenant** — the bot token is sealed per workspace (decrypted with `AUTH_JWT_SECRET`); the global `NOTION_TOKEN` env is **deprecated/optional**. The Notion DB-id columns were dropped from `workspace_settings` (migration 0012); they now live in the destination's `config` (`prDatabaseId`/`releasesDatabaseId`/`pushesDatabaseId`).
+
+**Notion auto-provisions its schema** (`src/destinations/notion/notion-schema.ts`): before each publish it resolves the database's data source (Notion-Version 2025-09-03 moved the property schema onto data sources), diffs existing properties against a per-summary spec, and adds missing ones via `dataSources.update`. The specs MUST stay in sync with the `toProperties`/`toReleaseProperties`/`toPushProperties` page payloads.
+
+**Worker resilience (learned the hard way):** the worker (`src/queue/worker.ts`) runs in the same process as the HTTP server (started in `index.ts`). The poll loop **must** wrap `runOnce()` in try/catch and keep polling after a backoff — a single transient error (e.g. a dropped Postgres connection during an idle dequeue) escaping `run()` once left the worker permanently dead **with zero logs** while the server stayed healthy (jobs piled up `pending`, `attempts=0`). It now logs lifecycle + per-job outcomes via an injectable `WorkerLogger` (defaults to console). **Do not** reintroduce a silent `.catch(() => undefined)` around `worker.run()`. There is still **no alerting** on stuck/failed jobs — a known gap.
+
+**Webhook gating** is decoupled from Notion: release notes run when a release version source + branch are configured; push summaries when `push_summary_branches` is non-empty; PR summaries whenever a workspace + destination exist. All runtime resolution is strict by `(sourceProvider, repoFullName)` with no env fallback.
+
+---
+
 ## Agent operating rules
 
 These rules apply to any AI agent (Claude, Copilot, Cursor, etc.) working on this codebase.
@@ -248,8 +269,12 @@ GITHUB_WEBHOOK_SECRET=     # Secret defined when creating the app
 # Anthropic
 ANTHROPIC_API_KEY=
 
-# Notion (token stays in env; database IDs are per-workspace in Postgres)
+# Notion — DEPRECATED global token. Per-workspace Notion auth is now OAuth, sealed in
+# `workspace_destinations` (see "Current architecture"). Kept optional for back-compat only.
 NOTION_TOKEN=
+# Notion public OAuth integration (required for the multi-tenant connect flow)
+NOTION_OAUTH_CLIENT_ID=
+NOTION_OAUTH_CLIENT_SECRET=
 
 # App
 PORT=3000
@@ -302,7 +327,7 @@ This is **not** the same integration as the **GitHub App** (`GITHUB_APP_*`) used
 
 ### `workspace_settings` (Postgres)
 
-Every workspace must have its own row in `workspace_settings` via `workspace_id` (1:1 by unique index). Runtime webhook + worker resolution is strict by repository (`workspaces.github_repo_full_name`) and **does not** fall back to global/env behavior settings.
+A workspace MAY have a row in `workspace_settings` via `workspace_id` (1:1 by unique index); it holds INPUT config only (release source, PR/push branch filters) — the Notion DB-id columns were dropped in migration 0012. A workspace with no settings row still resolves (PR summaries work with just a destination). Runtime webhook + worker resolution is strict by `(workspaces.sourceProvider, workspaces.repoFullName)` (renamed from the old `github_*` columns) and **does not** fall back to global/env behavior settings. Output destinations are loaded separately from `workspace_destinations`.
 
 After `npm run db:migrate`, create/update settings for each workspace id. Example:
 
@@ -344,12 +369,13 @@ The project is divided into phases. Each phase is a coherent, shippable unit of 
 |-------|---------------------------------|-------------|
 | 1     | Core PR ingestion               | Completed   |
 | 2     | Version bump detection          | Completed   |
-| 3     | Slack digest                    | Planned     |
+| —     | Push summaries (`process_push`) | Completed (added after the original plan) |
+| 3     | Slack digest                    | Planned (destination seam exists; `slack` not implemented) |
 | 4     | Multi-PR thematic threads       | Planned     |
-| 5     | Multi-repo + multi-tenancy      | Planned     |
-| 6     | Additional sources/destinations | Planned     |
-| 7     | Cost optimization & scaling     | Planned     |
-| 8     | Public dashboard & onboarding   | Planned     |
+| 5     | Multi-repo + multi-tenancy      | Completed (provider-agnostic workspaces; 1 repo → 1 workspace) |
+| 6     | Additional sources/destinations | Partial (pluggable registries done; only GitHub source + Notion destination implemented) |
+| 7     | Cost optimization & scaling     | Planned (no per-workspace cost guardrails yet) |
+| 8     | Public dashboard & onboarding   | Partial (operator UI + onboarding exist; no public dashboard) |
 
 ---
 
