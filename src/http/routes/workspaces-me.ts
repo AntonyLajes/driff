@@ -332,7 +332,7 @@ export const handler = async (
 
     const repo = loaded.workspace.repoFullName?.trim();
     if (repo === undefined || repo.length === 0) {
-      return reply.send({ releases: [], pullRequests: [] });
+      return reply.send({ releases: [], pullRequests: [], pushes: [] });
     }
 
     const releaseRows = await input.db
@@ -364,6 +364,23 @@ export const handler = async (
       .orderBy(desc(pullRequestsTable.mergedAt))
       .limit(15);
 
+    const pushRows = await input.db
+      .select({
+        id: pushesTable.id,
+        title: pushesTable.title,
+        branch: pushesTable.branch,
+        pusher: pushesTable.pusher,
+        pushedAt: pushesTable.pushedAt,
+        commitCount: pushesTable.commitCount,
+        category: pushesTable.category,
+        compareUrl: pushesTable.compareUrl,
+        summaryUserFacing: pushesTable.summaryUserFacing,
+      })
+      .from(pushesTable)
+      .where(eq(pushesTable.repo, repo))
+      .orderBy(desc(pushesTable.pushedAt))
+      .limit(15);
+
     const maxChangelog = 480;
     const releases = releaseRows.map((r) => ({
       id: r.id,
@@ -376,7 +393,7 @@ export const handler = async (
         r.changelog.length > maxChangelog ? `${r.changelog.slice(0, maxChangelog)}…` : r.changelog,
     }));
 
-    return reply.send({ releases, pullRequests: prRows });
+    return reply.send({ releases, pullRequests: prRows, pushes: pushRows });
   });
 
   instance.get("/api/me/workspaces/by-slug/:slug/settings", async (request, reply) => {
