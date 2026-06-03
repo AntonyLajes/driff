@@ -9,12 +9,19 @@ import type {
 import { execute as buildBlocks } from "@/destinations/notion/blocks.js";
 import { execute as buildPushBlocks } from "@/destinations/notion/push-blocks.js";
 import { execute as buildReleaseBlocks } from "@/destinations/notion/release-blocks.js";
+import {
+  ensureDatabaseProperties,
+  type NotionSchemaClient,
+  PR_PROPERTY_SPEC,
+  PUSH_PROPERTY_SPEC,
+  RELEASE_PROPERTY_SPEC,
+} from "@/destinations/notion/notion-schema.js";
 
 interface NotionCreatePageResult {
   id: string;
 }
 
-interface NotionClientLike {
+interface NotionClientLike extends NotionSchemaClient {
   pages: {
     create: (input: unknown) => Promise<NotionCreatePageResult>;
   };
@@ -198,6 +205,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
           "Notion PR database id is not configured; set the PR database on the Notion destination.",
         );
       }
+      await ensureDatabaseProperties(notion, databaseId, PR_PROPERTY_SPEC);
       const createInput = {
         parent: { database_id: databaseId },
         properties: toProperties(summary),
@@ -214,6 +222,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
           "Notion releases database id is not configured; pass releasesDatabaseId from workspace settings.",
         );
       }
+      await ensureDatabaseProperties(notion, releasesId, RELEASE_PROPERTY_SPEC);
       const createInput = {
         parent: { database_id: releasesId },
         properties: toReleaseProperties(summary),
@@ -230,6 +239,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
           "Notion pushes database id is not configured; pass pushesDatabaseId from workspace settings.",
         );
       }
+      await ensureDatabaseProperties(notion, pushesId, PUSH_PROPERTY_SPEC);
       const createInput = {
         parent: { database_id: pushesId },
         properties: toPushProperties(summary),
