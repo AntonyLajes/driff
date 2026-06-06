@@ -402,12 +402,29 @@ export const handler = async (
 
     const octokit = new Octokit({ auth: accessToken });
     try {
-      const { data } = await octokit.rest.repos.listBranches({
-        owner,
-        repo,
-        per_page: 100,
+      /* The repo's true default branch — never assume "main". */
+      const { data: repoInfo } = await octokit.rest.repos.get({ owner, repo });
+
+      const branches: string[] = [];
+      const PER_PAGE = 100;
+      const MAX_PAGES = 5; // safety cap: 500 branches
+      for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const { data } = await octokit.rest.repos.listBranches({
+          owner,
+          repo,
+          per_page: PER_PAGE,
+          page,
+        });
+        branches.push(...data.map((branch) => branch.name));
+        if (data.length < PER_PAGE) {
+          break;
+        }
+      }
+
+      return reply.send({
+        branches,
+        defaultBranch: repoInfo.default_branch,
       });
-      return reply.send({ branches: data.map((branch) => branch.name) });
     } catch (err) {
       request.log.warn({ err }, "github_repo_branches_failed");
       const status =
