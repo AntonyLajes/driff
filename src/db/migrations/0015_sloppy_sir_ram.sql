@@ -30,7 +30,10 @@ CREATE TABLE "teams" (
 	CONSTRAINT "teams_slug_unique" UNIQUE("slug")
 );
 --> statement-breakpoint
-ALTER TABLE "workspaces" DROP CONSTRAINT "workspaces_user_id_slug_unique";--> statement-breakpoint
+-- The legacy unique exists as an INDEX (early migrations used CREATE UNIQUE
+-- INDEX), not a table constraint — drop whichever form is present.
+DROP INDEX IF EXISTS "workspaces_user_id_slug_unique";--> statement-breakpoint
+ALTER TABLE "workspaces" DROP CONSTRAINT IF EXISTS "workspaces_user_id_slug_unique";--> statement-breakpoint
 -- Backfill: one personal team per existing user. Personal team id EQUALS the
 -- user id (deterministic mapping used by the default team context).
 INSERT INTO "teams" ("id", "name", "slug", "is_personal")
