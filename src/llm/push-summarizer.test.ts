@@ -10,6 +10,9 @@ const context: PushContext = {
   totalCommits: 1,
   compareUrl: "https://github.com/acme/app/compare/aaa...bbb",
   fileChangeSummary: "modified: src/login.ts",
+  additions: null,
+  deletions: null,
+  changedFiles: null,
   diff: "diff --git a/src/login.ts b/src/login.ts",
 };
 

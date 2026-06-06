@@ -87,6 +87,11 @@ const dbUpsertPullRequest = async ({
   notionPageId,
   promptVersion,
 }: DbUpsertPullRequestInput): Promise<void> => {
+  /* Diff stats aggregated from the PR files listing. */
+  const additions = pullRequest.files.reduce((sum, f) => sum + f.additions, 0);
+  const deletions = pullRequest.files.reduce((sum, f) => sum + f.deletions, 0);
+  const changedFiles = pullRequest.files.length;
+
   const values = {
     repo: pullRequest.repo,
     prNumber: pullRequest.prNumber,
@@ -99,6 +104,9 @@ const dbUpsertPullRequest = async ({
     summaryTechnical: summary.summaryTechnical,
     category: summary.category,
     area: summary.area,
+    additions,
+    deletions,
+    changedFiles,
     notionPageId,
     promptVersion,
     updatedAt: new Date(),

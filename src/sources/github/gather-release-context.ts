@@ -22,7 +22,7 @@ export interface CompareCommit {
 export interface GitHubCompareData {
   total_commits: number;
   commits: CompareCommit[];
-  files?: Array<{ filename: string; status: string }>;
+  files?: Array<{ filename: string; status: string; additions?: number; deletions?: number }>;
   html_url: string;
 }
 

@@ -24,6 +24,9 @@ const buildContext = (overrides: Partial<PushContext> = {}): PushContext => ({
   totalCommits: 1,
   compareUrl: "https://github.com/acme/app/compare/aaa...bbb",
   fileChangeSummary: "modified: src/login.ts",
+  additions: 214,
+  deletions: 96,
+  changedFiles: 9,
   diff: "diff --git a/src/login.ts b/src/login.ts",
   ...overrides,
 });
@@ -104,6 +107,9 @@ describe("jobs/process-push execute", () => {
         afterSha: "b".repeat(40),
         notionPageId: "notion-push-1",
         promptVersion: 1,
+        additions: 214,
+        deletions: 96,
+        changedFiles: 9,
       }),
     );
     expect(dbMock.onConflictDoNothing).toHaveBeenCalledOnce();

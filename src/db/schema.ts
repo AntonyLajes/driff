@@ -47,6 +47,10 @@ export const pullRequestsTable = pgTable(
     summaryTechnical: text("summary_technical"),
     category: text("category"),
     area: text("area"),
+    /** Diff stats captured from the PR files listing (null on legacy rows). */
+    additions: integer("additions"),
+    deletions: integer("deletions"),
+    changedFiles: integer("changed_files"),
     notionPageId: text("notion_page_id"),
     promptVersion: integer("prompt_version"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -149,6 +153,10 @@ export const pushesTable = pgTable(
     summaryTechnical: text("summary_technical"),
     category: text("category"),
     area: text("area"),
+    /** Diff stats captured from the push compare (null on legacy rows). */
+    additions: integer("additions"),
+    deletions: integer("deletions"),
+    changedFiles: integer("changed_files"),
     compareUrl: text("compare_url"),
     notionPageId: text("notion_page_id"),
     promptVersion: integer("prompt_version"),

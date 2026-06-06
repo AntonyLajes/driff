@@ -28,7 +28,10 @@ describe("jobs/process-pr execute", () => {
       headSha: "abc123",
       baseBranch: "main",
       diff: "diff",
-      files: [],
+      files: [
+        { path: "src/a.ts", additions: 120, deletions: 30 },
+        { path: "src/b.ts", additions: 80, deletions: 12 },
+      ],
     }));
     const summarizePR = vi.fn(async () => ({
       title: "Checkout updates",
@@ -63,6 +66,9 @@ describe("jobs/process-pr execute", () => {
     );
     expect(values).toHaveBeenCalledWith(
       expect.objectContaining({
+        additions: 200,
+        deletions: 42,
+        changedFiles: 2,
         repo: "acme/mobile-app",
         notionPageId: "notion-page-1",
         promptVersion: 1,

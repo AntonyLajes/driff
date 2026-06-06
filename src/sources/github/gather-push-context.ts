@@ -28,6 +28,10 @@ export interface PushContext {
   totalCommits: number;
   compareUrl: string;
   fileChangeSummary: string;
+  /** Diff stats aggregated from the compare files (null when unavailable). */
+  additions: number | null;
+  deletions: number | null;
+  changedFiles: number | null;
   /** Truncated unified diff for the compare range. */
   diff: string;
 }
@@ -128,6 +132,11 @@ export const execute = async (input: ExecuteInput): Promise<PushContext> => {
   const commitMessages = compareCommits.map((c) => c.message);
   const prNumbers = extractPrNumbersFromCommitMessages(commitMessages);
 
+  const files = compare.files;
+  const additions = files?.reduce((sum, f) => sum + (f.additions ?? 0), 0) ?? null;
+  const deletions = files?.reduce((sum, f) => sum + (f.deletions ?? 0), 0) ?? null;
+  const changedFiles = files?.length ?? null;
+
   return {
     compareCommits,
     commitMessages,
@@ -135,6 +144,9 @@ export const execute = async (input: ExecuteInput): Promise<PushContext> => {
     totalCommits: compare.total_commits,
     compareUrl: compare.html_url,
     fileChangeSummary: buildFileChangeSummary(compare.files),
+    additions,
+    deletions,
+    changedFiles,
     diff: truncateDiff(diffResponse.data, diffMaxBytes),
   };
 };

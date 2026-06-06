@@ -99,6 +99,13 @@
       "when": 1780509725869,
       "tag": "0013_simple_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1780767802506,
+      "tag": "0014_diff_stats",
+      "breakpoints": true
     }
   ]
 }
