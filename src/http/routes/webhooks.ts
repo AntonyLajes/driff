@@ -113,8 +113,10 @@ const shouldSummarizeByBaseBranch = (
   if (allowedBranches === null || allowedBranches === undefined) {
     return true;
   }
+  /* Empty list = PR summaries explicitly turned OFF (null = all branches).
+   * Safe semantic change: the settings PATCH never stored [] before. */
   if (allowedBranches.length === 0) {
-    return true;
+    return false;
   }
   return allowedBranches.includes(baseRef);
 };

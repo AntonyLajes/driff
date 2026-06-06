@@ -105,6 +105,9 @@ const workspaceRowSelect = {
 const patchWorkspaceSettingsBodySchema = z
   .object({
     pushSummaryBranches: z.union([z.array(z.string().min(1).max(255)).max(50), z.null()]).optional(),
+    prSummaryBaseBranches: z
+      .union([z.array(z.string().min(1).max(255)).max(50), z.null()])
+      .optional(),
     releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
     releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
     releaseVersionBranch: z.union([z.string().max(255), z.null()]).optional(),
@@ -423,6 +426,7 @@ export const handler = async (
     const rows = await input.db
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
+        prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -434,6 +438,7 @@ export const handler = async (
     return reply.send({
       settings: {
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
+        prSummaryBaseBranches: row?.prSummaryBaseBranches ?? null,
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
@@ -468,6 +473,7 @@ export const handler = async (
     const rows = await input.db
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
+        prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -749,6 +755,15 @@ export const handler = async (
     };
     const nextPushBranches = mapBranchList(patch.pushSummaryBranches);
 
+    /* PR base branches keep [] as-is: empty list = PR summaries OFF,
+     * null = summarize merges into any branch. */
+    const nextPrBaseBranches =
+      patch.prSummaryBaseBranches === undefined
+        ? undefined
+        : patch.prSummaryBaseBranches === null
+          ? null
+          : patch.prSummaryBaseBranches.map((b) => b.trim()).filter((b) => b.length > 0);
+
     const nonBlankOrNull = (s: string | null): string | null => {
       const t = s?.trim();
       return t && t.length > 0 ? t : null;
@@ -802,6 +817,9 @@ export const handler = async (
         .update(workspaceSettingsTable)
         .set({
           ...(nextPushBranches !== undefined ? { pushSummaryBranches: nextPushBranches } : {}),
+          ...(nextPrBaseBranches !== undefined
+            ? { prSummaryBaseBranches: nextPrBaseBranches }
+            : {}),
           ...releasePatch,
           updatedAt: now,
         })
@@ -810,6 +828,7 @@ export const handler = async (
       await input.db.insert(workspaceSettingsTable).values({
         workspaceId: wsId,
         pushSummaryBranches: nextPushBranches === undefined ? null : nextPushBranches,
+        prSummaryBaseBranches: nextPrBaseBranches === undefined ? null : nextPrBaseBranches,
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
         releaseVersionFilePath:
@@ -836,6 +855,7 @@ export const handler = async (
     const rows = await input.db
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
+        prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -847,6 +867,7 @@ export const handler = async (
     return reply.send({
       settings: {
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
+        prSummaryBaseBranches: row?.prSummaryBaseBranches ?? null,
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
