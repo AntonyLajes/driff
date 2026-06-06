@@ -117,9 +117,10 @@ export const handler = async (
       });
     }
 
-    const weekAgo = new Date(Date.now() - WEEK_MS);
+    // postgres.js can't bind a Date inside a raw sql fragment — pass ISO text.
+    const weekAgoIso = new Date(Date.now() - WEEK_MS).toISOString();
     const weekFilter = (column: AnyPgColumn) =>
-      sql<number>`count(*) filter (where ${column} >= ${weekAgo})`.mapWith(Number);
+      sql<number>`count(*) filter (where ${column} >= ${weekAgoIso})`.mapWith(Number);
 
     // Query order matters for the test mocks: grouped pr → push → version,
     // then weekly pr → push → version.
