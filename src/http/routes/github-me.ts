@@ -365,4 +365,96 @@ export const handler = async (
       return reply.status(500).send({ error: "infer_failed" });
     }
   });
+
+  const repoContentsQuerySchema = z.object({
+    fullName: z
+      .string()
+      .min(3)
+      .max(241)
+      .regex(/^[\w.-]+\/[\w.-]+$/u, "expected owner/repo"),
+    path: z.string().max(1024).default(""),
+    ref: z.string().max(255).optional(),
+  });
+
+  /**
+   * Browse an arbitrary accessible repo before a workspace exists — used by
+   * the new-project wizard's version-file picker. Mirrors the workspace-scoped
+   * `/repo/contents` endpoint.
+   */
+  instance.get("/api/me/github/repo/contents", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+    const parsedQuery = repoContentsQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply.status(400).send({ error: "invalid_query" });
+    }
+    const repoFull = parsedQuery.data.fullName.trim();
+    const pathParam = parsedQuery.data.path.trim();
+    const refParam = parsedQuery.data.ref?.trim() || "";
+
+    const slash = repoFull.indexOf("/");
+    if (slash <= 0 || slash === repoFull.length - 1) {
+      return reply.status(400).send({ error: "invalid_repo_full_name" });
+    }
+    const owner = repoFull.slice(0, slash);
+    const repo = repoFull.slice(slash + 1);
+
+    const octokit = new Octokit({ auth: accessToken });
+    try {
+      const { data } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path: pathParam.length > 0 ? pathParam : "",
+        ...(refParam.length > 0 ? { ref: refParam } : {}),
+      });
+      if (!Array.isArray(data)) {
+        const name = "name" in data && typeof data.name === "string" ? data.name : "";
+        const path =
+          "path" in data && typeof data.path === "string" ? data.path : pathParam;
+        return reply.send({
+          ref: refParam,
+          requestedPath: pathParam,
+          entries: [{ name, path, type: "file" as const }],
+        });
+      }
+      const entries = data
+        .filter((e) => e.type === "file" || e.type === "dir")
+        .map((e) => ({
+          name: e.name,
+          path: e.path,
+          type: e.type as "file" | "dir",
+        }))
+        .sort((a, b) => {
+          if (a.type !== b.type) {
+            return a.type === "dir" ? -1 : 1;
+          }
+          return a.name.localeCompare(b.name);
+        });
+      return reply.send({
+        ref: refParam,
+        requestedPath: pathParam,
+        entries,
+      });
+    } catch (err) {
+      request.log.warn({ err }, "github_repo_contents_failed");
+      const status =
+        typeof err === "object" && err !== null && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      if (status === 404) {
+        return reply.status(404).send({ error: "repo_or_path_not_found" });
+      }
+      return reply.status(500).send({ error: "contents_failed" });
+    }
+  });
 };
