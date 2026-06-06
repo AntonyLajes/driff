@@ -8,6 +8,14 @@ vi.mock("@/workspaces/infer-workspace-settings.js", () => ({
   inferAndApplyWorkspaceSettings: vi.fn(),
 }));
 
+/* Sample-summary enqueue (Fase 3d) looks up the latest merged PR via Octokit. */
+const { pullsListMock } = vi.hoisted(() => ({ pullsListMock: vi.fn() }));
+vi.mock("@octokit/rest", () => ({
+  Octokit: class {
+    rest = { pulls: { list: pullsListMock } };
+  },
+}));
+
 vi.mock("@/github/load-user-github-access-token.js", () => ({
   loadUserGithubAccessToken: vi.fn(),
 }));
@@ -23,6 +31,7 @@ describe("http/routes/workspaces-me", () => {
     servers.length = 0;
     vi.mocked(inferAndApplyWorkspaceSettings).mockReset();
     vi.mocked(loadUserGithubAccessToken).mockReset();
+    pullsListMock.mockReset();
   });
 
   const jwtSecret = "a".repeat(32);
@@ -1014,6 +1023,125 @@ describe("http/routes/workspaces-me", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: "summary_not_found" });
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Sample summary on create (Fase 3d)                                  */
+  /* ------------------------------------------------------------------ */
+
+  const createWorkspaceDb = () => {
+    const createdRow = {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      name: "acme-app",
+      slug: "acme-app",
+      sourceProvider: "github",
+      workspaceKind: null as string | null,
+      repoFullName: "acme/acme-app",
+      repoDefaultBranch: "main",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    };
+    const jobValues = vi.fn(async () => undefined);
+    const insert = vi
+      .fn()
+      // workspace insert
+      .mockImplementationOnce(() => ({
+        values: vi.fn(() => ({ returning: vi.fn(async () => [createdRow]) })),
+      }))
+      // sample process_pr job insert
+      .mockImplementationOnce(() => ({ values: jobValues }));
+    return { insert, jobValues };
+  };
+
+  it("enqueues a sample process_pr job for the latest merged PR after create", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("gh-token");
+    pullsListMock.mockResolvedValue({
+      data: [
+        { number: 41, merged_at: null },
+        { number: 40, merged_at: "2026-06-01T10:00:00.000Z" },
+      ],
+    });
+
+    const { insert, jobValues } = createWorkspaceDb();
+    const db = { insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "acme/acme-app" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    // Fire-and-forget: the job lands after the response is already out.
+    await vi.waitFor(() => {
+      expect(jobValues).toHaveBeenCalledWith({
+        type: "process_pr",
+        payload: { repo: "acme/acme-app", prNumber: 40 },
+        status: "pending",
+      });
+    });
+    expect(pullsListMock).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "acme", repo: "acme-app", state: "closed" }),
+    );
+  });
+
+  it("skips the sample job when the repo has no merged PRs", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("gh-token");
+    pullsListMock.mockResolvedValue({ data: [{ number: 2, merged_at: null }] });
+
+    const { insert } = createWorkspaceDb();
+    const db = { insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "acme/acme-app" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    await vi.waitFor(() => {
+      expect(pullsListMock).toHaveBeenCalledOnce();
+    });
+    // Only the workspace insert — no job row.
+    expect(insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("still creates the workspace when the sample-summary lookup fails", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("gh-token");
+    pullsListMock.mockRejectedValue(new Error("github_down"));
+
+    const { insert } = createWorkspaceDb();
+    const db = { insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "acme/acme-app" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    await vi.waitFor(() => {
+      expect(pullsListMock).toHaveBeenCalledOnce();
+    });
+    expect(insert).toHaveBeenCalledTimes(1);
   });
 
   it("returns 400 for an invalid summary detail type or id", async () => {

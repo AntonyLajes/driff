@@ -12,6 +12,7 @@ import {
 } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import {
+  jobsTable,
   pullRequestsTable,
   pushesTable,
   releasesTable,
@@ -1465,6 +1466,49 @@ export const handler = async (
     return reply.send({ workspace: loaded.workspace });
   });
 
+  /**
+   * Aha-moment sample (Fase 3d): right after a workspace is created, enqueue a
+   * process_pr job for the repo's latest merged PR so the feed isn't empty on
+   * first visit. Best-effort — any GitHub/queue failure is swallowed by the
+   * fire-and-forget call site and never blocks or fails the create.
+   */
+  const enqueueSampleSummary = async (
+    userId: string,
+    repoFullName: string,
+  ): Promise<void> => {
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      userId,
+      input.jwtSecret,
+    );
+    if (typeof accessToken !== "string") {
+      return;
+    }
+    const [owner, repoName] = repoFullName.split("/");
+    if (owner === undefined || repoName === undefined || repoName.length === 0) {
+      return;
+    }
+    const octokit = new Octokit({ auth: accessToken });
+    // GitHub has no "merged" list filter — closed sorted by recency is the proxy.
+    const { data } = await octokit.rest.pulls.list({
+      owner,
+      repo: repoName,
+      state: "closed",
+      sort: "updated",
+      direction: "desc",
+      per_page: 20,
+    });
+    const merged = data.find((pull) => pull.merged_at != null);
+    if (merged === undefined) {
+      return;
+    }
+    await input.db.insert(jobsTable).values({
+      type: "process_pr",
+      payload: { repo: repoFullName, prNumber: merged.number },
+      status: "pending",
+    });
+  };
+
   instance.post("/api/me/workspaces", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
@@ -1533,6 +1577,9 @@ export const handler = async (
         if (row === undefined) {
           return reply.status(500).send({ error: "insert_failed" });
         }
+        void enqueueSampleSummary(session.userId, repoFull).catch((err: unknown) => {
+          request.log.warn({ err }, "sample_summary_enqueue_failed");
+        });
         return reply.status(201).send({ workspace: row });
       } catch (err) {
         const constraint = uniqueViolationTarget(err);
