@@ -632,4 +632,344 @@ describe("http/routes/workspaces-me", () => {
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: "workspace_not_found" });
   });
+
+  /* ------------------------------------------------------------------ */
+  /* Unified summaries feed + detail (Fase 3b)                           */
+  /* ------------------------------------------------------------------ */
+
+  const feedToken = () =>
+    signSessionJwt({
+      secret: jwtSecret,
+      userId: "00000000-0000-4000-8000-000000000099",
+      email: "user@example.com",
+      expiresInSeconds: 3600,
+    });
+
+  const feedWorkspaceRow = {
+    id: "00000000-0000-4000-8000-0000000000aa",
+    name: "ride-pack",
+    slug: "ride-pack",
+    sourceProvider: "github",
+    workspaceKind: "react_native_expo",
+    repoFullName: "AntonyLajes/ride-pack",
+    repoDefaultBranch: "main",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  /** select().from().where().limit() — workspace-by-slug lookup. */
+  const lookupSelect = (rows: unknown[]) => () => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({ limit: vi.fn(async () => rows) })),
+    })),
+  });
+  /** select().from().where().orderBy().limit() — feed page query. */
+  const feedSelect = (rows: unknown[]) => () => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({
+        orderBy: vi.fn(() => ({ limit: vi.fn(async () => rows) })),
+      })),
+    })),
+  });
+  /** select({count}).from().where() — awaited directly. */
+  const countSelect = (value: number) => () => ({
+    from: vi.fn(() => ({ where: vi.fn(async () => [{ value }]) })),
+  });
+  /** select().from().where().limit() — detail row lookup. */
+  const detailSelect = lookupSelect;
+
+  it("returns the unified summaries feed sorted desc with counts and diff stats", async () => {
+    const prRow = {
+      id: "00000000-0000-4000-8000-000000000b01",
+      prNumber: 14,
+      title: "feat(rides): classify ride pace",
+      author: "AntonyLajes",
+      baseBranch: "main",
+      mergedAt: new Date("2026-06-03T12:00:00.000Z"),
+      summaryUserFacing: "Adds pace classification for rides.",
+      additions: 36,
+      deletions: 0,
+      changedFiles: 2,
+      notionPageId: "notion-1",
+    };
+    const pushRow = {
+      id: "00000000-0000-4000-8000-000000000b02",
+      title: "Push to main — 1 commit",
+      branch: "main",
+      pusher: "AntonyLajes",
+      pushedAt: new Date("2026-06-03T13:00:00.000Z"),
+      commitCount: 1,
+      summaryUserFacing: "Guards NaN speeds in pace classification.",
+      additions: 6,
+      deletions: 1,
+      changedFiles: 1,
+      notionPageId: null,
+    };
+    const releaseRow = {
+      id: "00000000-0000-4000-8000-000000000b03",
+      shortVersion: "1.3.1",
+      buildVersion: "13",
+      branch: "main",
+      createdAt: new Date("2026-06-03T14:00:00.000Z"),
+      changelog: "Pace classification ships to riders.",
+      notionPageId: null,
+    };
+
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      // feed pages: pr → push → version
+      .mockImplementationOnce(feedSelect([prRow]))
+      .mockImplementationOnce(feedSelect([pushRow]))
+      .mockImplementationOnce(feedSelect([releaseRow]))
+      // counts: pr → push → version
+      .mockImplementationOnce(countSelect(5))
+      .mockImplementationOnce(countSelect(3))
+      .mockImplementationOnce(countSelect(2));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.counts).toEqual({ all: 10, pr: 5, push: 3, version: 2 });
+    expect(body.nextCursor).toBeNull();
+    expect(body.items.map((i: { type: string }) => i.type)).toEqual([
+      "version",
+      "push",
+      "pr",
+    ]);
+    expect(body.items[2]).toMatchObject({
+      id: prRow.id,
+      type: "pr",
+      title: "feat(rides): classify ride pace",
+      author: "AntonyLajes",
+      branch: "main",
+      prNumber: 14,
+      additions: 36,
+      deletions: 0,
+      changedFiles: 2,
+      delivered: true,
+      summaryPreview: "Adds pace classification for rides.",
+    });
+    expect(body.items[0]).toMatchObject({
+      type: "version",
+      title: "Version 1.3.1 (13)",
+      shortVersion: "1.3.1",
+      author: null,
+      delivered: false,
+    });
+  });
+
+  it("filters the feed by type and paginates with a cursor", async () => {
+    const olderPush = {
+      id: "00000000-0000-4000-8000-000000000b12",
+      title: "Push to main — 2 commits",
+      branch: "main",
+      pusher: "AntonyLajes",
+      pushedAt: new Date("2026-06-01T10:00:00.000Z"),
+      commitCount: 2,
+      summaryUserFacing: null,
+      additions: null,
+      deletions: null,
+      changedFiles: null,
+      notionPageId: null,
+    };
+    const newerPush = {
+      ...olderPush,
+      id: "00000000-0000-4000-8000-000000000b11",
+      pushedAt: new Date("2026-06-02T10:00:00.000Z"),
+    };
+
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      // only the push feed is queried (limit+1 rows returned → has more)
+      .mockImplementationOnce(feedSelect([newerPush, olderPush]))
+      .mockImplementationOnce(countSelect(4))
+      .mockImplementationOnce(countSelect(9))
+      .mockImplementationOnce(countSelect(1));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries?type=push&limit=1",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({ type: "push", commitCount: 2 });
+    expect(body.nextCursor).toBe("2026-06-02T10:00:00.000Z");
+    // lookup + 1 feed + 3 counts — pr/release feed tables never queried
+    expect(select).toHaveBeenCalledTimes(5);
+  });
+
+  it("returns an empty feed when the workspace has no linked repo", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([{ ...feedWorkspaceRow, repoFullName: null }]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      items: [],
+      nextCursor: null,
+      counts: { all: 0, pr: 0, push: 0, version: 0 },
+    });
+  });
+
+  it("returns 400 for an invalid feed type", async () => {
+    const select = vi.fn().mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries?type=nope",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_type" });
+  });
+
+  it("returns the full PR summary detail with technical summary and diff stats", async () => {
+    const prRow = {
+      id: "00000000-0000-4000-8000-000000000b21",
+      prNumber: 14,
+      title: "feat(rides): classify ride pace",
+      author: "AntonyLajes",
+      baseBranch: "main",
+      mergedAt: new Date("2026-06-03T12:00:00.000Z"),
+      headSha: "abc1234",
+      summaryUserFacing: "Adds pace classification for rides.",
+      summaryTechnical: "Introduces classifyRidePace with thresholds.",
+      category: "feature",
+      area: "rides",
+      additions: 36,
+      deletions: 0,
+      changedFiles: 2,
+      notionPageId: "notion-1",
+    };
+
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(detailSelect([prRow]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/summaries/pr/${prRow.id}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      summary: {
+        id: prRow.id,
+        type: "pr",
+        title: "feat(rides): classify ride pace",
+        author: "AntonyLajes",
+        branch: "main",
+        timestamp: "2026-06-03T12:00:00.000Z",
+        prNumber: 14,
+        headSha: "abc1234",
+        summaryUserFacing: "Adds pace classification for rides.",
+        summaryTechnical: "Introduces classifyRidePace with thresholds.",
+        category: "feature",
+        area: "rides",
+        additions: 36,
+        deletions: 0,
+        changedFiles: 2,
+        delivered: true,
+        commitCount: null,
+        shortVersion: null,
+      },
+    });
+  });
+
+  it("returns 404 when the summary detail row does not exist for the repo", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(detailSelect([]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries/push/00000000-0000-4000-8000-000000000b31",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "summary_not_found" });
+  });
+
+  it("returns 400 for an invalid summary detail type or id", async () => {
+    const select = vi.fn().mockImplementation(lookupSelect([feedWorkspaceRow]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const badType = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries/commit/00000000-0000-4000-8000-000000000b31",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    expect(badType.statusCode).toBe(400);
+    expect(badType.json()).toMatchObject({ error: "invalid_type" });
+
+    const badId = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries/pr/not-a-uuid",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    expect(badId.statusCode).toBe(400);
+    expect(badId.json()).toMatchObject({ error: "invalid_id" });
+  });
 });

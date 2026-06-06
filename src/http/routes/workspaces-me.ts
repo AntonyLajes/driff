@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { Octokit } from "@octokit/rest";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, ilike, lt, or } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
@@ -398,6 +398,484 @@ export const handler = async (
 
     return reply.send({ releases, pullRequests: prRows, pushes: pushRows });
   });
+
+  const summaryTypes = ["pr", "push", "version"] as const;
+  type SummaryType = (typeof summaryTypes)[number];
+  const isSummaryType = (value: string): value is SummaryType =>
+    (summaryTypes as readonly string[]).includes(value);
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const previewOf = (text: string | null, max = 280): string | null => {
+    if (text === null) return null;
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  };
+
+  instance.get("/api/me/workspaces/by-slug/:slug/summaries", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const query = request.query as {
+      type?: string;
+      limit?: string;
+      cursor?: string;
+      q?: string;
+    };
+    const type = query.type ?? "all";
+    if (type !== "all" && !isSummaryType(type)) {
+      return reply.status(400).send({ error: "invalid_type" });
+    }
+    const limitRaw = Number(query.limit ?? "20");
+    const limit = Number.isInteger(limitRaw)
+      ? Math.min(Math.max(limitRaw, 1), 50)
+      : 20;
+    let cursor: Date | null = null;
+    if (query.cursor !== undefined && query.cursor.length > 0) {
+      const parsed = new Date(query.cursor);
+      if (Number.isNaN(parsed.getTime())) {
+        return reply.status(400).send({ error: "invalid_cursor" });
+      }
+      cursor = parsed;
+    }
+    const searchPattern =
+      query.q !== undefined && query.q.trim().length > 0
+        ? `%${query.q.trim()}%`
+        : null;
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const repo = loaded.workspace.repoFullName?.trim();
+    if (repo === undefined || repo.length === 0) {
+      return reply.send({
+        items: [],
+        nextCursor: null,
+        counts: { all: 0, pr: 0, push: 0, version: 0 },
+      });
+    }
+
+    const wants = (t: SummaryType) => type === "all" || type === t;
+    const fetchLimit = limit + 1;
+
+    interface FeedItem {
+      id: string;
+      type: SummaryType;
+      title: string;
+      timestamp: Date;
+      author: string | null;
+      branch: string | null;
+      summaryPreview: string | null;
+      additions: number | null;
+      deletions: number | null;
+      changedFiles: number | null;
+      prNumber: number | null;
+      commitCount: number | null;
+      shortVersion: string | null;
+      delivered: boolean;
+    }
+    const items: FeedItem[] = [];
+
+    if (wants("pr")) {
+      const conditions = [eq(pullRequestsTable.repo, repo)];
+      if (cursor !== null) {
+        conditions.push(lt(pullRequestsTable.mergedAt, cursor));
+      }
+      if (searchPattern !== null) {
+        const match = or(
+          ilike(pullRequestsTable.title, searchPattern),
+          ilike(pullRequestsTable.summaryUserFacing, searchPattern),
+        );
+        if (match !== undefined) {
+          conditions.push(match);
+        }
+      }
+      const rows = await input.db
+        .select({
+          id: pullRequestsTable.id,
+          prNumber: pullRequestsTable.prNumber,
+          title: pullRequestsTable.title,
+          author: pullRequestsTable.author,
+          baseBranch: pullRequestsTable.baseBranch,
+          mergedAt: pullRequestsTable.mergedAt,
+          summaryUserFacing: pullRequestsTable.summaryUserFacing,
+          additions: pullRequestsTable.additions,
+          deletions: pullRequestsTable.deletions,
+          changedFiles: pullRequestsTable.changedFiles,
+          notionPageId: pullRequestsTable.notionPageId,
+        })
+        .from(pullRequestsTable)
+        .where(and(...conditions))
+        .orderBy(desc(pullRequestsTable.mergedAt))
+        .limit(fetchLimit);
+      for (const r of rows) {
+        items.push({
+          id: r.id,
+          type: "pr",
+          title: r.title,
+          timestamp: r.mergedAt,
+          author: r.author,
+          branch: r.baseBranch,
+          summaryPreview: previewOf(r.summaryUserFacing),
+          additions: r.additions,
+          deletions: r.deletions,
+          changedFiles: r.changedFiles,
+          prNumber: r.prNumber,
+          commitCount: null,
+          shortVersion: null,
+          delivered: r.notionPageId !== null,
+        });
+      }
+    }
+
+    if (wants("push")) {
+      const conditions = [eq(pushesTable.repo, repo)];
+      if (cursor !== null) {
+        conditions.push(lt(pushesTable.pushedAt, cursor));
+      }
+      if (searchPattern !== null) {
+        const match = or(
+          ilike(pushesTable.title, searchPattern),
+          ilike(pushesTable.summaryUserFacing, searchPattern),
+        );
+        if (match !== undefined) {
+          conditions.push(match);
+        }
+      }
+      const rows = await input.db
+        .select({
+          id: pushesTable.id,
+          title: pushesTable.title,
+          branch: pushesTable.branch,
+          pusher: pushesTable.pusher,
+          pushedAt: pushesTable.pushedAt,
+          commitCount: pushesTable.commitCount,
+          summaryUserFacing: pushesTable.summaryUserFacing,
+          additions: pushesTable.additions,
+          deletions: pushesTable.deletions,
+          changedFiles: pushesTable.changedFiles,
+          notionPageId: pushesTable.notionPageId,
+        })
+        .from(pushesTable)
+        .where(and(...conditions))
+        .orderBy(desc(pushesTable.pushedAt))
+        .limit(fetchLimit);
+      for (const r of rows) {
+        items.push({
+          id: r.id,
+          type: "push",
+          title: r.title,
+          timestamp: r.pushedAt,
+          author: r.pusher,
+          branch: r.branch,
+          summaryPreview: previewOf(r.summaryUserFacing),
+          additions: r.additions,
+          deletions: r.deletions,
+          changedFiles: r.changedFiles,
+          prNumber: null,
+          commitCount: r.commitCount,
+          shortVersion: null,
+          delivered: r.notionPageId !== null,
+        });
+      }
+    }
+
+    if (wants("version")) {
+      const conditions = [eq(releasesTable.repo, repo)];
+      if (cursor !== null) {
+        conditions.push(lt(releasesTable.createdAt, cursor));
+      }
+      if (searchPattern !== null) {
+        const match = or(
+          ilike(releasesTable.shortVersion, searchPattern),
+          ilike(releasesTable.changelog, searchPattern),
+        );
+        if (match !== undefined) {
+          conditions.push(match);
+        }
+      }
+      const rows = await input.db
+        .select({
+          id: releasesTable.id,
+          shortVersion: releasesTable.shortVersion,
+          buildVersion: releasesTable.buildVersion,
+          branch: releasesTable.branch,
+          createdAt: releasesTable.createdAt,
+          changelog: releasesTable.changelog,
+          notionPageId: releasesTable.notionPageId,
+        })
+        .from(releasesTable)
+        .where(and(...conditions))
+        .orderBy(desc(releasesTable.createdAt))
+        .limit(fetchLimit);
+      for (const r of rows) {
+        items.push({
+          id: r.id,
+          type: "version",
+          title: `Version ${r.shortVersion} (${r.buildVersion})`,
+          timestamp: r.createdAt,
+          author: null,
+          branch: r.branch,
+          summaryPreview: previewOf(r.changelog),
+          additions: null,
+          deletions: null,
+          changedFiles: null,
+          prNumber: null,
+          commitCount: null,
+          shortVersion: r.shortVersion,
+          delivered: r.notionPageId !== null,
+        });
+      }
+    }
+
+    items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    const page = items.slice(0, limit);
+    const lastItem = page[page.length - 1];
+    const nextCursor =
+      items.length > limit && lastItem !== undefined
+        ? lastItem.timestamp.toISOString()
+        : null;
+
+    // Counts always reflect repo-wide totals per type (independent of type/q/cursor).
+    const [prCount] = await input.db
+      .select({ value: count() })
+      .from(pullRequestsTable)
+      .where(eq(pullRequestsTable.repo, repo));
+    const [pushCount] = await input.db
+      .select({ value: count() })
+      .from(pushesTable)
+      .where(eq(pushesTable.repo, repo));
+    const [versionCount] = await input.db
+      .select({ value: count() })
+      .from(releasesTable)
+      .where(eq(releasesTable.repo, repo));
+    const counts = {
+      pr: prCount?.value ?? 0,
+      push: pushCount?.value ?? 0,
+      version: versionCount?.value ?? 0,
+    };
+
+    return reply.send({
+      items: page.map((item) => ({
+        ...item,
+        timestamp: item.timestamp.toISOString(),
+      })),
+      nextCursor,
+      counts: { all: counts.pr + counts.push + counts.version, ...counts },
+    });
+  });
+
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/summaries/:type/:id",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; type?: string; id?: string };
+      const type = params.type ?? "";
+      if (!isSummaryType(type)) {
+        return reply.status(400).send({ error: "invalid_type" });
+      }
+      const id = params.id ?? "";
+      if (!uuidPattern.test(id)) {
+        return reply.status(400).send({ error: "invalid_id" });
+      }
+
+      const loaded = await loadWorkspaceBySlugForUser(
+        input.db,
+        session.userId,
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const repo = loaded.workspace.repoFullName?.trim();
+      if (repo === undefined || repo.length === 0) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+
+      /* Type-specific extras default to null so the response keeps one flat shape. */
+      const base = {
+        prNumber: null as number | null,
+        commitCount: null as number | null,
+        compareUrl: null as string | null,
+        headSha: null as string | null,
+        shortVersion: null as string | null,
+        buildVersion: null as string | null,
+        prNumbers: null as number[] | null,
+        sections: null as Record<string, unknown> | null,
+      };
+
+      if (type === "pr") {
+        const rows = await input.db
+          .select({
+            id: pullRequestsTable.id,
+            prNumber: pullRequestsTable.prNumber,
+            title: pullRequestsTable.title,
+            author: pullRequestsTable.author,
+            baseBranch: pullRequestsTable.baseBranch,
+            mergedAt: pullRequestsTable.mergedAt,
+            headSha: pullRequestsTable.headSha,
+            summaryUserFacing: pullRequestsTable.summaryUserFacing,
+            summaryTechnical: pullRequestsTable.summaryTechnical,
+            category: pullRequestsTable.category,
+            area: pullRequestsTable.area,
+            additions: pullRequestsTable.additions,
+            deletions: pullRequestsTable.deletions,
+            changedFiles: pullRequestsTable.changedFiles,
+            notionPageId: pullRequestsTable.notionPageId,
+          })
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .limit(1);
+        const r = rows[0];
+        if (r === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        return reply.send({
+          summary: {
+            ...base,
+            id: r.id,
+            type: "pr",
+            title: r.title,
+            timestamp: r.mergedAt.toISOString(),
+            author: r.author,
+            branch: r.baseBranch,
+            summaryUserFacing: r.summaryUserFacing,
+            summaryTechnical: r.summaryTechnical,
+            category: r.category,
+            area: r.area,
+            additions: r.additions,
+            deletions: r.deletions,
+            changedFiles: r.changedFiles,
+            delivered: r.notionPageId !== null,
+            prNumber: r.prNumber,
+            headSha: r.headSha,
+          },
+        });
+      }
+
+      if (type === "push") {
+        const rows = await input.db
+          .select({
+            id: pushesTable.id,
+            title: pushesTable.title,
+            branch: pushesTable.branch,
+            pusher: pushesTable.pusher,
+            pushedAt: pushesTable.pushedAt,
+            commitCount: pushesTable.commitCount,
+            compareUrl: pushesTable.compareUrl,
+            prNumbers: pushesTable.prNumbers,
+            summaryUserFacing: pushesTable.summaryUserFacing,
+            summaryTechnical: pushesTable.summaryTechnical,
+            category: pushesTable.category,
+            area: pushesTable.area,
+            additions: pushesTable.additions,
+            deletions: pushesTable.deletions,
+            changedFiles: pushesTable.changedFiles,
+            notionPageId: pushesTable.notionPageId,
+          })
+          .from(pushesTable)
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .limit(1);
+        const r = rows[0];
+        if (r === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        return reply.send({
+          summary: {
+            ...base,
+            id: r.id,
+            type: "push",
+            title: r.title,
+            timestamp: r.pushedAt.toISOString(),
+            author: r.pusher,
+            branch: r.branch,
+            summaryUserFacing: r.summaryUserFacing,
+            summaryTechnical: r.summaryTechnical,
+            category: r.category,
+            area: r.area,
+            additions: r.additions,
+            deletions: r.deletions,
+            changedFiles: r.changedFiles,
+            delivered: r.notionPageId !== null,
+            commitCount: r.commitCount,
+            compareUrl: r.compareUrl,
+            prNumbers: r.prNumbers,
+          },
+        });
+      }
+
+      const rows = await input.db
+        .select({
+          id: releasesTable.id,
+          shortVersion: releasesTable.shortVersion,
+          buildVersion: releasesTable.buildVersion,
+          branch: releasesTable.branch,
+          headSha: releasesTable.headSha,
+          createdAt: releasesTable.createdAt,
+          prNumbers: releasesTable.prNumbers,
+          changelog: releasesTable.changelog,
+          sections: releasesTable.sections,
+          notionPageId: releasesTable.notionPageId,
+        })
+        .from(releasesTable)
+        .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+        .limit(1);
+      const r = rows[0];
+      if (r === undefined) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+      return reply.send({
+        summary: {
+          ...base,
+          id: r.id,
+          type: "version",
+          title: `Version ${r.shortVersion} (${r.buildVersion})`,
+          timestamp: r.createdAt.toISOString(),
+          author: null,
+          branch: r.branch,
+          summaryUserFacing: r.changelog,
+          summaryTechnical: null,
+          category: null,
+          area: null,
+          additions: null,
+          deletions: null,
+          changedFiles: null,
+          delivered: r.notionPageId !== null,
+          shortVersion: r.shortVersion,
+          buildVersion: r.buildVersion,
+          headSha: r.headSha,
+          prNumbers: r.prNumbers,
+          sections: r.sections ?? null,
+        },
+      });
+    },
+  );
 
   instance.get("/api/me/workspaces/by-slug/:slug/settings", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
