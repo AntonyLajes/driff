@@ -220,6 +220,71 @@ export const usersTable = pgTable(
 );
 
 /**
+ * Teams own workspaces. Every user gets a personal team on signup whose id
+ * EQUALS the user id (deterministic backfill + zero-query default context);
+ * personal teams can't be renamed, deleted or gain members.
+ */
+export const teamsTable = pgTable(
+  "teams",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    isPersonal: boolean("is_personal").default(false).notNull(),
+    /** Member cap enforced on invites; provisional value until billing lands. */
+    maxMembers: integer("max_members").default(25).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    slugUnique: unique("teams_slug_unique").on(table.slug),
+  }),
+);
+
+/** Membership + role. Roles: `owner` | `admin` | `member` (see docs/permissions). */
+export const teamMembersTable = pgTable(
+  "team_members",
+  {
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teamsTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.teamId, table.userId] }),
+    userIdIdx: index("team_members_user_id_idx").on(table.userId),
+  }),
+);
+
+/** Pending email invites; `token` is the single-use secret in the invite link. */
+export const teamInvitesTable = pgTable(
+  "team_invites",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teamsTable.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull(),
+    token: text("token").notNull(),
+    invitedByUserId: uuid("invited_by_user_id").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    tokenUnique: unique("team_invites_token_unique").on(table.token),
+    teamIdIdx: index("team_invites_team_id_idx").on(table.teamId),
+  }),
+);
+
+/**
  * Per-provider source OAuth (user-to-server) tokens for listing repos and reading metadata.
  * One row per (user, provider). Access tokens are stored sealed with `AUTH_JWT_SECRET`
  * (see `token-aes.ts`). `provider` is `github` today; `gitlab`/`bitbucket` later.
@@ -255,6 +320,11 @@ export const workspacesTable = pgTable(
   "workspaces",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    /** Owning team — access control is team-membership based. */
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teamsTable.id, { onDelete: "cascade" }),
+    /** Creator; also whose GitHub connection seeded the repo link. */
     userId: uuid("user_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
@@ -277,7 +347,8 @@ export const workspacesTable = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
-    userSlugUnique: unique("workspaces_user_id_slug_unique").on(table.userId, table.slug),
+    teamSlugUnique: unique("workspaces_team_id_slug_unique").on(table.teamId, table.slug),
+    teamIdIdx: index("workspaces_team_id_idx").on(table.teamId),
     userIdIdx: index("workspaces_user_id_idx").on(table.userId),
     // One workspace per linked repo, globally per provider (webhook routing is repo-keyed).
     providerRepoUnique: uniqueIndex("workspaces_provider_repo_unique")

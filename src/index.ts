@@ -214,6 +214,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       googleOAuth,
       workspacesMe,
       meStats: workspacesMe,
+      teamsMe: workspacesMe,
       githubMe,
       destinationsMe,
       health: { db },

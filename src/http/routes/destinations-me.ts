@@ -14,6 +14,7 @@ import { workspaceDestinationsTable, workspacesTable } from "@/db/schema.js";
 import { destinationTypeSchema } from "@/destinations/registry.js";
 import { listNotionDatabases, suggestNotionDatabaseRoles } from "@/notion/list-databases.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
+import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 
 const NOTION_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
@@ -61,8 +62,19 @@ const readBearerToken = (authorization: string | undefined): string | null => {
 const loadWorkspaceForUser = async (
   db: Database,
   userId: string,
+  requestedTeamId: string | undefined,
   slugParam: string,
-): Promise<{ kind: "ok"; id: string; slug: string } | { kind: "invalid_slug" } | { kind: "not_found" }> => {
+): Promise<
+  | { kind: "ok"; id: string; slug: string }
+  | { kind: "invalid_slug" }
+  | { kind: "not_found" }
+  | { kind: "invalid_team" }
+  | { kind: "not_a_member" }
+> => {
+  const teamResult = await resolveTeamContext(db, userId, requestedTeamId);
+  if (teamResult.kind !== "ok") {
+    return { kind: teamResult.kind };
+  }
   const slug = normalizeWorkspaceSlug(slugParam);
   if (slug.length === 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
     return { kind: "invalid_slug" };
@@ -70,7 +82,12 @@ const loadWorkspaceForUser = async (
   const rows = await db
     .select({ id: workspacesTable.id, slug: workspacesTable.slug })
     .from(workspacesTable)
-    .where(and(eq(workspacesTable.userId, userId), eq(workspacesTable.slug, slug)))
+    .where(
+      and(
+        eq(workspacesTable.teamId, teamResult.context.teamId),
+        eq(workspacesTable.slug, slug),
+      ),
+    )
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
@@ -166,7 +183,18 @@ export const handler = async (
         return reply.status(401).send({ error: "invalid_session" });
       }
       const params = request.params as { slug?: string };
-      const ws = await loadWorkspaceForUser(input.db, session.userId, params.slug ?? "");
+      const ws = await loadWorkspaceForUser(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (ws.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (ws.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
       if (ws.kind === "invalid_slug") {
         return reply.status(400).send({ error: "invalid_slug" });
       }
@@ -254,7 +282,18 @@ export const handler = async (
       return reply.status(401).send({ error: "invalid_session" });
     }
     const params = request.params as { slug?: string };
-    const ws = await loadWorkspaceForUser(input.db, session.userId, params.slug ?? "");
+    const ws = await loadWorkspaceForUser(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+    if (ws.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (ws.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (ws.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -292,7 +331,18 @@ export const handler = async (
     if (!typeParsed.success) {
       return reply.status(400).send({ error: "invalid_destination_type" });
     }
-    const ws = await loadWorkspaceForUser(input.db, session.userId, params.slug ?? "");
+    const ws = await loadWorkspaceForUser(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+    if (ws.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (ws.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (ws.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -365,7 +415,18 @@ export const handler = async (
     if (!typeParsed.success) {
       return reply.status(400).send({ error: "invalid_destination_type" });
     }
-    const ws = await loadWorkspaceForUser(input.db, session.userId, params.slug ?? "");
+    const ws = await loadWorkspaceForUser(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+    if (ws.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (ws.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (ws.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -391,7 +452,18 @@ export const handler = async (
         return reply.status(401).send({ error: "invalid_session" });
       }
       const params = request.params as { slug?: string };
-      const ws = await loadWorkspaceForUser(input.db, session.userId, params.slug ?? "");
+      const ws = await loadWorkspaceForUser(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (ws.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (ws.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
       if (ws.kind === "invalid_slug") {
         return reply.status(400).send({ error: "invalid_slug" });
       }

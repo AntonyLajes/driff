@@ -24,6 +24,7 @@ import { loadUserGithubAccessToken } from "@/github/load-user-github-access-toke
 import { reviewTimeSavedMinutes } from "@/lib/review-time.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import { isImplementedProvider, sourceProviderSchema } from "@/sources/registry.js";
+import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
 
 export interface WorkspacesMeRegistrationInput {
@@ -167,7 +168,24 @@ const inferWorkspaceSettingsBodySchema = z.object({
   apply: z.boolean().optional().default(true),
 });
 
-const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugParam: string) => {
+/**
+ * Team-aware workspace lookup: resolves the acting team (x-team-id header,
+ * defaulting to the user's personal team) and finds the slug WITHIN that team.
+ */
+const loadWorkspaceForMember = async (
+  db: Database,
+  userId: string,
+  requestedTeamId: string | undefined,
+  slugParam: string,
+) => {
+  const teamResult = await resolveTeamContext(db, userId, requestedTeamId);
+  if (teamResult.kind === "invalid_team") {
+    return { kind: "invalid_team" as const };
+  }
+  if (teamResult.kind === "not_a_member") {
+    return { kind: "not_a_member" as const };
+  }
+  const team = teamResult.context;
   const slug = normalizeWorkspaceSlug(slugParam);
   if (slug.length === 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
     return { kind: "invalid_slug" as const };
@@ -175,13 +193,13 @@ const loadWorkspaceBySlugForUser = async (db: Database, userId: string, slugPara
   const rows = await db
     .select(workspaceRowSelect)
     .from(workspacesTable)
-    .where(and(eq(workspacesTable.userId, userId), eq(workspacesTable.slug, slug)))
+    .where(and(eq(workspacesTable.teamId, team.teamId), eq(workspacesTable.slug, slug)))
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
     return { kind: "not_found" as const };
   }
-  return { kind: "ok" as const, workspace: row };
+  return { kind: "ok" as const, workspace: row, team };
 };
 
 type WorkspaceDiagnosticsIssue = {
@@ -304,10 +322,22 @@ export const handler = async (
       return reply.status(401).send({ error: "invalid_session" });
     }
 
+    const team = await resolveTeamContext(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+    );
+    if (team.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (team.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
+
     const rows = await input.db
       .select(workspaceRowSelect)
       .from(workspacesTable)
-      .where(eq(workspacesTable.userId, session.userId))
+      .where(eq(workspacesTable.teamId, team.context.teamId))
       .orderBy(desc(workspacesTable.createdAt));
 
     return reply.send({ workspaces: [...rows] });
@@ -324,11 +354,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -451,11 +488,18 @@ export const handler = async (
         : null;
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -704,11 +748,18 @@ export const handler = async (
         return reply.status(400).send({ error: "invalid_id" });
       }
 
-      const loaded = await loadWorkspaceBySlugForUser(
+      const loaded = await loadWorkspaceForMember(
         input.db,
         session.userId,
+        readTeamIdHeader(request.headers),
         params.slug ?? "",
       );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
       if (loaded.kind === "invalid_slug") {
         return reply.status(400).send({ error: "invalid_slug" });
       }
@@ -891,11 +942,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -977,11 +1035,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -1024,11 +1089,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -1068,11 +1140,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -1173,11 +1252,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -1276,11 +1362,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -1453,11 +1546,18 @@ export const handler = async (
     }
 
     const params = request.params as { slug?: string };
-    const loaded = await loadWorkspaceBySlugForUser(
+    const loaded = await loadWorkspaceForMember(
       input.db,
       session.userId,
+      readTeamIdHeader(request.headers),
       params.slug ?? "",
     );
+    if (loaded.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (loaded.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
     if (loaded.kind === "invalid_slug") {
       return reply.status(400).send({ error: "invalid_slug" });
     }
@@ -1553,8 +1653,20 @@ export const handler = async (
       workspaceKind = kindParsed.data;
     }
 
+    const team = await resolveTeamContext(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+    );
+    if (team.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (team.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
+
     const now = new Date();
-    // Derive a per-user-unique slug; retry with a numeric suffix on slug collision.
+    // Derive a per-team-unique slug; retry with a numeric suffix on slug collision.
     const maxSlugAttempts = 25;
     for (let attempt = 1; attempt <= maxSlugAttempts; attempt += 1) {
       const slug = attempt === 1 ? baseSlug : `${baseSlug}-${attempt}`;
@@ -1562,6 +1674,7 @@ export const handler = async (
         const inserted = await input.db
           .insert(workspacesTable)
           .values({
+            teamId: team.context.teamId,
             userId: session.userId,
             name,
             slug,
@@ -1587,7 +1700,7 @@ export const handler = async (
         if (constraint === "workspaces_provider_repo_unique") {
           return reply.status(409).send({ error: "repo_already_linked" });
         }
-        if (constraint === "workspaces_user_id_slug_unique") {
+        if (constraint === "workspaces_team_id_slug_unique") {
           // Slug collision for this user — try the next suffixed slug.
           continue;
         }
@@ -1624,6 +1737,18 @@ export const handler = async (
     }
     const patch = parsedBody.data;
 
+    const team = await resolveTeamContext(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+    );
+    if (team.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (team.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
+
     const now = new Date();
     const updated = await input.db
       .update(workspacesTable)
@@ -1633,7 +1758,10 @@ export const handler = async (
         updatedAt: now,
       })
       .where(
-        and(eq(workspacesTable.id, workspaceId), eq(workspacesTable.userId, session.userId)),
+        and(
+          eq(workspacesTable.id, workspaceId),
+          eq(workspacesTable.teamId, team.context.teamId),
+        ),
       )
       .returning(workspaceRowSelect);
 
@@ -1661,11 +1789,28 @@ export const handler = async (
     }
     const workspaceId = workspaceIdParsed.data;
 
-    // Verify ownership and capture the linked repo before deleting anything.
+    const team = await resolveTeamContext(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+    );
+    if (team.kind === "invalid_team") {
+      return reply.status(400).send({ error: "invalid_team" });
+    }
+    if (team.kind === "not_a_member") {
+      return reply.status(403).send({ error: "not_a_team_member" });
+    }
+
+    // Verify team ownership and capture the linked repo before deleting anything.
     const owned = await input.db
       .select({ repoFullName: workspacesTable.repoFullName })
       .from(workspacesTable)
-      .where(and(eq(workspacesTable.id, workspaceId), eq(workspacesTable.userId, session.userId)))
+      .where(
+        and(
+          eq(workspacesTable.id, workspaceId),
+          eq(workspacesTable.teamId, team.context.teamId),
+        ),
+      )
       .limit(1);
     const ownedRow = owned[0];
     if (ownedRow === undefined) {
@@ -1685,7 +1830,12 @@ export const handler = async (
     // Delete the workspace last (workspace_settings cascades via FK).
     await input.db
       .delete(workspacesTable)
-      .where(and(eq(workspacesTable.id, workspaceId), eq(workspacesTable.userId, session.userId)));
+      .where(
+        and(
+          eq(workspacesTable.id, workspaceId),
+          eq(workspacesTable.teamId, team.context.teamId),
+        ),
+      );
 
     return reply.status(204).send();
   });

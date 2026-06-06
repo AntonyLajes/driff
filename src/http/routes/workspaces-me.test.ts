@@ -305,7 +305,7 @@ describe("http/routes/workspaces-me", () => {
         Promise.reject(
           Object.assign(new Error("dup slug"), {
             code: "23505",
-            constraint_name: "workspaces_user_id_slug_unique",
+            constraint_name: "workspaces_team_id_slug_unique",
           }),
         ),
       )

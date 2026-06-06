@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { signSessionJwt } from "@/auth/session-jwt.js";
 import type { Env } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
-import { usersTable } from "@/db/schema.js";
+import { teamMembersTable, teamsTable, usersTable } from "@/db/schema.js";
 
 const STATE_COOKIE = "driff_google_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
@@ -227,6 +227,22 @@ export const handler = async (
       if (userId === undefined) {
         return redirectWithError("user_upsert_failed");
       }
+
+      // Personal team: id EQUALS the user id (deterministic default context).
+      // Idempotent on re-login; the user is always its owner.
+      await input.db
+        .insert(teamsTable)
+        .values({
+          id: userId,
+          name: profile.name ?? profile.email.split("@")[0] ?? "Personal",
+          slug: `personal-${userId.replace(/-/g, "")}`,
+          isPersonal: true,
+        })
+        .onConflictDoNothing();
+      await input.db
+        .insert(teamMembersTable)
+        .values({ teamId: userId, userId, role: "owner" })
+        .onConflictDoNothing();
 
       const jwt = signSessionJwt({
         secret: input.jwtSecret,

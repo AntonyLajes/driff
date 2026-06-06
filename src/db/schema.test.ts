@@ -67,10 +67,11 @@ describe("db/schema tables", () => {
     expect(config.uniqueConstraints.length).toBe(1);
   });
 
-  it("should define workspaces table scoped per user", () => {
+  it("should define workspaces table scoped per team", () => {
     const columns = getTableColumns(workspacesTable);
     const config = getTableConfig(workspacesTable);
 
+    expect(columns.teamId).toBeDefined();
     expect(columns.userId).toBeDefined();
     expect(columns.slug).toBeDefined();
     expect(columns.workspaceKind).toBeDefined();
@@ -78,8 +79,8 @@ describe("db/schema tables", () => {
     expect(columns.repoFullName).toBeDefined();
     expect(columns.repoDefaultBranch).toBeDefined();
     expect(config.uniqueConstraints.length).toBe(1);
-    // userIdIdx + partial unique index on (sourceProvider, repoFullName)
-    expect(config.indexes.length).toBe(2);
+    // teamIdIdx + userIdIdx + partial unique index on (sourceProvider, repoFullName)
+    expect(config.indexes.length).toBe(3);
   });
 
   it("should define user_source_connections for per-provider OAuth tokens", () => {

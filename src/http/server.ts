@@ -23,6 +23,10 @@ import {
   type MeStatsRegistrationInput,
 } from "@/http/routes/me-stats.js";
 import {
+  handler as registerTeamsMeRoute,
+  type TeamsMeRegistrationInput,
+} from "@/http/routes/teams-me.js";
+import {
   handler as registerWorkspacesMeRoute,
   type WorkspacesMeRegistrationInput,
 } from "@/http/routes/workspaces-me.js";
@@ -41,6 +45,8 @@ export interface ExecuteInput {
   workspacesMe?: WorkspacesMeRegistrationInput;
   /** When set, registers `/api/me/stats` and `/api/me/activity` (Bearer session JWT). */
   meStats?: MeStatsRegistrationInput;
+  /** When set, registers `/api/me/teams` (Bearer session JWT). */
+  teamsMe?: TeamsMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
   githubMe?: GithubMeRegistrationInput;
   /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
@@ -70,6 +76,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.meStats !== undefined) {
       await registerMeStatsRoute(instance, input.meStats);
+    }
+    if (input.teamsMe !== undefined) {
+      await registerTeamsMeRoute(instance, input.teamsMe);
     }
     if (input.githubMe !== undefined) {
       await registerGithubMeRoute(instance, input.githubMe);
