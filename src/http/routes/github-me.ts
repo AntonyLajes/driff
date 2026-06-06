@@ -366,6 +366,61 @@ export const handler = async (
     }
   });
 
+  const repoBranchesQuerySchema = z.object({
+    fullName: z
+      .string()
+      .min(3)
+      .max(241)
+      .regex(/^[\w.-]+\/[\w.-]+$/u, "expected owner/repo"),
+  });
+
+  /** List a repo's branch names — feeds the wizard's branch pickers. */
+  instance.get("/api/me/github/repo/branches", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+    const parsedQuery = repoBranchesQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply.status(400).send({ error: "invalid_query" });
+    }
+    const repoFull = parsedQuery.data.fullName.trim();
+    const slash = repoFull.indexOf("/");
+    if (slash <= 0 || slash === repoFull.length - 1) {
+      return reply.status(400).send({ error: "invalid_repo_full_name" });
+    }
+    const owner = repoFull.slice(0, slash);
+    const repo = repoFull.slice(slash + 1);
+
+    const octokit = new Octokit({ auth: accessToken });
+    try {
+      const { data } = await octokit.rest.repos.listBranches({
+        owner,
+        repo,
+        per_page: 100,
+      });
+      return reply.send({ branches: data.map((branch) => branch.name) });
+    } catch (err) {
+      request.log.warn({ err }, "github_repo_branches_failed");
+      const status =
+        typeof err === "object" && err !== null && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      if (status === 404) {
+        return reply.status(404).send({ error: "repo_not_found_or_no_access" });
+      }
+      return reply.status(500).send({ error: "branches_failed" });
+    }
+  });
+
   const repoContentsQuerySchema = z.object({
     fullName: z
       .string()
