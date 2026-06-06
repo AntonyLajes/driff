@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { Octokit } from "@octokit/rest";
-import { and, count, desc, eq, ilike, lt, or } from "drizzle-orm";
+import { and, count, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
@@ -19,6 +20,7 @@ import {
   workspacesTable,
 } from "@/db/schema.js";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
+import { reviewTimeSavedMinutes } from "@/lib/review-time.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import { isImplementedProvider, sourceProviderSchema } from "@/sources/registry.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
@@ -876,6 +878,91 @@ export const handler = async (
       });
     },
   );
+
+  instance.get("/api/me/workspaces/by-slug/:slug/stats", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceBySlugForUser(
+      input.db,
+      session.userId,
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_slug") {
+      return reply.status(400).send({ error: "invalid_slug" });
+    }
+    if (loaded.kind === "not_found") {
+      return reply.status(404).send({ error: "workspace_not_found" });
+    }
+
+    const zeroStats = {
+      summaries: 0,
+      prs: 0,
+      pushes: 0,
+      versions: 0,
+      reviewTimeSavedMinutes: 0,
+      weekDeltas: {
+        summaries: 0,
+        prs: 0,
+        pushes: 0,
+        versions: 0,
+        reviewTimeSavedMinutes: 0,
+      },
+    };
+    const repo = loaded.workspace.repoFullName?.trim();
+    if (repo === undefined || repo.length === 0) {
+      return reply.send({ stats: zeroStats });
+    }
+
+    const weekAgo = new Date(Date.now() - 7 * 86_400_000);
+    const weekFilter = (column: AnyPgColumn) =>
+      sql<number>`count(*) filter (where ${column} >= ${weekAgo})`.mapWith(Number);
+
+    // Query order matters for the test mocks: pr → push → version.
+    const [prAggregate] = await input.db
+      .select({ total: count(), week: weekFilter(pullRequestsTable.mergedAt) })
+      .from(pullRequestsTable)
+      .where(eq(pullRequestsTable.repo, repo));
+    const [pushAggregate] = await input.db
+      .select({ total: count(), week: weekFilter(pushesTable.pushedAt) })
+      .from(pushesTable)
+      .where(eq(pushesTable.repo, repo));
+    const [versionAggregate] = await input.db
+      .select({ total: count(), week: weekFilter(releasesTable.createdAt) })
+      .from(releasesTable)
+      .where(eq(releasesTable.repo, repo));
+
+    const prs = prAggregate?.total ?? 0;
+    const pushes = pushAggregate?.total ?? 0;
+    const versions = versionAggregate?.total ?? 0;
+    const weekPrs = prAggregate?.week ?? 0;
+    const weekPushes = pushAggregate?.week ?? 0;
+    const weekVersions = versionAggregate?.week ?? 0;
+
+    return reply.send({
+      stats: {
+        summaries: prs + pushes + versions,
+        prs,
+        pushes,
+        versions,
+        reviewTimeSavedMinutes: reviewTimeSavedMinutes(prs, pushes),
+        weekDeltas: {
+          summaries: weekPrs + weekPushes + weekVersions,
+          prs: weekPrs,
+          pushes: weekPushes,
+          versions: weekVersions,
+          reviewTimeSavedMinutes: reviewTimeSavedMinutes(weekPrs, weekPushes),
+        },
+      },
+    });
+  });
 
   instance.get("/api/me/workspaces/by-slug/:slug/settings", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);

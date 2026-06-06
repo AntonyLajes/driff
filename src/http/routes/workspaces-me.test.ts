@@ -864,6 +864,75 @@ describe("http/routes/workspaces-me", () => {
     expect(response.json()).toMatchObject({ error: "invalid_type" });
   });
 
+  it("returns per-workspace productivity stats with weekly deltas", async () => {
+    /** select().from().where() — awaited aggregate (no orderBy/limit). */
+    const aggregateSelect = (rows: unknown[]) => () => ({
+      from: vi.fn(() => ({ where: vi.fn(async () => rows) })),
+    });
+
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      // aggregates: pr → push → version
+      .mockImplementationOnce(aggregateSelect([{ total: 5, week: 2 }]))
+      .mockImplementationOnce(aggregateSelect([{ total: 3, week: 1 }]))
+      .mockImplementationOnce(aggregateSelect([{ total: 2, week: 1 }]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/stats",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      stats: {
+        summaries: 10,
+        prs: 5,
+        pushes: 3,
+        versions: 2,
+        reviewTimeSavedMinutes: 115,
+        weekDeltas: {
+          summaries: 4,
+          prs: 2,
+          pushes: 1,
+          versions: 1,
+          reviewTimeSavedMinutes: 45,
+        },
+      },
+    });
+  });
+
+  it("returns zeroed stats when the workspace has no linked repo", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([{ ...feedWorkspaceRow, repoFullName: null }]));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/stats",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.stats.summaries).toBe(0);
+    expect(body.stats.weekDeltas.summaries).toBe(0);
+    expect(select).toHaveBeenCalledTimes(1);
+  });
+
   it("returns the full PR summary detail with technical summary and diff stats", async () => {
     const prRow = {
       id: "00000000-0000-4000-8000-000000000b21",

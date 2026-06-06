@@ -213,6 +213,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       cors: input.cors ?? buildCorsFromEnv(env),
       googleOAuth,
       workspacesMe,
+      meStats: workspacesMe,
       githubMe,
       destinationsMe,
       health: { db },
