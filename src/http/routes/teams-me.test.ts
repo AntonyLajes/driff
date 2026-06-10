@@ -1,6 +1,13 @@
 import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { sendInviteEmailMock } = vi.hoisted(() => ({
+  sendInviteEmailMock: vi.fn(async () => ({ sent: true })),
+}));
+vi.mock("@/email/send-invite-email.js", () => ({
+  sendInviteEmail: sendInviteEmailMock,
+}));
+
 import { signSessionJwt } from "@/auth/session-jwt.js";
 import { handler } from "@/http/routes/teams-me.js";
 
@@ -10,6 +17,7 @@ describe("http/routes/teams-me", () => {
   afterEach(async () => {
     await Promise.all(servers.map((server) => server.close()));
     servers.length = 0;
+    sendInviteEmailMock.mockClear();
   });
 
   const jwtSecret = "a".repeat(32);
@@ -223,6 +231,279 @@ describe("http/routes/teams-me", () => {
     expect(response.json().invites[0]).toMatchObject({
       email: "lucas@acme.io",
       role: "member",
+    });
+  });
+
+  const teamLimitSelect = (name: string, maxMembers: number) => () => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({ limit: vi.fn(async () => [{ name, maxMembers }]) })),
+    })),
+  });
+  const memberEmailsSelect = (emails: string[]) => () => ({
+    from: vi.fn(() => ({
+      innerJoin: vi.fn(() => ({
+        where: vi.fn(async () => emails.map((email) => ({ email }))),
+      })),
+    })),
+  });
+  const pendingEmailsSelect = (emails: string[]) => () => ({
+    from: vi.fn(() => ({
+      where: vi.fn(async () => emails.map((email) => ({ email }))),
+    })),
+  });
+
+  it("creates an invite, sends the email and returns an accept link", async () => {
+    const inviteRow = {
+      id: "00000000-0000-4000-8000-0000000000c9",
+      email: "new@acme.io",
+      role: "member",
+      expiresAt: new Date("2026-06-17T00:00:00.000Z"),
+      createdAt: new Date("2026-06-10T00:00:00.000Z"),
+    };
+    const returning = vi.fn(async () => [inviteRow]);
+    const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(teamLimitSelect("Acme Mobile", 25))
+      .mockImplementationOnce(memberEmailsSelect(["antony@superhealth.xyz"]))
+      .mockImplementationOnce(pendingEmailsSelect([]));
+    const db = { select, insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db,
+      jwtSecret,
+      resendApiKey: "re_x",
+      resendFrom: "Driff <invites@driff.dev>",
+      frontendUrl: "https://app.driff.dev",
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { email: "New@Acme.io", role: "member" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json();
+    expect(body.invite).toMatchObject({ email: "new@acme.io", role: "member" });
+    expect(body.acceptUrl).toMatch(/^https:\/\/app\.driff\.dev\/invite\/.+/);
+    expect(body.emailSent).toBe(true);
+    expect(sendInviteEmailMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an invite when the seat limit is reached", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("admin"))
+      .mockImplementationOnce(teamLimitSelect("Acme Mobile", 1))
+      .mockImplementationOnce(memberEmailsSelect(["a@acme.io"]))
+      .mockImplementationOnce(pendingEmailsSelect([]));
+    const insert = vi.fn();
+    const db = { select, insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { email: "new@acme.io", role: "member" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "seat_limit_reached" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("blocks a member from creating an invite", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("member"));
+    const insert = vi.fn();
+    const db = { select, insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { email: "new@acme.io", role: "member" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "insufficient_role" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("409s inviting an email that is already a member", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(teamLimitSelect("Acme Mobile", 25))
+      .mockImplementationOnce(memberEmailsSelect(["dup@acme.io"]))
+      .mockImplementationOnce(pendingEmailsSelect([]));
+    const db = { select, insert: vi.fn() } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { email: "dup@acme.io", role: "member" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "already_member" });
+  });
+
+  it("accepts an invite when the signed-in email matches", async () => {
+    const inviteRow = {
+      id: "00000000-0000-4000-8000-0000000000c9",
+      teamId: TEAM_ID,
+      email: "user@example.com",
+      role: "member",
+      expiresAt: new Date(Date.now() + 86_400_000),
+      acceptedAt: null,
+    };
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => [inviteRow]) })),
+      })),
+    }));
+    const onConflictDoNothing = vi.fn(async () => undefined);
+    const insert = vi.fn(() => ({ values: vi.fn(() => ({ onConflictDoNothing })) }));
+    const updateWhere = vi.fn(async () => undefined);
+    const update = vi.fn(() => ({ set: vi.fn(() => ({ where: updateWhere })) }));
+    const db = { select, insert, update } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/invites/tok_abc/accept",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ teamId: TEAM_ID });
+    expect(insert).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("rejects accepting an invite addressed to a different email", async () => {
+    const inviteRow = {
+      id: "00000000-0000-4000-8000-0000000000c9",
+      teamId: TEAM_ID,
+      email: "someone-else@acme.io",
+      role: "member",
+      expiresAt: new Date(Date.now() + 86_400_000),
+      acceptedAt: null,
+    };
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => [inviteRow]) })),
+      })),
+    }));
+    const insert = vi.fn();
+    const db = { select, insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/invites/tok_abc/accept",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "invite_email_mismatch" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("returns 410 accepting an expired invite", async () => {
+    const inviteRow = {
+      id: "00000000-0000-4000-8000-0000000000c9",
+      teamId: TEAM_ID,
+      email: "user@example.com",
+      role: "member",
+      expiresAt: new Date(Date.now() - 1000),
+      acceptedAt: null,
+    };
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => [inviteRow]) })),
+      })),
+    }));
+    const db = { select, insert: vi.fn() } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/invites/tok_abc/accept",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(410);
+    expect(response.json()).toMatchObject({ error: "invite_expired" });
+  });
+
+  it("previews an invite by token without auth", async () => {
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [
+              {
+                email: "new@acme.io",
+                role: "member",
+                expiresAt: new Date(Date.now() + 86_400_000),
+                acceptedAt: null,
+                teamName: "Acme Mobile",
+              },
+            ]),
+          })),
+        })),
+      })),
+    }));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({ method: "GET", url: "/api/invites/tok_abc" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().invite).toMatchObject({
+      teamName: "Acme Mobile",
+      role: "member",
+      expired: false,
+      accepted: false,
     });
   });
 

@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { and, asc, count, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
@@ -10,8 +12,13 @@ import {
   teamsTable,
   usersTable,
 } from "@/db/schema.js";
+import { sendInviteEmail } from "@/email/send-invite-email.js";
 import { slugifyWorkspaceName } from "@/lib/workspace-slug.js";
-import { resolveTeamContext, type TeamRole } from "@/teams/team-context.js";
+import {
+  canManageMembers,
+  resolveTeamContext,
+  type TeamRole,
+} from "@/teams/team-context.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,12 +27,24 @@ const createTeamBodySchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
+const inviteBodySchema = z.object({
+  email: z.string().trim().email().max(254),
+  role: z.enum(["admin", "member"]),
+});
+
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 const randomSlugSuffix = (): string =>
   Math.random().toString(36).slice(2, 8);
 
 export interface TeamsMeRegistrationInput {
   db: Database;
   jwtSecret: string;
+  /** Resend config (optional — invites fall back to a copyable link). */
+  resendApiKey?: string;
+  resendFrom?: string;
+  /** Web app origin for the accept link (e.g. https://app.driff.dev). */
+  frontendUrl?: string;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -203,6 +222,283 @@ export const handler = async (
         createdAt: row.createdAt.toISOString(),
       })),
     });
+  });
+
+  const acceptUrl = (token: string): string =>
+    `${(input.frontendUrl ?? "").replace(/\/+$/, "")}/invite/${token}`;
+
+  const dispatchInviteEmail = (params: {
+    to: string;
+    teamName: string;
+    inviterName: string;
+    role: string;
+    token: string;
+  }) =>
+    sendInviteEmail({
+      apiKey: input.resendApiKey,
+      from: input.resendFrom,
+      to: params.to,
+      teamName: params.teamName,
+      inviterName: params.inviterName,
+      role: params.role,
+      acceptUrl: acceptUrl(params.token),
+    });
+
+  instance.post("/api/me/teams/:teamId/invites", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId } = request.params as { teamId: string };
+    const role = await requireMembership(reply, session.userId, teamId);
+    if (role === null) return reply;
+    if (!canManageMembers(role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const parsed = inviteBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const email = parsed.data.email.toLowerCase();
+
+    const teamRows = await input.db
+      .select({ name: teamsTable.name, maxMembers: teamsTable.maxMembers })
+      .from(teamsTable)
+      .where(eq(teamsTable.id, teamId))
+      .limit(1);
+    const team = teamRows[0];
+    if (team === undefined) {
+      return reply.status(404).send({ error: "team_not_found" });
+    }
+
+    const memberEmails = await input.db
+      .select({ email: usersTable.email })
+      .from(teamMembersTable)
+      .innerJoin(usersTable, eq(usersTable.id, teamMembersTable.userId))
+      .where(eq(teamMembersTable.teamId, teamId));
+    const pendingInvites = await input.db
+      .select({ email: teamInvitesTable.email })
+      .from(teamInvitesTable)
+      .where(
+        and(eq(teamInvitesTable.teamId, teamId), isNull(teamInvitesTable.acceptedAt)),
+      );
+
+    if (memberEmails.length + pendingInvites.length >= team.maxMembers) {
+      return reply.status(409).send({ error: "seat_limit_reached" });
+    }
+    if (memberEmails.some((row) => row.email.toLowerCase() === email)) {
+      return reply.status(409).send({ error: "already_member" });
+    }
+    if (pendingInvites.some((row) => row.email.toLowerCase() === email)) {
+      return reply.status(409).send({ error: "invite_exists" });
+    }
+
+    const inviteToken = randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+    const inserted = await input.db
+      .insert(teamInvitesTable)
+      .values({
+        teamId,
+        email,
+        role: parsed.data.role,
+        token: inviteToken,
+        invitedByUserId: session.userId,
+        expiresAt,
+      })
+      .returning({
+        id: teamInvitesTable.id,
+        email: teamInvitesTable.email,
+        role: teamInvitesTable.role,
+        expiresAt: teamInvitesTable.expiresAt,
+        createdAt: teamInvitesTable.createdAt,
+      });
+    const invite = inserted[0];
+    if (invite === undefined) {
+      return reply.status(500).send({ error: "insert_failed" });
+    }
+
+    const emailResult = await dispatchInviteEmail({
+      to: email,
+      teamName: team.name,
+      inviterName: session.email,
+      role: parsed.data.role,
+      token: inviteToken,
+    });
+
+    return reply.status(201).send({
+      invite: {
+        id: invite.id,
+        email: invite.email,
+        role: invite.role as TeamRole,
+        expiresAt: invite.expiresAt.toISOString(),
+        createdAt: invite.createdAt.toISOString(),
+      },
+      acceptUrl: acceptUrl(inviteToken),
+      emailSent: emailResult.sent,
+    });
+  });
+
+  instance.delete("/api/me/teams/:teamId/invites/:inviteId", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId, inviteId } = request.params as { teamId: string; inviteId: string };
+    const role = await requireMembership(reply, session.userId, teamId);
+    if (role === null) return reply;
+    if (!canManageMembers(role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    if (!uuidPattern.test(inviteId)) {
+      return reply.status(400).send({ error: "invalid_invite" });
+    }
+    await input.db
+      .delete(teamInvitesTable)
+      .where(
+        and(eq(teamInvitesTable.id, inviteId), eq(teamInvitesTable.teamId, teamId)),
+      );
+    return reply.status(204).send();
+  });
+
+  instance.post(
+    "/api/me/teams/:teamId/invites/:inviteId/resend",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+      const { teamId, inviteId } = request.params as { teamId: string; inviteId: string };
+      const role = await requireMembership(reply, session.userId, teamId);
+      if (role === null) return reply;
+      if (!canManageMembers(role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      if (!uuidPattern.test(inviteId)) {
+        return reply.status(400).send({ error: "invalid_invite" });
+      }
+      const rows = await input.db
+        .select({
+          email: teamInvitesTable.email,
+          role: teamInvitesTable.role,
+          tokenValue: teamInvitesTable.token,
+          teamName: teamsTable.name,
+        })
+        .from(teamInvitesTable)
+        .innerJoin(teamsTable, eq(teamsTable.id, teamInvitesTable.teamId))
+        .where(
+          and(
+            eq(teamInvitesTable.id, inviteId),
+            eq(teamInvitesTable.teamId, teamId),
+            isNull(teamInvitesTable.acceptedAt),
+          ),
+        )
+        .limit(1);
+      const invite = rows[0];
+      if (invite === undefined) {
+        return reply.status(404).send({ error: "invite_not_found" });
+      }
+      const emailResult = await dispatchInviteEmail({
+        to: invite.email,
+        teamName: invite.teamName,
+        inviterName: session.email,
+        role: invite.role,
+        token: invite.tokenValue,
+      });
+      return reply.send({
+        acceptUrl: acceptUrl(invite.tokenValue),
+        emailSent: emailResult.sent,
+      });
+    },
+  );
+
+  instance.get("/api/invites/:token", async (request, reply) => {
+    const { token: inviteToken } = request.params as { token: string };
+    const rows = await input.db
+      .select({
+        email: teamInvitesTable.email,
+        role: teamInvitesTable.role,
+        expiresAt: teamInvitesTable.expiresAt,
+        acceptedAt: teamInvitesTable.acceptedAt,
+        teamName: teamsTable.name,
+      })
+      .from(teamInvitesTable)
+      .innerJoin(teamsTable, eq(teamsTable.id, teamInvitesTable.teamId))
+      .where(eq(teamInvitesTable.token, inviteToken))
+      .limit(1);
+    const invite = rows[0];
+    if (invite === undefined) {
+      return reply.status(404).send({ error: "invite_not_found" });
+    }
+    const expired = invite.expiresAt.getTime() < Date.now();
+    return reply.send({
+      invite: {
+        teamName: invite.teamName,
+        role: invite.role as TeamRole,
+        email: invite.email,
+        expired,
+        accepted: invite.acceptedAt !== null,
+      },
+    });
+  });
+
+  instance.post("/api/invites/:token/accept", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { token: inviteToken } = request.params as { token: string };
+    const rows = await input.db
+      .select({
+        id: teamInvitesTable.id,
+        teamId: teamInvitesTable.teamId,
+        email: teamInvitesTable.email,
+        role: teamInvitesTable.role,
+        expiresAt: teamInvitesTable.expiresAt,
+        acceptedAt: teamInvitesTable.acceptedAt,
+      })
+      .from(teamInvitesTable)
+      .where(eq(teamInvitesTable.token, inviteToken))
+      .limit(1);
+    const invite = rows[0];
+    if (invite === undefined) {
+      return reply.status(404).send({ error: "invite_not_found" });
+    }
+    if (invite.acceptedAt !== null) {
+      return reply.status(409).send({ error: "invite_already_accepted" });
+    }
+    if (invite.expiresAt.getTime() < Date.now()) {
+      return reply.status(410).send({ error: "invite_expired" });
+    }
+    if (invite.email.toLowerCase() !== session.email.toLowerCase()) {
+      return reply.status(403).send({ error: "invite_email_mismatch" });
+    }
+
+    await input.db
+      .insert(teamMembersTable)
+      .values({ teamId: invite.teamId, userId: session.userId, role: invite.role })
+      .onConflictDoNothing();
+    await input.db
+      .update(teamInvitesTable)
+      .set({ acceptedAt: new Date() })
+      .where(eq(teamInvitesTable.id, invite.id));
+
+    return reply.send({ teamId: invite.teamId });
   });
 
   const isUniqueViolation = (err: unknown): boolean =>

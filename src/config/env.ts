@@ -85,6 +85,10 @@ const envFieldsSchema = z.object({
   AUTH_PUBLIC_URL: z.string().url().optional(),
   /** Vite / web app origin where users return after OAuth (e.g. http://localhost:5173). */
   FRONTEND_URL: z.string().url().optional(),
+  /** Resend API key for transactional email (team invites). Optional — without it, invites still work via copyable link. */
+  RESEND_API_KEY: z.string().min(1).optional(),
+  /** From address for invite emails, e.g. "Driff <invites@driff.dev>". */
+  RESEND_FROM: z.string().min(1).optional(),
   /**
    * Notion public OAuth integration (optional). When set (with AUTH_JWT_SECRET, AUTH_PUBLIC_URL,
    * FRONTEND_URL), the API exposes Notion destination connect endpoints.

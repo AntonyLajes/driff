@@ -214,7 +214,15 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       googleOAuth,
       workspacesMe,
       meStats: workspacesMe,
-      teamsMe: workspacesMe,
+      teamsMe:
+        workspacesMe !== undefined
+          ? {
+              ...workspacesMe,
+              resendApiKey: env.RESEND_API_KEY,
+              resendFrom: env.RESEND_FROM,
+              frontendUrl: env.FRONTEND_URL,
+            }
+          : undefined,
       githubMe,
       destinationsMe,
       health: { db },
