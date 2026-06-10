@@ -7,6 +7,17 @@ export type TeamRole = "owner" | "admin" | "member";
 
 export const teamRoles = ["owner", "admin", "member"] as const;
 
+/**
+ * Permission matrix (see docs/permissions). `member` is read-only; `admin`
+ * manages workspaces, integrations and member invites; `owner` additionally
+ * controls billing, admin promotion and the team itself.
+ */
+export const canWriteWorkspaces = (role: TeamRole): boolean => role !== "member";
+export const canManageMembers = (role: TeamRole): boolean => role !== "member";
+export const canManageAdmins = (role: TeamRole): boolean => role === "owner";
+export const canManageBilling = (role: TeamRole): boolean => role === "owner";
+export const canManageTeam = (role: TeamRole): boolean => role === "owner";
+
 export interface TeamContext {
   teamId: string;
   role: TeamRole;

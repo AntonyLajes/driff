@@ -24,7 +24,11 @@ import { loadUserGithubAccessToken } from "@/github/load-user-github-access-toke
 import { reviewTimeSavedMinutes } from "@/lib/review-time.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import { isImplementedProvider, sourceProviderSchema } from "@/sources/registry.js";
-import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import {
+  canWriteWorkspaces,
+  readTeamIdHeader,
+  resolveTeamContext,
+} from "@/teams/team-context.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
 
 export interface WorkspacesMeRegistrationInput {
@@ -1158,6 +1162,9 @@ export const handler = async (
     if (loaded.kind === "not_found") {
       return reply.status(404).send({ error: "workspace_not_found" });
     }
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
 
     const repoFull = loaded.workspace.repoFullName?.trim();
     if (repoFull === undefined || repoFull.length === 0) {
@@ -1379,6 +1386,9 @@ export const handler = async (
     }
     if (loaded.kind === "not_found") {
       return reply.status(404).send({ error: "workspace_not_found" });
+    }
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
     }
 
     const parsedBody = patchWorkspaceSettingsBodySchema.safeParse(request.body);
@@ -1664,6 +1674,9 @@ export const handler = async (
     if (team.kind === "not_a_member") {
       return reply.status(403).send({ error: "not_a_team_member" });
     }
+    if (!canWriteWorkspaces(team.context.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
 
     const now = new Date();
     // Derive a per-team-unique slug; retry with a numeric suffix on slug collision.
@@ -1748,6 +1761,9 @@ export const handler = async (
     if (team.kind === "not_a_member") {
       return reply.status(403).send({ error: "not_a_team_member" });
     }
+    if (!canWriteWorkspaces(team.context.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
 
     const now = new Date();
     const updated = await input.db
@@ -1799,6 +1815,9 @@ export const handler = async (
     }
     if (team.kind === "not_a_member") {
       return reply.status(403).send({ error: "not_a_team_member" });
+    }
+    if (!canWriteWorkspaces(team.context.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
     }
 
     // Verify team ownership and capture the linked repo before deleting anything.

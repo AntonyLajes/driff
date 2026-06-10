@@ -687,6 +687,151 @@ describe("http/routes/workspaces-me", () => {
   /** select().from().where().limit() — detail row lookup. */
   const detailSelect = lookupSelect;
 
+  /** A shared (non-personal) team the user belongs to with a given role. */
+  const SHARED_TEAM_ID = "00000000-0000-4000-8000-0000000000ee";
+  /** resolveTeamContext membership join: select().from().innerJoin().where().limit(). */
+  const membershipSelect = (role: string) => () => ({
+    from: vi.fn(() => ({
+      innerJoin: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: vi.fn(async () => [{ role, isPersonal: false }]) })),
+      })),
+    })),
+  });
+
+  it("blocks a member from creating a workspace in a shared team", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("member"));
+    const insert = vi.fn();
+    const db = { select, insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+      payload: { repoFullName: "acme/acme-app" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "insufficient_role" });
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("blocks a member from deleting a workspace in a shared team", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("member"));
+    const deleteFn = vi.fn();
+    const db = { select, delete: deleteFn } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: "/api/me/workspaces/00000000-0000-4000-8000-0000000000ae",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "insufficient_role" });
+    expect(deleteFn).not.toHaveBeenCalled();
+  });
+
+  it("blocks a member from patching workspace settings in a shared team", async () => {
+    const select = vi
+      .fn()
+      // resolveTeamContext membership → member
+      .mockImplementationOnce(membershipSelect("member"))
+      // workspace-by-slug lookup within the team
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const update = vi.fn();
+    const db = { select, update, insert: vi.fn() } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+      payload: { pushSummaryBranches: ["main"] },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "insufficient_role" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("lets a member read the summaries feed in a shared team", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("member"))
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(feedSelect([]))
+      .mockImplementationOnce(feedSelect([]))
+      .mockImplementationOnce(feedSelect([]))
+      .mockImplementationOnce(countSelect(0))
+      .mockImplementationOnce(countSelect(0))
+      .mockImplementationOnce(countSelect(0));
+    const db = { select } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().counts).toEqual({ all: 0, pr: 0, push: 0, version: 0 });
+  });
+
+  it("lets an admin create a workspace in a shared team", async () => {
+    const createdRow = {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      name: "acme-app",
+      slug: "acme-app",
+      sourceProvider: "github",
+      workspaceKind: null,
+      repoFullName: "acme/acme-app",
+      repoDefaultBranch: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const select = vi.fn().mockImplementationOnce(membershipSelect("admin"));
+    const returning = vi.fn(async () => [createdRow]);
+    const values = vi.fn(() => ({ returning }));
+    const insert = vi.fn(() => ({ values }));
+    const db = { select, insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+      payload: { repoFullName: "acme/acme-app" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: SHARED_TEAM_ID, slug: "acme-app" }),
+    );
+  });
+
   it("returns the unified summaries feed sorted desc with counts and diff stats", async () => {
     const prRow = {
       id: "00000000-0000-4000-8000-000000000b01",

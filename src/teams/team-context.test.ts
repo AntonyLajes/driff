@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import {
+  canManageAdmins,
+  canManageBilling,
+  canManageMembers,
+  canManageTeam,
+  canWriteWorkspaces,
+  readTeamIdHeader,
+  resolveTeamContext,
+} from "@/teams/team-context.js";
 
 const USER_ID = "00000000-0000-4000-8000-000000000099";
 const TEAM_ID = "00000000-0000-4000-8000-0000000000ee";
@@ -64,6 +72,16 @@ describe("teams/team-context", () => {
       context: { teamId: TEAM_ID, role: "admin", isPersonal: false },
     });
     expect(select).toHaveBeenCalledOnce();
+  });
+
+  it("encodes the role permission matrix", () => {
+    expect([canWriteWorkspaces("owner"), canWriteWorkspaces("admin")]).toEqual([true, true]);
+    expect(canWriteWorkspaces("member")).toBe(false);
+    expect([canManageMembers("owner"), canManageMembers("admin")]).toEqual([true, true]);
+    expect(canManageMembers("member")).toBe(false);
+    expect([canManageAdmins("owner"), canManageAdmins("admin")]).toEqual([true, false]);
+    expect([canManageBilling("owner"), canManageBilling("admin")]).toEqual([true, false]);
+    expect([canManageTeam("owner"), canManageTeam("member")]).toEqual([true, false]);
   });
 
   it("returns not_a_member when no membership row exists", async () => {

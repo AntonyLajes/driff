@@ -14,7 +14,12 @@ import { workspaceDestinationsTable, workspacesTable } from "@/db/schema.js";
 import { destinationTypeSchema } from "@/destinations/registry.js";
 import { listNotionDatabases, suggestNotionDatabaseRoles } from "@/notion/list-databases.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
-import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import {
+  canWriteWorkspaces,
+  readTeamIdHeader,
+  resolveTeamContext,
+  type TeamRole,
+} from "@/teams/team-context.js";
 
 const NOTION_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
@@ -65,7 +70,7 @@ const loadWorkspaceForUser = async (
   requestedTeamId: string | undefined,
   slugParam: string,
 ): Promise<
-  | { kind: "ok"; id: string; slug: string }
+  | { kind: "ok"; id: string; slug: string; role: TeamRole }
   | { kind: "invalid_slug" }
   | { kind: "not_found" }
   | { kind: "invalid_team" }
@@ -93,7 +98,7 @@ const loadWorkspaceForUser = async (
   if (row === undefined) {
     return { kind: "not_found" };
   }
-  return { kind: "ok", id: row.id, slug: row.slug };
+  return { kind: "ok", id: row.id, slug: row.slug, role: teamResult.context.role };
 };
 
 const exchangeNotionCode = async (input: {
@@ -200,6 +205,9 @@ export const handler = async (
       }
       if (ws.kind === "not_found") {
         return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(ws.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
       }
       const state = signDestinationOAuthState({
         userId: session.userId,
@@ -349,6 +357,9 @@ export const handler = async (
     if (ws.kind === "not_found") {
       return reply.status(404).send({ error: "workspace_not_found" });
     }
+    if (!canWriteWorkspaces(ws.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
     const body = patchDestinationBodySchema.safeParse(request.body);
     if (!body.success) {
       return reply.status(400).send({ error: "invalid_body" });
@@ -432,6 +443,9 @@ export const handler = async (
     }
     if (ws.kind === "not_found") {
       return reply.status(404).send({ error: "workspace_not_found" });
+    }
+    if (!canWriteWorkspaces(ws.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
     }
     await input.db
       .delete(workspaceDestinationsTable)

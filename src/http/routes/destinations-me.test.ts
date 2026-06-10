@@ -115,6 +115,38 @@ describe("http/routes/destinations-me", () => {
     expect(update).toHaveBeenCalledOnce();
   });
 
+  it("blocks a member from patching a destination in a shared team", async () => {
+    const membershipSelect = () => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [{ role: "member", isPersonal: false }]),
+          })),
+        })),
+      })),
+    });
+    const update = vi.fn();
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect)
+      .mockImplementationOnce(workspaceLookupSelect);
+    const server = await start({ select, update });
+
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/destinations/notion",
+      headers: {
+        authorization: `Bearer ${token()}`,
+        "x-team-id": "00000000-0000-4000-8000-0000000000ee",
+      },
+      payload: { config: { prDatabaseId: "pr-db" } },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: "insufficient_role" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("404s when patching a destination that is not connected", async () => {
     const select = vi
       .fn()
