@@ -507,6 +507,194 @@ describe("http/routes/teams-me", () => {
     });
   });
 
+  const targetMemberSelect = (role: string) => () => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({ limit: vi.fn(async () => [{ role }]) })),
+    })),
+  });
+
+  it("lets an owner change a member's role", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(targetMemberSelect("member"));
+    const updateWhere = vi.fn(async () => undefined);
+    const update = vi.fn(() => ({ set: vi.fn(() => ({ where: updateWhere })) }));
+    const db = { select, update } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b2`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { role: "admin" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ role: "admin" });
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("blocks an admin from changing roles", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("admin"));
+    const db = { select, update: vi.fn() } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b2`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { role: "admin" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "insufficient_role" });
+  });
+
+  it("lets an admin remove a member but not another admin", async () => {
+    const memberSelect = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("admin"))
+      .mockImplementationOnce(targetMemberSelect("member"));
+    const deleteWhere = vi.fn(async () => undefined);
+    const deleteFn = vi.fn(() => ({ where: deleteWhere }));
+
+    const server1 = fastify({ logger: false });
+    servers.push(server1);
+    await handler(server1, { db: { select: memberSelect, delete: deleteFn } as never, jwtSecret });
+    await server1.ready();
+    const ok = await server1.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b2`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(ok.statusCode).toBe(204);
+
+    const adminSelect = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("admin"))
+      .mockImplementationOnce(targetMemberSelect("admin"));
+    const server2 = fastify({ logger: false });
+    servers.push(server2);
+    await handler(server2, { db: { select: adminSelect, delete: vi.fn() } as never, jwtSecret });
+    await server2.ready();
+    const blocked = await server2.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b3`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(blocked.statusCode).toBe(403);
+  });
+
+  it("blocks the last owner from leaving", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(async () => [{ value: 1 }]) })),
+      }));
+    const db = { select, delete: vi.fn() } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/leave`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "last_owner" });
+  });
+
+  it("lets a member leave a team", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("member"));
+    const deleteWhere = vi.fn(async () => undefined);
+    const deleteFn = vi.fn(() => ({ where: deleteWhere }));
+    const db = { select, delete: deleteFn } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/leave`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(deleteFn).toHaveBeenCalledOnce();
+  });
+
+  it("lets an owner rename a team and blocks renaming the personal team", async () => {
+    const renameReturning = vi.fn(async () => [
+      { id: TEAM_ID, name: "Renamed", slug: "acme-mobile" },
+    ]);
+    const renameSelect = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+    const update = vi.fn(() => ({
+      set: vi.fn(() => ({ where: vi.fn(() => ({ returning: renameReturning })) })),
+    }));
+    const server1 = fastify({ logger: false });
+    servers.push(server1);
+    await handler(server1, { db: { select: renameSelect, update } as never, jwtSecret });
+    await server1.ready();
+    const ok = await server1.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { name: "Renamed" },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().team).toMatchObject({ name: "Renamed" });
+
+    // Personal team (id === userId) short-circuits to personal context.
+    const server2 = fastify({ logger: false });
+    servers.push(server2);
+    await handler(server2, { db: { select: vi.fn(), update: vi.fn() } as never, jwtSecret });
+    await server2.ready();
+    const blocked = await server2.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${userId}`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { name: "Nope" },
+    });
+    expect(blocked.statusCode).toBe(403);
+  });
+
+  it("lets an owner delete a team", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+    const deleteWhere = vi.fn(async () => undefined);
+    const deleteFn = vi.fn(() => ({ where: deleteWhere }));
+    const db = { select, delete: deleteFn } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(deleteFn).toHaveBeenCalledOnce();
+  });
+
   it("creates a team and adds the creator as owner", async () => {
     const createdTeam = {
       id: "00000000-0000-4000-8000-0000000000ee",

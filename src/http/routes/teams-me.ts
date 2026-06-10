@@ -15,8 +15,11 @@ import {
 import { sendInviteEmail } from "@/email/send-invite-email.js";
 import { slugifyWorkspaceName } from "@/lib/workspace-slug.js";
 import {
+  canManageAdmins,
   canManageMembers,
+  canManageTeam,
   resolveTeamContext,
+  type TeamContext,
   type TeamRole,
 } from "@/teams/team-context.js";
 
@@ -121,12 +124,12 @@ export const handler = async (
     return reply.send({ teams });
   });
 
-  /** Resolves membership for a path `:teamId`; 400/403/404 on failure. */
-  const requireMembership = async (
+  /** Resolves the team context for a path `:teamId`; 400/403 on failure. */
+  const requireContext = async (
     reply: FastifyReply,
     userId: string,
     teamId: string,
-  ): Promise<TeamRole | null> => {
+  ): Promise<TeamContext | null> => {
     if (!uuidPattern.test(teamId)) {
       void reply.status(400).send({ error: "invalid_team" });
       return null;
@@ -140,7 +143,17 @@ export const handler = async (
       void reply.status(403).send({ error: "not_a_team_member" });
       return null;
     }
-    return result.context.role;
+    return result.context;
+  };
+
+  /** Convenience for handlers that only need the role. */
+  const requireMembership = async (
+    reply: FastifyReply,
+    userId: string,
+    teamId: string,
+  ): Promise<TeamRole | null> => {
+    const ctx = await requireContext(reply, userId, teamId);
+    return ctx === null ? null : ctx.role;
   };
 
   instance.get("/api/me/teams/:teamId/members", async (request, reply) => {
@@ -499,6 +512,186 @@ export const handler = async (
       .where(eq(teamInvitesTable.id, invite.id));
 
     return reply.send({ teamId: invite.teamId });
+  });
+
+  const loadMembership = async (teamId: string, targetUserId: string) => {
+    const rows = await input.db
+      .select({ role: teamMembersTable.role })
+      .from(teamMembersTable)
+      .where(
+        and(
+          eq(teamMembersTable.teamId, teamId),
+          eq(teamMembersTable.userId, targetUserId),
+        ),
+      )
+      .limit(1);
+    return rows[0];
+  };
+
+  instance.patch("/api/me/teams/:teamId/members/:userId", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId, userId: targetId } = request.params as {
+      teamId: string;
+      userId: string;
+    };
+    const role = await requireMembership(reply, session.userId, teamId);
+    if (role === null) return reply;
+    // Promoting/demoting (the only roles touch admin) is owner-only.
+    if (!canManageAdmins(role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const parsed = z
+      .object({ role: z.enum(["admin", "member"]) })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const target = await loadMembership(teamId, targetId);
+    if (target === undefined) {
+      return reply.status(404).send({ error: "member_not_found" });
+    }
+    if (target.role === "owner") {
+      return reply.status(403).send({ error: "cannot_change_owner" });
+    }
+    await input.db
+      .update(teamMembersTable)
+      .set({ role: parsed.data.role })
+      .where(
+        and(eq(teamMembersTable.teamId, teamId), eq(teamMembersTable.userId, targetId)),
+      );
+    return reply.send({ userId: targetId, role: parsed.data.role });
+  });
+
+  instance.delete("/api/me/teams/:teamId/members/:userId", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId, userId: targetId } = request.params as {
+      teamId: string;
+      userId: string;
+    };
+    const role = await requireMembership(reply, session.userId, teamId);
+    if (role === null) return reply;
+    if (!canManageMembers(role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const target = await loadMembership(teamId, targetId);
+    if (target === undefined) {
+      return reply.status(404).send({ error: "member_not_found" });
+    }
+    if (target.role === "owner") {
+      return reply.status(403).send({ error: "cannot_remove_owner" });
+    }
+    // Admins manage members only; removing another admin is owner-only.
+    if (target.role === "admin" && !canManageAdmins(role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    await input.db
+      .delete(teamMembersTable)
+      .where(
+        and(eq(teamMembersTable.teamId, teamId), eq(teamMembersTable.userId, targetId)),
+      );
+    return reply.status(204).send();
+  });
+
+  instance.post("/api/me/teams/:teamId/leave", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId } = request.params as { teamId: string };
+    const ctx = await requireContext(reply, session.userId, teamId);
+    if (ctx === null) return reply;
+    if (ctx.isPersonal) {
+      return reply.status(400).send({ error: "cannot_leave_personal" });
+    }
+    if (ctx.role === "owner") {
+      const [owners] = await input.db
+        .select({ value: count() })
+        .from(teamMembersTable)
+        .where(
+          and(eq(teamMembersTable.teamId, teamId), eq(teamMembersTable.role, "owner")),
+        );
+      if ((owners?.value ?? 0) <= 1) {
+        return reply.status(409).send({ error: "last_owner" });
+      }
+    }
+    await input.db
+      .delete(teamMembersTable)
+      .where(
+        and(
+          eq(teamMembersTable.teamId, teamId),
+          eq(teamMembersTable.userId, session.userId),
+        ),
+      );
+    return reply.status(204).send();
+  });
+
+  instance.patch("/api/me/teams/:teamId", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId } = request.params as { teamId: string };
+    const ctx = await requireContext(reply, session.userId, teamId);
+    if (ctx === null) return reply;
+    if (ctx.isPersonal || !canManageTeam(ctx.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const parsed = createTeamBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const updated = await input.db
+      .update(teamsTable)
+      .set({ name: parsed.data.name.trim(), updatedAt: new Date() })
+      .where(eq(teamsTable.id, teamId))
+      .returning({ id: teamsTable.id, name: teamsTable.name, slug: teamsTable.slug });
+    const team = updated[0];
+    if (team === undefined) {
+      return reply.status(404).send({ error: "team_not_found" });
+    }
+    return reply.send({ team });
+  });
+
+  instance.delete("/api/me/teams/:teamId", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId } = request.params as { teamId: string };
+    const ctx = await requireContext(reply, session.userId, teamId);
+    if (ctx === null) return reply;
+    if (ctx.isPersonal || !canManageTeam(ctx.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    // Members, invites and workspaces cascade via FK on team delete.
+    await input.db.delete(teamsTable).where(eq(teamsTable.id, teamId));
+    return reply.status(204).send();
   });
 
   const isUniqueViolation = (err: unknown): boolean =>
