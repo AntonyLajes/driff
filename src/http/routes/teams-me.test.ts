@@ -786,4 +786,242 @@ describe("http/routes/teams-me", () => {
     expect(response.json()).toEqual({ teams: [] });
     expect(select).toHaveBeenCalledTimes(1);
   });
+
+  /* ---- Edge cases filling the permission/lifecycle matrix ---- */
+
+  const startTeams = async (db: unknown) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: db as never, jwtSecret });
+    await server.ready();
+    return server;
+  };
+  const authed = { authorization: `Bearer ${token()}` };
+
+  it("409s inviting an email that already has a pending invite", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(teamLimitSelect("Acme Mobile", 25))
+      .mockImplementationOnce(memberEmailsSelect(["someone@acme.io"]))
+      .mockImplementationOnce(pendingEmailsSelect(["dup@acme.io"]));
+    const server = await startTeams({ select, insert: vi.fn() });
+    const res = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: authed,
+      payload: { email: "dup@acme.io", role: "member" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: "invite_exists" });
+  });
+
+  it("400s inviting someone as owner", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+    const server = await startTeams({ select, insert: vi.fn() });
+    const res = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: authed,
+      payload: { email: "new@acme.io", role: "owner" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "invalid_body" });
+  });
+
+  it("revokes an invite", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("admin"));
+    const deleteWhere = vi.fn(async () => undefined);
+    const deleteFn = vi.fn(() => ({ where: deleteWhere }));
+    const server = await startTeams({ select, delete: deleteFn });
+    const res = await server.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}/invites/00000000-0000-4000-8000-0000000000c1`,
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(deleteFn).toHaveBeenCalledOnce();
+  });
+
+  it("blocks a member from revoking an invite", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("member"));
+    const deleteFn = vi.fn();
+    const server = await startTeams({ select, delete: deleteFn });
+    const res = await server.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}/invites/00000000-0000-4000-8000-0000000000c1`,
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(deleteFn).not.toHaveBeenCalled();
+  });
+
+  it("resends an invite email", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          innerJoin: vi.fn(() => ({
+            where: vi.fn(() => ({
+              limit: vi.fn(async () => [
+                {
+                  email: "new@acme.io",
+                  role: "member",
+                  tokenValue: "tok_resend",
+                  teamName: "Acme Mobile",
+                },
+              ]),
+            })),
+          })),
+        })),
+      }));
+    const server = await startTeams({ select });
+    const res = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites/00000000-0000-4000-8000-0000000000c1/resend`,
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ emailSent: true });
+    expect(sendInviteEmailMock).toHaveBeenCalledOnce();
+  });
+
+  it("404s resending a non-existent invite", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          innerJoin: vi.fn(() => ({
+            where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          })),
+        })),
+      }));
+    const server = await startTeams({ select });
+    const res = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites/00000000-0000-4000-8000-0000000000c1/resend`,
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "invite_not_found" });
+  });
+
+  it("409s accepting an already-accepted invite", async () => {
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [
+            {
+              id: "00000000-0000-4000-8000-0000000000c9",
+              teamId: TEAM_ID,
+              email: "user@example.com",
+              role: "member",
+              expiresAt: new Date(Date.now() + 86_400_000),
+              acceptedAt: new Date("2026-06-09T00:00:00.000Z"),
+            },
+          ]),
+        })),
+      })),
+    }));
+    const server = await startTeams({ select, insert: vi.fn() });
+    const res = await server.inject({
+      method: "POST",
+      url: "/api/invites/tok_abc/accept",
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: "invite_already_accepted" });
+  });
+
+  it("403s changing the owner's role", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(targetMemberSelect("owner"));
+    const server = await startTeams({ select, update: vi.fn() });
+    const res = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b9`,
+      headers: authed,
+      payload: { role: "member" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: "cannot_change_owner" });
+  });
+
+  it("404s changing the role of a non-member", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
+      }));
+    const server = await startTeams({ select, update: vi.fn() });
+    const res = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b9`,
+      headers: authed,
+      payload: { role: "admin" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "member_not_found" });
+  });
+
+  it("403s removing the owner", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(targetMemberSelect("owner"));
+    const server = await startTeams({ select, delete: vi.fn() });
+    const res = await server.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000b9`,
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: "cannot_remove_owner" });
+  });
+
+  it("400s leaving the personal team", async () => {
+    // teamId === userId resolves to the personal context without any query.
+    const select = vi.fn();
+    const server = await startTeams({ select, delete: vi.fn() });
+    const res = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${userId}/leave`,
+      headers: authed,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "cannot_leave_personal" });
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("403s renaming or deleting a team as an admin", async () => {
+    const renameServer = await startTeams({
+      select: vi.fn().mockImplementationOnce(membershipSelect("admin")),
+      update: vi.fn(),
+    });
+    const rename = await renameServer.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}`,
+      headers: authed,
+      payload: { name: "Nope" },
+    });
+    expect(rename.statusCode).toBe(403);
+
+    const deleteServer = await startTeams({
+      select: vi.fn().mockImplementationOnce(membershipSelect("admin")),
+      delete: vi.fn(),
+    });
+    const del = await deleteServer.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}`,
+      headers: authed,
+    });
+    expect(del.statusCode).toBe(403);
+  });
 });
