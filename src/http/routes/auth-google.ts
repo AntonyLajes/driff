@@ -4,7 +4,8 @@ import { randomBytes } from "node:crypto";
 import { signSessionJwt } from "@/auth/session-jwt.js";
 import type { Env } from "@/config/env.js";
 import type { Database } from "@/db/client.js";
-import { teamMembersTable, teamsTable, usersTable } from "@/db/schema.js";
+import { usersTable } from "@/db/schema.js";
+import { ensurePersonalTeam } from "@/teams/ensure-personal-team.js";
 
 const STATE_COOKIE = "driff_google_oauth_state";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
@@ -229,20 +230,12 @@ export const handler = async (
       }
 
       // Personal team: id EQUALS the user id (deterministic default context).
-      // Idempotent on re-login; the user is always its owner.
-      await input.db
-        .insert(teamsTable)
-        .values({
-          id: userId,
-          name: profile.name ?? profile.email.split("@")[0] ?? "Personal",
-          slug: `personal-${userId.replace(/-/g, "")}`,
-          isPersonal: true,
-        })
-        .onConflictDoNothing();
-      await input.db
-        .insert(teamMembersTable)
-        .values({ teamId: userId, userId, role: "owner" })
-        .onConflictDoNothing();
+      // Ensures a friendly URL slug and ownership; idempotent on re-login.
+      await ensurePersonalTeam(input.db, {
+        userId,
+        name: profile.name ?? null,
+        email: profile.email,
+      });
 
       const jwt = signSessionJwt({
         secret: input.jwtSecret,
