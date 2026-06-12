@@ -742,6 +742,59 @@ describe("http/routes/teams-me", () => {
     );
   });
 
+  it("retries with a suffixed slug when the base slug collides", async () => {
+    const createdRow = {
+      id: "00000000-0000-4000-8000-0000000000ef",
+      name: "Acme",
+      slug: "acme-a1b2c3",
+      isPersonal: false,
+      maxMembers: 25,
+      createdAt: new Date("2026-06-12T00:00:00.000Z"),
+    };
+    // How drizzle surfaces a postgres unique violation (code in the cause).
+    const wrapped = {
+      name: "DrizzleQueryError",
+      cause: { code: "23505", constraint_name: "teams_slug_unique" },
+    };
+    const slugs: string[] = [];
+    const teamInsert = (behavior: () => Promise<unknown>) => () => ({
+      values: vi.fn((row: { slug: string }) => {
+        slugs.push(row.slug);
+        return { returning: behavior };
+      }),
+    });
+    const insert = vi
+      .fn()
+      // attempt 1: base slug "acme" collides
+      .mockImplementationOnce(
+        teamInsert(async () => {
+          throw wrapped;
+        }),
+      )
+      // attempt 2: suffixed slug succeeds
+      .mockImplementationOnce(teamInsert(async () => [createdRow]))
+      // owner membership insert
+      .mockImplementationOnce(() => ({ values: vi.fn(async () => undefined) }));
+    const db = { insert } as never;
+
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/teams",
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { name: "Acme" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(slugs[0]).toBe("acme");
+    expect(slugs[1]).toMatch(/^acme-.+/);
+    expect(slugs[1]).not.toBe("acme");
+  });
+
   it("rejects creating a team with a blank name", async () => {
     const insert = vi.fn();
     const db = { insert } as never;

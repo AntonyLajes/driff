@@ -20,6 +20,7 @@ import {
   workspaceSettingsTable,
   workspacesTable,
 } from "@/db/schema.js";
+import { isUniqueViolation, uniqueViolationConstraint } from "@/db/pg-error.js";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { reviewTimeSavedMinutes } from "@/lib/review-time.js";
 import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspace-slug.js";
@@ -44,20 +45,7 @@ const readBearerToken = (authorization: string | undefined): string | null => {
   return token.length > 0 ? token : null;
 };
 
-const isUniqueViolation = (err: unknown): boolean =>
-  typeof err === "object" &&
-  err !== null &&
-  "code" in err &&
-  (err as { code?: string }).code === "23505";
-
-/** Name of the unique constraint/index that was violated, if any (postgres-js exposes both). */
-const uniqueViolationTarget = (err: unknown): string | null => {
-  if (!isUniqueViolation(err)) {
-    return null;
-  }
-  const e = err as { constraint_name?: string; constraint?: string };
-  return e.constraint_name ?? e.constraint ?? null;
-};
+const uniqueViolationTarget = uniqueViolationConstraint;
 
 const workspaceIdParamSchema = z.string().uuid();
 

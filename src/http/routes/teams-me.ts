@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
+import { isUniqueViolation } from "@/db/pg-error.js";
 import {
   teamInvitesTable,
   teamMembersTable,
@@ -693,12 +694,6 @@ export const handler = async (
     await input.db.delete(teamsTable).where(eq(teamsTable.id, teamId));
     return reply.status(204).send();
   });
-
-  const isUniqueViolation = (err: unknown): boolean =>
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "23505";
 
   instance.post("/api/me/teams", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
