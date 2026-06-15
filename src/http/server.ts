@@ -34,6 +34,10 @@ import {
   handler as registerWebhookRoute,
   type HandlerInput as WebhookHandlerInput,
 } from "@/http/routes/webhooks.js";
+import {
+  handler as registerWhitelistRoute,
+  type WhitelistRegistrationInput,
+} from "@/http/routes/whitelist.js";
 
 export interface ExecuteInput {
   logger?: FastifyServerOptions["logger"];
@@ -53,6 +57,8 @@ export interface ExecuteInput {
   destinationsMe?: DestinationsMeRegistrationInput;
   /** When set, registers `GET /health/queue` (job-queue liveness for external monitors). */
   health?: HealthRouteInput;
+  /** When set, registers the public `POST /api/whitelist` (landing-page beta signups). */
+  whitelist?: WhitelistRegistrationInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -85,6 +91,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.destinationsMe !== undefined) {
       await registerDestinationsMeRoute(instance, input.destinationsMe);
+    }
+    if (input.whitelist !== undefined) {
+      await registerWhitelistRoute(instance, input.whitelist);
     }
   });
   const webhookInput = input.webhook;

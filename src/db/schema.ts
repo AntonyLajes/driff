@@ -455,3 +455,29 @@ export const promptsTable = pgTable(
     ),
   }),
 );
+
+/**
+ * Beta closed-waitlist signups captured by the public landing page
+ * (`POST /api/whitelist`). One row per email (idempotent via the unique).
+ */
+export const whitelistSignupsTable = pgTable(
+  "whitelist_signups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    team: text("team").notNull(),
+    /** Self-reported dev-team size bucket (e.g. "1–5"). */
+    teamSize: text("team_size"),
+    /** Self-reported role (e.g. "Founder / CTO"). */
+    role: text("role"),
+    /** Optional GitHub org link the lead provided. */
+    githubOrg: text("github_org"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    emailUnique: unique("whitelist_signups_email_unique").on(table.email),
+  }),
+);
