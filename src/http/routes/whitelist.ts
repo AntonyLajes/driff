@@ -21,6 +21,7 @@ const whitelistBodySchema = z.object({
   teamSize: optionalText(40),
   role: optionalText(80),
   githubOrg: optionalText(200),
+  locale: optionalText(10),
 });
 
 export interface WhitelistRegistrationInput {
@@ -75,6 +76,7 @@ export const handler = async (
         from: input.resendFrom,
         to: data.email,
         name: data.name,
+        locale: data.locale ?? undefined,
       }).catch(() => undefined);
     }
 
