@@ -111,4 +111,18 @@ describe("http/routes/whitelist", () => {
       expect.objectContaining({ teamSize: null, role: null, githubOrg: null }),
     );
   });
+
+  it("silently drops honeypot submissions without storing or emailing", async () => {
+    const { server, deps } = await register([{ id: "row-3" }]);
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/whitelist",
+      payload: { ...validBody, website: "http://spam.example" },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({ ok: true, alreadyRegistered: false });
+    expect(deps.insert).not.toHaveBeenCalled();
+    expect(sendWhitelistEmailMock).not.toHaveBeenCalled();
+  });
 });

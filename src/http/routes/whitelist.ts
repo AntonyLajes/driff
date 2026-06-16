@@ -22,6 +22,8 @@ const whitelistBodySchema = z.object({
   role: optionalText(80),
   githubOrg: optionalText(200),
   locale: optionalText(10),
+  /** Honeypot: hidden field humans leave empty; bots fill it. */
+  website: optionalText(200),
 });
 
 export interface WhitelistRegistrationInput {
@@ -55,6 +57,12 @@ export const handler = async (
     }
 
     const data = parsed.data;
+
+    // Honeypot tripped → almost certainly a bot. Pretend success, store nothing.
+    if (data.website) {
+      return reply.status(201).send({ ok: true, alreadyRegistered: false });
+    }
+
     const inserted = await input.db
       .insert(whitelistSignupsTable)
       .values({
