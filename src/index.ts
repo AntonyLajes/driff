@@ -14,6 +14,7 @@ import { buildGoogleOAuthRegistrationInput } from "@/http/routes/auth-google.js"
 import { buildGithubMeRegistrationInput } from "@/http/routes/github-me.js";
 import { buildDestinationsMeRegistrationInput } from "@/http/routes/destinations-me.js";
 import { buildWhitelistRegistrationInput } from "@/http/routes/whitelist.js";
+import { buildEarlyAccessRegistrationInput } from "@/http/routes/early-access.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -227,6 +228,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       githubMe,
       destinationsMe,
       whitelist: buildWhitelistRegistrationInput(env, db),
+      earlyAccess: buildEarlyAccessRegistrationInput(db),
       health: { db },
     });
   const worker = await (async (): Promise<WorkerAdapter> => {

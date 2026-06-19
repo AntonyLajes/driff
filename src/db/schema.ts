@@ -481,3 +481,21 @@ export const whitelistSignupsTable = pgTable(
     emailUnique: unique("whitelist_signups_email_unique").on(table.email),
   }),
 );
+
+/** Public landing-page early-access capture: email only (a later early-access
+ *  action runs against these). Separate from whitelist_signups by design. */
+export const earlyAccessSignupsTable = pgTable(
+  "early_access_signups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: text("email").notNull(),
+    /** Landing language the lead used (e.g. "pt", "pt-BR"). */
+    locale: text("locale"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    emailUnique: unique("early_access_signups_email_unique").on(table.email),
+  }),
+);

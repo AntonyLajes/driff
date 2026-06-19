@@ -38,6 +38,10 @@ import {
   handler as registerWhitelistRoute,
   type WhitelistRegistrationInput,
 } from "@/http/routes/whitelist.js";
+import {
+  handler as registerEarlyAccessRoute,
+  type EarlyAccessRegistrationInput,
+} from "@/http/routes/early-access.js";
 
 export interface ExecuteInput {
   logger?: FastifyServerOptions["logger"];
@@ -59,6 +63,8 @@ export interface ExecuteInput {
   health?: HealthRouteInput;
   /** When set, registers the public `POST /api/whitelist` (landing-page beta signups). */
   whitelist?: WhitelistRegistrationInput;
+  /** When set, registers the public `POST /api/early-access` (landing-page email capture). */
+  earlyAccess?: EarlyAccessRegistrationInput;
 }
 
 export const execute = (input: ExecuteInput = {}): FastifyInstance => {
@@ -94,6 +100,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.whitelist !== undefined) {
       await registerWhitelistRoute(instance, input.whitelist);
+    }
+    if (input.earlyAccess !== undefined) {
+      await registerEarlyAccessRoute(instance, input.earlyAccess);
     }
   });
   const webhookInput = input.webhook;
