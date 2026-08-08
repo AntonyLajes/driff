@@ -20,7 +20,7 @@ export interface ReleaseProjectionInput {
   title: string;
   changelog: string;
   sections: ReleaseChangelogNotes["sections"];
-  promptVersion: number;
+  promptVersion: number | null;
   beforeSha: string;
   headSha: string;
   compareUrl: string;

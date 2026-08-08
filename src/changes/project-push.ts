@@ -21,7 +21,7 @@ export interface PushProjectionInput {
   pushedAt: Date;
   context: PushContext;
   summary: PushSummaryResult;
-  promptVersion: number;
+  promptVersion: number | null;
 }
 
 export interface PushProjector {

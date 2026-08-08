@@ -15,7 +15,7 @@ export interface PullRequestProjectionInput {
   sourceRecordId: string;
   pullRequest: PullRequestEvent;
   summary: PRSummary;
-  promptVersion: number;
+  promptVersion: number | null;
 }
 
 export interface PullRequestProjector {
