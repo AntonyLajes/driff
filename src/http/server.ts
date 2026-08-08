@@ -27,6 +27,10 @@ import {
   type TeamsMeRegistrationInput,
 } from "@/http/routes/teams-me.js";
 import {
+  handler as registerTimelineMeRoute,
+  type TimelineMeRegistrationInput,
+} from "@/http/routes/timeline-me.js";
+import {
   handler as registerWorkspacesMeRoute,
   type WorkspacesMeRegistrationInput,
 } from "@/http/routes/workspaces-me.js";
@@ -55,6 +59,8 @@ export interface ExecuteInput {
   meStats?: MeStatsRegistrationInput;
   /** When set, registers `/api/me/teams` (Bearer session JWT). */
   teamsMe?: TeamsMeRegistrationInput;
+  /** When set, registers the canonical workspace timeline (Bearer session JWT). */
+  timelineMe?: TimelineMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
   githubMe?: GithubMeRegistrationInput;
   /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
@@ -91,6 +97,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.teamsMe !== undefined) {
       await registerTeamsMeRoute(instance, input.teamsMe);
+    }
+    if (input.timelineMe !== undefined) {
+      await registerTimelineMeRoute(instance, input.timelineMe);
     }
     if (input.githubMe !== undefined) {
       await registerGithubMeRoute(instance, input.githubMe);

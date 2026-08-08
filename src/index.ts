@@ -244,6 +244,10 @@ const buildRuntimeDependencies = async (
     googleOAuth !== undefined
       ? { db, jwtSecret: googleOAuth.jwtSecret }
       : undefined;
+  const timelineMe =
+    googleOAuth !== undefined
+      ? { db, jwtSecret: googleOAuth.jwtSecret }
+      : undefined;
   const githubMeBase = buildGithubMeRegistrationInput(env);
   const githubMe =
     githubMeBase !== undefined ? { ...githubMeBase, db } : undefined;
@@ -259,6 +263,7 @@ const buildRuntimeDependencies = async (
       cors: input.cors ?? buildCorsFromEnv(env),
       googleOAuth,
       workspacesMe,
+      timelineMe,
       meStats: workspacesMe,
       teamsMe:
         workspacesMe !== undefined
