@@ -19,6 +19,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "lab:validate": "tsx src/lab/validate-scenario.ts",
+    "lab:replay": "tsx src/lab/replay-lab.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
