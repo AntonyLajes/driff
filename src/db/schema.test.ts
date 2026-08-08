@@ -1,5 +1,5 @@
 import { getTableColumns } from "drizzle-orm";
-import { getTableConfig } from "drizzle-orm/pg-core";
+import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -218,5 +218,18 @@ describe("db/schema tables", () => {
     expect(config.foreignKeys.length).toBe(1);
     expect(config.indexes.length).toBe(1);
     expect(config.checks.length).toBe(1);
+  });
+
+  it("should allow explicit pusher attribution for direct pushes", () => {
+    const config = getTableConfig(changeContributorsTable);
+    const roleCheck = config.checks.find(
+      (candidate) => candidate.name === "change_contributors_role_check",
+    );
+
+    expect(roleCheck).toBeDefined();
+    if (roleCheck === undefined) {
+      throw new Error("Expected contributor role check constraint.");
+    }
+    expect(new PgDialect().sqlToQuery(roleCheck.value).sql).toContain("'pusher'");
   });
 });
