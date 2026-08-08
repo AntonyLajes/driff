@@ -623,7 +623,7 @@ export const changeContributorsTable = pgTable(
     ),
     roleCheck: check(
       "change_contributors_role_check",
-      sql`${table.role} IN ('pr_author', 'commit_author', 'reviewer', 'coauthor')`,
+      sql`${table.role} IN ('pr_author', 'commit_author', 'pusher', 'reviewer', 'coauthor')`,
     ),
   }),
 );
