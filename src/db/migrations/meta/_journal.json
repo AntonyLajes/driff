@@ -134,6 +134,13 @@
       "when": 1786225235612,
       "tag": "0018_spooky_raider",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786226737524,
+      "tag": "0019_classy_the_enforcers",
+      "breakpoints": true
     }
   ]
 }

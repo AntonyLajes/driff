@@ -420,6 +420,9 @@ export const projectVersionsTable = pgTable(
     strategy: text("strategy").notNull(),
     sourceRef: text("source_ref").notNull(),
     sourceUrl: text("source_url"),
+    sourceReleaseId: uuid("source_release_id").references(() => releasesTable.id, {
+      onDelete: "set null",
+    }),
     beforeSha: text("before_sha"),
     headSha: text("head_sha"),
     releasedAt: timestamp("released_at", { withTimezone: true }),
@@ -433,6 +436,9 @@ export const projectVersionsTable = pgTable(
     workspaceReleasedAtIdx: index(
       "project_versions_workspace_released_at_idx",
     ).on(table.workspaceId, table.releasedAt),
+    sourceReleaseIdIdx: index("project_versions_source_release_id_idx").on(
+      table.sourceReleaseId,
+    ),
     statusCheck: check(
       "project_versions_status_check",
       sql`${table.status} IN ('released', 'in_development')`,
