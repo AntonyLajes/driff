@@ -151,6 +151,19 @@ describe("changes/project-release execute", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
+  it("should preserve a missing legacy prompt version", async () => {
+    const mocks = buildDbMock();
+
+    await execute({ db: mocks.db }).project({
+      ...projectionInput,
+      promptVersion: null,
+    });
+
+    expect(mocks.versionValues).toHaveBeenCalledWith(
+      expect.objectContaining({ promptVersion: null }),
+    );
+  });
+
   it("should fail without linking changes when the version upsert returns no id", async () => {
     const mocks = buildDbMock({ versionRows: [] });
 

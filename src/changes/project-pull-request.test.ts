@@ -182,6 +182,16 @@ describe("changes/project-pull-request execute", () => {
     expect(insert).not.toHaveBeenCalledWith(changeAreasTable);
   });
 
+  it("should preserve a missing legacy prompt version", async () => {
+    const { db, records } = buildDbMock();
+
+    await execute({ db }).project({ ...projectionInput, promptVersion: null });
+
+    expect(recordFor(records, changesTable).values).toEqual(
+      expect.objectContaining({ promptVersion: null }),
+    );
+  });
+
   it("should propagate transaction failures without partial success", async () => {
     const cause = new Error("database unavailable");
     const db = {
