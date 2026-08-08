@@ -31,18 +31,24 @@ const buildContext = (overrides: Partial<PushContext> = {}): PushContext => ({
   ...overrides,
 });
 
-const buildDbMock = (existingRows: Array<{ id: string }> = []) => {
+const buildDbMock = (
+  existingRows: Array<{ id: string }> = [],
+  returnedRows: Array<{ id: string }> = [
+    { id: "11111111-1111-4111-8111-111111111111" },
+  ],
+) => {
   const limit = vi.fn(async () => existingRows);
   const where = vi.fn(() => ({ limit }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
 
-  const onConflictDoNothing = vi.fn(async () => undefined);
-  const values = vi.fn(() => ({ onConflictDoNothing }));
+  const returning = vi.fn(async () => returnedRows);
+  const onConflictDoUpdate = vi.fn(() => ({ returning }));
+  const values = vi.fn(() => ({ onConflictDoUpdate }));
   const insert = vi.fn(() => ({ values }));
 
   const db = { select, insert } as unknown as Database;
-  return { db, select, insert, values, onConflictDoNothing };
+  return { db, select, insert, values, onConflictDoUpdate, returning };
 };
 
 const buildDeps = (dbMock: ReturnType<typeof buildDbMock>) => {
@@ -55,15 +61,21 @@ const buildDeps = (dbMock: ReturnType<typeof buildDbMock>) => {
     usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
   }));
   const publishPush = vi.fn(async () => ({ pageId: "notion-push-1" }));
+  const project = vi.fn(async () => undefined);
   return {
     db: dbMock.db,
     appId: "app",
     privateKey: "key",
     pushSummarizer: { summarizePush, prompt: "p" },
     destination: { publishPR: vi.fn(), publishRelease: vi.fn(), publishPush },
+    canonicalProjection: {
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      projector: { project },
+    },
     promptVersion: 1,
     summarizePush,
     publishPush,
+    project,
   };
 };
 
@@ -112,7 +124,19 @@ describe("jobs/process-push execute", () => {
         changedFiles: 9,
       }),
     );
-    expect(dbMock.onConflictDoNothing).toHaveBeenCalledOnce();
+    expect(dbMock.onConflictDoUpdate).toHaveBeenCalledOnce();
+    expect(deps.project).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        sourceRecordId: "11111111-1111-4111-8111-111111111111",
+        repo: "acme/app",
+        branch: "main",
+        pusher: "octocat",
+        context: expect.objectContaining({ totalCommits: 1 }),
+        summary: expect.objectContaining({ title: "Hotfix login crash" }),
+        promptVersion: 1,
+      }),
+    );
   });
 
   it("is idempotent: skips when a push row already exists for repo+afterSha", async () => {
@@ -125,6 +149,7 @@ describe("jobs/process-push execute", () => {
     expect(mockedGather).not.toHaveBeenCalled();
     expect(deps.publishPush).not.toHaveBeenCalled();
     expect(dbMock.insert).not.toHaveBeenCalled();
+    expect(deps.project).not.toHaveBeenCalled();
   });
 
   it("skips publishing when the push overlaps a PR merge / release", async () => {
@@ -142,6 +167,7 @@ describe("jobs/process-push execute", () => {
     expect(deps.summarizePush).not.toHaveBeenCalled();
     expect(deps.publishPush).not.toHaveBeenCalled();
     expect(dbMock.insert).not.toHaveBeenCalled();
+    expect(deps.project).not.toHaveBeenCalled();
   });
 
   it("skips when the compare range has no commits", async () => {
@@ -154,6 +180,19 @@ describe("jobs/process-push execute", () => {
 
     expect(deps.publishPush).not.toHaveBeenCalled();
     expect(dbMock.insert).not.toHaveBeenCalled();
+    expect(deps.project).not.toHaveBeenCalled();
+  });
+
+  it("fails before projection when the legacy upsert returns no source id", async () => {
+    mockedGather.mockResolvedValue(buildContext());
+    const dbMock = buildDbMock([], []);
+    const deps = buildDeps(dbMock);
+    const handler = execute(deps);
+
+    await expect(handler.execute(payload)).rejects.toThrow(
+      "Push upsert did not return a source record id.",
+    );
+    expect(deps.project).not.toHaveBeenCalled();
   });
 
   it("throws when the payload is invalid", async () => {
