@@ -183,7 +183,10 @@ describe("db/schema tables", () => {
     expect(columns.metadata).toBeDefined();
     expect(config.foreignKeys.length).toBe(1);
     expect(config.uniqueConstraints.length).toBe(1);
-    expect(config.indexes.length).toBe(1);
+    expect(config.indexes.length).toBe(2);
+    expect(config.indexes.map((candidate) => candidate.config.name)).toContain(
+      "change_evidence_source_record_idx",
+    );
     expect(config.checks.length).toBe(1);
   });
 
