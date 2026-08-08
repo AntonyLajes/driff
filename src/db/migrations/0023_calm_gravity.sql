@@ -1,0 +1,3 @@
+DROP INDEX "project_versions_workspace_released_at_idx";--> statement-breakpoint
+CREATE INDEX "changes_workspace_unversioned_timeline_idx" ON "changes" USING btree ("workspace_id","last_occurred_at","id") WHERE "changes"."version_id" IS NULL;--> statement-breakpoint
+CREATE INDEX "project_versions_workspace_timeline_idx" ON "project_versions" USING btree ("workspace_id","status","released_at","id");

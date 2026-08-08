@@ -439,9 +439,12 @@ export const projectVersionsTable = pgTable(
     workspaceSourceUnique: unique(
       "project_versions_workspace_strategy_source_unique",
     ).on(table.workspaceId, table.strategy, table.sourceRef),
-    workspaceReleasedAtIdx: index(
-      "project_versions_workspace_released_at_idx",
-    ).on(table.workspaceId, table.releasedAt),
+    workspaceTimelineIdx: index("project_versions_workspace_timeline_idx").on(
+      table.workspaceId,
+      table.status,
+      table.releasedAt,
+      table.id,
+    ),
     sourceReleaseIdIdx: index("project_versions_source_release_id_idx").on(
       table.sourceReleaseId,
     ),
@@ -495,6 +498,11 @@ export const changesTable = pgTable(
     workspaceLastOccurredAtIdx: index(
       "changes_workspace_last_occurred_at_idx",
     ).on(table.workspaceId, table.lastOccurredAt),
+    workspaceUnversionedTimelineIdx: index(
+      "changes_workspace_unversioned_timeline_idx",
+    )
+      .on(table.workspaceId, table.lastOccurredAt, table.id)
+      .where(sql`${table.versionId} IS NULL`),
     versionIdIdx: index("changes_version_id_idx").on(table.versionId),
     categoryCheck: check(
       "changes_category_check",
