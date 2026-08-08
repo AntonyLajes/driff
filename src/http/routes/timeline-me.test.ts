@@ -1,0 +1,172 @@
+import fastify from "fastify";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { signSessionJwt } from "@/auth/session-jwt.js";
+import { handler } from "@/http/routes/timeline-me.js";
+
+const JWT_SECRET = "t".repeat(32);
+const USER_ID = "00000000-0000-4000-8000-000000000099";
+const WORKSPACE_ID = "00000000-0000-4000-8000-0000000000aa";
+const VERSION_ID = "00000000-0000-4000-8000-0000000000bb";
+
+const token = () =>
+  signSessionJwt({
+    secret: JWT_SECRET,
+    userId: USER_ID,
+    email: "user@example.com",
+    expiresInSeconds: 3600,
+  });
+
+const buildWorkspaceDb = (rows: unknown[]) => {
+  const limit = vi.fn(async () => rows);
+  const where = vi.fn(() => ({ limit }));
+  const from = vi.fn(() => ({ where }));
+  const select = vi.fn(() => ({ from }));
+  return { db: { select } as never, select };
+};
+
+describe("http/routes/timeline-me", () => {
+  const servers: Array<ReturnType<typeof fastify>> = [];
+
+  afterEach(async () => {
+    await Promise.all(servers.map((server) => server.close()));
+    servers.length = 0;
+  });
+
+  it("should reject requests without a bearer session", async () => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret: JWT_SECRET });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/timeline",
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: "missing_or_invalid_authorization",
+    });
+  });
+
+  it("should return a workspace-scoped timeline and accept its opaque cursor", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+    ]);
+    const releasedAt = new Date("2026-08-08T12:00:00.000Z");
+    const timelineReader = vi
+      .fn()
+      .mockResolvedValueOnce({
+        versions: [],
+        inDevelopment: { changes: [], hasMore: false },
+        pageInfo: {
+          hasNextPage: true,
+          nextCursor: { releasedAt, id: VERSION_ID },
+        },
+      })
+      .mockResolvedValueOnce({
+        versions: [],
+        inDevelopment: null,
+        pageInfo: { hasNextPage: false, nextCursor: null },
+      });
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const first = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/timeline?limit=5",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(first.statusCode).toBe(200);
+    const firstBody = first.json();
+    expect(firstBody.workspace).toEqual({
+      id: WORKSPACE_ID,
+      name: "ride-pack",
+      slug: "ride-pack",
+    });
+    expect(firstBody.pageInfo).toEqual({
+      hasNextPage: true,
+      nextCursor: expect.any(String),
+    });
+    expect(timelineReader).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        limit: 5,
+        cursor: null,
+      }),
+    );
+
+    const second = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/timeline?cursor=${encodeURIComponent(firstBody.pageInfo.nextCursor)}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json().inDevelopment).toBeNull();
+    expect(timelineReader).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        limit: 10,
+        cursor: { releasedAt, id: VERSION_ID },
+      }),
+    );
+  });
+
+  it("should reject malformed cursors before querying the workspace", async () => {
+    const workspaceDb = buildWorkspaceDb([]);
+    const timelineReader = vi.fn();
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/timeline?cursor=not-a-cursor",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_timeline_cursor" });
+    expect(workspaceDb.select).not.toHaveBeenCalled();
+    expect(timelineReader).not.toHaveBeenCalled();
+  });
+
+  it("should return 404 when the workspace does not belong to the acting team", async () => {
+    const workspaceDb = buildWorkspaceDb([]);
+    const timelineReader = vi.fn();
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/another-project/timeline",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "workspace_not_found" });
+    expect(timelineReader).not.toHaveBeenCalled();
+  });
+});
