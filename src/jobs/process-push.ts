@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 
+import type { PushProjector } from "@/changes/project-push.js";
 import type { Database } from "@/db/client.js";
 import { pushesTable } from "@/db/schema.js";
 import type { Destination } from "@/destinations/destination.js";
@@ -23,26 +24,42 @@ export interface ExecuteInput {
   privateKey: string;
   pushSummarizer: PushSummarizer;
   destination: Destination;
+  canonicalProjection?: {
+    projector: PushProjector;
+    workspaceId: string;
+  };
   promptVersion: number;
 }
 
-const parsePayload = (payload: Record<string, unknown>): ProcessPushJobPayload => {
+const parsePayload = (
+  payload: Record<string, unknown>,
+): ProcessPushJobPayload => {
   const { repo, beforeSha, afterSha, branch, pusher, pushedAt } = payload;
   if (typeof repo !== "string" || repo.length === 0) {
-    throw new Error("Invalid process_push payload: repo must be a non-empty string.");
+    throw new Error(
+      "Invalid process_push payload: repo must be a non-empty string.",
+    );
   }
   if (typeof beforeSha !== "string" || beforeSha.length === 0) {
-    throw new Error("Invalid process_push payload: beforeSha must be a non-empty string.");
+    throw new Error(
+      "Invalid process_push payload: beforeSha must be a non-empty string.",
+    );
   }
   if (typeof afterSha !== "string" || afterSha.length === 0) {
-    throw new Error("Invalid process_push payload: afterSha must be a non-empty string.");
+    throw new Error(
+      "Invalid process_push payload: afterSha must be a non-empty string.",
+    );
   }
   if (typeof branch !== "string" || branch.length === 0) {
-    throw new Error("Invalid process_push payload: branch must be a non-empty string.");
+    throw new Error(
+      "Invalid process_push payload: branch must be a non-empty string.",
+    );
   }
 
   const pusherValue =
-    typeof pusher === "string" && pusher.trim().length > 0 ? pusher.trim() : null;
+    typeof pusher === "string" && pusher.trim().length > 0
+      ? pusher.trim()
+      : null;
   let pushedAtValue = new Date();
   if (typeof pushedAt === "string" && pushedAt.length > 0) {
     const parsed = new Date(pushedAt);
@@ -69,7 +86,12 @@ export const execute = (input: ExecuteInput) => {
       const existing = await input.db
         .select({ id: pushesTable.id })
         .from(pushesTable)
-        .where(and(eq(pushesTable.repo, job.repo), eq(pushesTable.afterSha, job.afterSha)))
+        .where(
+          and(
+            eq(pushesTable.repo, job.repo),
+            eq(pushesTable.afterSha, job.afterSha),
+          ),
+        )
         .limit(1);
       if (existing.length > 0) {
         return;
@@ -126,33 +148,57 @@ export const execute = (input: ExecuteInput) => {
         compareUrl: context.compareUrl,
       });
 
-      await input.db
+      const pushValues = {
+        repo: job.repo,
+        branch: job.branch,
+        beforeSha: job.beforeSha,
+        afterSha: job.afterSha,
+        pusher: job.pusher,
+        pushedAt: job.pushedAt,
+        commitCount: context.totalCommits,
+        additions: context.additions,
+        deletions: context.deletions,
+        changedFiles: context.changedFiles,
+        prNumbers: context.prNumbers,
+        title: summary.title,
+        summaryUserFacing: summary.summaryUserFacing,
+        summaryTechnical: summary.summaryTechnical,
+        category: summary.category,
+        area: summary.area,
+        compareUrl: context.compareUrl,
+        notionPageId: publish.pageId,
+        promptVersion: input.promptVersion,
+        updatedAt: new Date(),
+      };
+      const pushRows = await input.db
         .insert(pushesTable)
-        .values({
+        .values(pushValues)
+        .onConflictDoUpdate({
+          target: [pushesTable.repo, pushesTable.afterSha],
+          set: pushValues,
+        })
+        .returning({ id: pushesTable.id });
+
+      const pushRow = pushRows[0];
+      if (pushRow === undefined) {
+        throw new Error("Push upsert did not return a source record id.");
+      }
+
+      if (input.canonicalProjection !== undefined) {
+        await input.canonicalProjection.projector.project({
+          workspaceId: input.canonicalProjection.workspaceId,
+          sourceRecordId: pushRow.id,
           repo: job.repo,
           branch: job.branch,
           beforeSha: job.beforeSha,
           afterSha: job.afterSha,
           pusher: job.pusher,
           pushedAt: job.pushedAt,
-          commitCount: context.totalCommits,
-        additions: context.additions,
-        deletions: context.deletions,
-        changedFiles: context.changedFiles,
-          prNumbers: context.prNumbers,
-          title: summary.title,
-          summaryUserFacing: summary.summaryUserFacing,
-          summaryTechnical: summary.summaryTechnical,
-          category: summary.category,
-          area: summary.area,
-          compareUrl: context.compareUrl,
-          notionPageId: publish.pageId,
+          context,
+          summary,
           promptVersion: input.promptVersion,
-          updatedAt: new Date(),
-        })
-        .onConflictDoNothing({
-          target: [pushesTable.repo, pushesTable.afterSha],
         });
+      }
 
       await recordLlmUsage({
         db: input.db,

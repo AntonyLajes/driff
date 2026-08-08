@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { execute as createPullRequestProjector } from "@/changes/project-pull-request.js";
+import { execute as createPushProjector } from "@/changes/project-push.js";
 import { execute as createReleaseProjector } from "@/changes/project-release.js";
 import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
@@ -23,9 +24,18 @@ import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks
 import { execute as createProcessPrJob } from "@/jobs/process-pr.js";
 import { execute as createProcessReleaseJob } from "@/jobs/process-release.js";
 import { execute as createProcessPushJob } from "@/jobs/process-push.js";
-import { execute as createReleaseSummarizer, type ReleaseSummarizer } from "@/llm/release-summarizer.js";
-import { execute as createPushSummarizer, type PushSummarizer } from "@/llm/push-summarizer.js";
-import { execute as createSummarizer, type Summarizer } from "@/llm/summarizer.js";
+import {
+  execute as createReleaseSummarizer,
+  type ReleaseSummarizer,
+} from "@/llm/release-summarizer.js";
+import {
+  execute as createPushSummarizer,
+  type PushSummarizer,
+} from "@/llm/push-summarizer.js";
+import {
+  execute as createSummarizer,
+  type Summarizer,
+} from "@/llm/summarizer.js";
 import { execute as createQueue, type QueueAdapter } from "@/queue/queue.js";
 import { execute as createWorker, type WorkerAdapter } from "@/queue/worker.js";
 import { execute as createGithubSource } from "@/sources/github/github-source.js";
@@ -83,7 +93,10 @@ const buildReleaseConfig = (
 ): import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null => {
   // Release notes run when a version source + branch are configured (input config),
   // regardless of which output destination publishes them.
-  if (!hasReleaseVersionSource(workspace) || !workspace.releaseVersionBranch?.trim()) {
+  if (
+    !hasReleaseVersionSource(workspace) ||
+    !workspace.releaseVersionBranch?.trim()
+  ) {
     return null;
   }
   return {
@@ -127,12 +140,18 @@ const buildWebhookInput = (
   env: Env,
   webhookSecret: string,
   prSummaryBaseBranches: string[] | null,
-  releaseConfig: import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null,
+  releaseConfig:
+    | import("@/http/routes/webhook-release.js").ReleaseWebhookConfig
+    | null,
   db: Database,
 ): WebhookHandlerInput => {
   const resolveWebhookSettings = async (repoFullName: string) => {
     // GitHub is the only provider with a webhook ingress today.
-    const merged = await resolveWorkspaceSettingsForRepo(db, "github", repoFullName);
+    const merged = await resolveWorkspaceSettingsForRepo(
+      db,
+      "github",
+      repoFullName,
+    );
     if (merged === null) {
       return null;
     }
@@ -146,10 +165,18 @@ const buildWebhookInput = (
   if (input.webhook) {
     return {
       ...input.webhook,
-      resolveWebhookSettings: input.webhook.resolveWebhookSettings ?? resolveWebhookSettings,
-      prSummaryBaseBranches: input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
-      releaseConfig: input.webhook.releaseConfig !== undefined ? input.webhook.releaseConfig : releaseConfig,
-      pushConfig: input.webhook.pushConfig !== undefined ? input.webhook.pushConfig : null,
+      resolveWebhookSettings:
+        input.webhook.resolveWebhookSettings ?? resolveWebhookSettings,
+      prSummaryBaseBranches:
+        input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
+      releaseConfig:
+        input.webhook.releaseConfig !== undefined
+          ? input.webhook.releaseConfig
+          : releaseConfig,
+      pushConfig:
+        input.webhook.pushConfig !== undefined
+          ? input.webhook.pushConfig
+          : null,
     };
   }
 
@@ -163,10 +190,15 @@ const buildWebhookInput = (
   };
 };
 
-const readRepoFromJobPayload = (payload: Record<string, unknown>, jobType: string): string => {
+const readRepoFromJobPayload = (
+  payload: Record<string, unknown>,
+  jobType: string,
+): string => {
   const repoRaw = payload.repo;
   if (typeof repoRaw !== "string" || repoRaw.trim().length === 0) {
-    throw new Error(`Invalid ${jobType} payload: repo must be a non-empty string.`);
+    throw new Error(
+      `Invalid ${jobType} payload: repo must be a non-empty string.`,
+    );
   }
   return repoRaw.trim();
 };
@@ -176,7 +208,11 @@ const createDestinationForWorkspace = async (
   jwtSecret: string,
   workspace: MergedWorkspaceSettings,
 ): Promise<Destination> => {
-  const destination = await loadWorkspaceDestination(db, workspace.workspaceId, jwtSecret);
+  const destination = await loadWorkspaceDestination(
+    db,
+    workspace.workspaceId,
+    jwtSecret,
+  );
   if (destination === null) {
     throw new Error(
       `No enabled output destination configured for workspace "${workspace.workspaceId}".`,
@@ -185,7 +221,9 @@ const createDestinationForWorkspace = async (
   return destination;
 };
 
-const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDependencies> => {
+const buildRuntimeDependencies = async (
+  input: ExecuteInput,
+): Promise<RuntimeDependencies> => {
   const env = loadEnv();
   const dbBundle =
     input.db && input.dbClient
@@ -203,13 +241,17 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   );
   const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
   const workspacesMe =
-    googleOAuth !== undefined ? { db, jwtSecret: googleOAuth.jwtSecret } : undefined;
+    googleOAuth !== undefined
+      ? { db, jwtSecret: googleOAuth.jwtSecret }
+      : undefined;
   const githubMeBase = buildGithubMeRegistrationInput(env);
   const githubMe =
     githubMeBase !== undefined ? { ...githubMeBase, db } : undefined;
   const destinationsMeBase = buildDestinationsMeRegistrationInput(env);
   const destinationsMe =
-    destinationsMeBase !== undefined ? { ...destinationsMeBase, db } : undefined;
+    destinationsMeBase !== undefined
+      ? { ...destinationsMeBase, db }
+      : undefined;
   const server =
     input.server ??
     createServer({
@@ -245,7 +287,9 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
         appId: env.GITHUB_APP_ID,
         privateKey: env.GITHUB_APP_PRIVATE_KEY,
       });
-    const summarizer = input.summarizer ?? (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
+    const summarizer =
+      input.summarizer ??
+      (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
     const releaseSummarizer =
       input.releaseSummarizer ??
       (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
@@ -253,88 +297,106 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       input.pushSummarizer ??
       (await createPushSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
 
-    const resolveWorkspaceOrThrow = async (repo: string): Promise<MergedWorkspaceSettings> => {
+    const resolveWorkspaceOrThrow = async (
+      repo: string,
+    ): Promise<MergedWorkspaceSettings> => {
       // GitHub is the only provider with a job pipeline today.
-      const workspace = await resolveWorkspaceSettingsForRepo(db, "github", repo);
+      const workspace = await resolveWorkspaceSettingsForRepo(
+        db,
+        "github",
+        repo,
+      );
       if (workspace === null) {
-        throw new Error(`Workspace settings not configured for repository "${repo}".`);
+        throw new Error(
+          `Workspace settings not configured for repository "${repo}".`,
+        );
       }
       return workspace;
     };
 
-    const processPrHandler =
-      input.processPrHandler ??
-      {
-        execute: async (payload: Record<string, unknown>) => {
-          const repo = readRepoFromJobPayload(payload, "process_pr");
-          const workspace = await resolveWorkspaceOrThrow(repo);
-          const destination =
-            input.destination ??
-            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
-          const handler = createProcessPrJob({
+    const processPrHandler = input.processPrHandler ?? {
+      execute: async (payload: Record<string, unknown>) => {
+        const repo = readRepoFromJobPayload(payload, "process_pr");
+        const workspace = await resolveWorkspaceOrThrow(repo);
+        const destination =
+          input.destination ??
+          (await createDestinationForWorkspace(
             db,
-            source,
-            summarizer,
-            destination,
-            canonicalProjection: {
-              projector: createPullRequestProjector({ db }),
-              workspaceId: workspace.workspaceId,
-            },
-            promptVersion: input.promptVersion ?? 1,
-          });
-          await handler.execute(payload);
-        },
-      };
+            env.AUTH_JWT_SECRET ?? "",
+            workspace,
+          ));
+        const handler = createProcessPrJob({
+          db,
+          source,
+          summarizer,
+          destination,
+          canonicalProjection: {
+            projector: createPullRequestProjector({ db }),
+            workspaceId: workspace.workspaceId,
+          },
+          promptVersion: input.promptVersion ?? 1,
+        });
+        await handler.execute(payload);
+      },
+    };
 
-    const processReleaseHandler =
-      input.processReleaseHandler ??
-      {
-        execute: async (payload: Record<string, unknown>) => {
-          const repo = readRepoFromJobPayload(payload, "process_release");
-          const workspace = await resolveWorkspaceOrThrow(repo);
-          const destination =
-            input.destination ??
-            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
-          const handler = createProcessReleaseJob({
+    const processReleaseHandler = input.processReleaseHandler ?? {
+      execute: async (payload: Record<string, unknown>) => {
+        const repo = readRepoFromJobPayload(payload, "process_release");
+        const workspace = await resolveWorkspaceOrThrow(repo);
+        const destination =
+          input.destination ??
+          (await createDestinationForWorkspace(
             db,
-            appId: env.GITHUB_APP_ID,
-            privateKey: env.GITHUB_APP_PRIVATE_KEY,
-            infoPlistPath: workspace.releaseInfoPlistPath ?? "",
-            projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
-            expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
-            releaseCompareRootSha: workspace.releaseCompareRootSha,
-            releaseSummarizer,
-            destination,
-            canonicalProjection: {
-              projector: createReleaseProjector({ db }),
-              workspaceId: workspace.workspaceId,
-            },
-            promptVersion: input.releasePromptVersion ?? 1,
-          });
-          await handler.execute(payload);
-        },
-      };
+            env.AUTH_JWT_SECRET ?? "",
+            workspace,
+          ));
+        const handler = createProcessReleaseJob({
+          db,
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+          infoPlistPath: workspace.releaseInfoPlistPath ?? "",
+          projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
+          expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
+          releaseCompareRootSha: workspace.releaseCompareRootSha,
+          releaseSummarizer,
+          destination,
+          canonicalProjection: {
+            projector: createReleaseProjector({ db }),
+            workspaceId: workspace.workspaceId,
+          },
+          promptVersion: input.releasePromptVersion ?? 1,
+        });
+        await handler.execute(payload);
+      },
+    };
 
-    const processPushHandler =
-      input.processPushHandler ??
-      {
-        execute: async (payload: Record<string, unknown>) => {
-          const repo = readRepoFromJobPayload(payload, "process_push");
-          const workspace = await resolveWorkspaceOrThrow(repo);
-          const destination =
-            input.destination ??
-            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
-          const handler = createProcessPushJob({
+    const processPushHandler = input.processPushHandler ?? {
+      execute: async (payload: Record<string, unknown>) => {
+        const repo = readRepoFromJobPayload(payload, "process_push");
+        const workspace = await resolveWorkspaceOrThrow(repo);
+        const destination =
+          input.destination ??
+          (await createDestinationForWorkspace(
             db,
-            appId: env.GITHUB_APP_ID,
-            privateKey: env.GITHUB_APP_PRIVATE_KEY,
-            pushSummarizer,
-            destination,
-            promptVersion: input.pushPromptVersion ?? 1,
-          });
-          await handler.execute(payload);
-        },
-      };
+            env.AUTH_JWT_SECRET ?? "",
+            workspace,
+          ));
+        const handler = createProcessPushJob({
+          db,
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+          pushSummarizer,
+          destination,
+          canonicalProjection: {
+            projector: createPushProjector({ db }),
+            workspaceId: workspace.workspaceId,
+          },
+          promptVersion: input.pushPromptVersion ?? 1,
+        });
+        await handler.execute(payload);
+      },
+    };
 
     return createWorker({
       queue,
@@ -364,7 +426,12 @@ const registerShutdownSignals = (shutdown: () => Promise<void>): void => {
 
 export const execute = async (
   input: ExecuteInput = {},
-): Promise<{ address: string; server: ServerLike; worker: WorkerAdapter; shutdown: () => Promise<void> }> => {
+): Promise<{
+  address: string;
+  server: ServerLike;
+  worker: WorkerAdapter;
+  shutdown: () => Promise<void>;
+}> => {
   const env = loadEnv();
   const runtime = await buildRuntimeDependencies(input);
   const workerRunPromise =
