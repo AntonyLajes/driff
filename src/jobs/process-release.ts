@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import type { ReleaseProjector } from "@/changes/project-release.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable } from "@/db/schema.js";
@@ -27,6 +28,10 @@ export interface ExecuteInput {
   expoAppConfigPath: string | null;
   promptVersion: number;
   releaseCompareRootSha: string | null;
+  canonicalProjection?: {
+    projector: ReleaseProjector;
+    workspaceId: string;
+  };
 }
 
 const parsePayload = (payload: Record<string, unknown>): ProcessReleaseJobPayload => {
@@ -207,26 +212,55 @@ export const execute = (input: ExecuteInput) => {
       const marketingEraStartSha =
         existingEraSha && existingEraSha.length > 0 ? existingEraSha : effectiveCompareBefore;
 
-      await input.db.insert(releasesTable).values({
-        repo: job.repo,
-        versionKey: context.newVersionKey,
-        shortVersion: context.afterVersion.short,
-        buildVersion: context.afterVersion.build,
-        previousVersionKey: context.previousVersionKey,
-        branch: job.branch,
-        headSha: job.afterSha,
-        beforeSha: effectiveCompareBefore,
-        prNumbers: releasePrNumbers,
-        changelog: notes.changelog,
-        sections: { sections: notes.sections, title: notes.title } as unknown as Record<
-          string,
-          unknown
-        >,
-        notionPageId: publish.pageId,
-        promptVersion: input.promptVersion,
-        marketingEraStartSha,
-        updatedAt: new Date(),
-      });
+      const releaseRows = await input.db
+        .insert(releasesTable)
+        .values({
+          repo: job.repo,
+          versionKey: context.newVersionKey,
+          shortVersion: context.afterVersion.short,
+          buildVersion: context.afterVersion.build,
+          previousVersionKey: context.previousVersionKey,
+          branch: job.branch,
+          headSha: job.afterSha,
+          beforeSha: effectiveCompareBefore,
+          prNumbers: releasePrNumbers,
+          changelog: notes.changelog,
+          sections: { sections: notes.sections, title: notes.title } as unknown as Record<
+            string,
+            unknown
+          >,
+          notionPageId: publish.pageId,
+          promptVersion: input.promptVersion,
+          marketingEraStartSha,
+          updatedAt: new Date(),
+        })
+        .returning({ id: releasesTable.id, createdAt: releasesTable.createdAt });
+
+      const releaseRow = releaseRows[0];
+      if (releaseRow === undefined) {
+        throw new Error("Release insert did not return a source record id.");
+      }
+
+      if (input.canonicalProjection !== undefined) {
+        await input.canonicalProjection.projector.project({
+          workspaceId: input.canonicalProjection.workspaceId,
+          sourceReleaseId: releaseRow.id,
+          repo: job.repo,
+          versionKey: context.newVersionKey,
+          previousVersionKey: context.previousVersionKey,
+          shortVersion: context.afterVersion.short,
+          buildVersion: context.afterVersion.build,
+          title: notes.title,
+          changelog: notes.changelog,
+          sections: notes.sections,
+          promptVersion: input.promptVersion,
+          beforeSha: effectiveCompareBefore,
+          headSha: job.afterSha,
+          compareUrl: context.compareUrl,
+          prNumbers: releasePrNumbers,
+          releasedAt: releaseRow.createdAt,
+        });
+      }
 
       await recordLlmUsage({
         db: input.db,
