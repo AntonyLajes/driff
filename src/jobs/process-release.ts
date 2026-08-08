@@ -258,6 +258,7 @@ export const execute = (input: ExecuteInput) => {
           headSha: job.afterSha,
           compareUrl: context.compareUrl,
           prNumbers: releasePrNumbers,
+          commitShas: context.compareCommits.map((commit) => commit.sha),
           releasedAt: releaseRow.createdAt,
         });
       }

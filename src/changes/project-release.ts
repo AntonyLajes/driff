@@ -25,6 +25,7 @@ export interface ReleaseProjectionInput {
   headSha: string;
   compareUrl: string;
   prNumbers: number[];
+  commitShas: string[];
   releasedAt: Date;
 }
 
@@ -127,19 +128,19 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
         (prNumber) =>
           `github:${input.repo.trim().toLowerCase()}:pull_request:${prNumber}`,
       );
-      if (prSourceKeys.length === 0) {
+      const commitSourceKeys = input.commitShas.map(
+        (commitSha) =>
+          `github:${input.repo.trim().toLowerCase()}:commit:${commitSha}`,
+      );
+      const changeSourceKeys = [...prSourceKeys, ...commitSourceKeys];
+      if (changeSourceKeys.length === 0) {
         return { versionId, linkedChangeIds: [] };
       }
 
-      const projectedPrChanges = tx
+      const projectedChanges = tx
         .select({ id: changeEvidenceTable.changeId })
         .from(changeEvidenceTable)
-        .where(
-          and(
-            eq(changeEvidenceTable.kind, "pull_request"),
-            inArray(changeEvidenceTable.sourceKey, prSourceKeys),
-          ),
-        );
+        .where(inArray(changeEvidenceTable.sourceKey, changeSourceKeys));
 
       const linkedRows = await tx
         .update(changesTable)
@@ -148,7 +149,7 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
           and(
             eq(changesTable.workspaceId, input.workspaceId),
             isNull(changesTable.versionId),
-            inArray(changesTable.id, projectedPrChanges),
+            inArray(changesTable.id, projectedChanges),
           ),
         )
         .returning({ id: changesTable.id });
