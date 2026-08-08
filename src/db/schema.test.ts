@@ -139,6 +139,9 @@ describe("db/schema tables", () => {
     expect(config.foreignKeys.length).toBe(3);
     expect(config.uniqueConstraints.length).toBe(1);
     expect(config.indexes.length).toBe(3);
+    expect(config.indexes.map((candidate) => candidate.config.name)).toContain(
+      "project_versions_workspace_timeline_idx",
+    );
     expect(config.checks.length).toBe(2);
   });
 
@@ -157,7 +160,10 @@ describe("db/schema tables", () => {
     expect(columns.promptVersion).toBeDefined();
     expect(columns.correctedAt).toBeDefined();
     expect(config.foreignKeys.length).toBe(2);
-    expect(config.indexes.length).toBe(2);
+    expect(config.indexes.length).toBe(3);
+    expect(config.indexes.map((candidate) => candidate.config.name)).toContain(
+      "changes_workspace_unversioned_timeline_idx",
+    );
     expect(config.checks.length).toBe(3);
   });
 
