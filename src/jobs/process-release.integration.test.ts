@@ -41,6 +41,19 @@ const releaseSelectRow = (limitResult: unknown) => ({
   }),
 });
 
+const releaseCreatedAt = new Date("2026-08-08T12:00:00.000Z");
+
+const buildInsertChain = (
+  releaseRows: Array<{ id: string; createdAt: Date }> = [
+    { id: "release-source-1", createdAt: releaseCreatedAt },
+  ],
+) => {
+  const returning = vi.fn(async () => releaseRows);
+  const values = vi.fn(() => ({ returning }));
+  const insert = vi.fn(() => ({ values }));
+  return { insert, returning, values };
+};
+
 describe("jobs/process-release integration", () => {
   beforeEach(() => {
     gatherMock.mockReset();
@@ -64,8 +77,7 @@ describe("jobs/process-release integration", () => {
       fileChangeSummary: "—",
     });
     const { select } = buildSelectChain([]);
-    const values = vi.fn();
-    const insert = vi.fn(() => ({ values }));
+    const { insert, values } = buildInsertChain();
     const db = { select, insert } as never;
     const publishRelease = vi.fn(async () => ({ pageId: "p1" }));
     const summarizeRelease = vi.fn(async () => ({
@@ -74,6 +86,7 @@ describe("jobs/process-release integration", () => {
       sections: [],
       usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
+    const project = vi.fn(async () => ({ versionId: "version-1", linkedChangeIds: [] }));
     const handler = execute({
       db,
       appId: "1",
@@ -85,6 +98,10 @@ describe("jobs/process-release integration", () => {
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
+      canonicalProjection: {
+        workspaceId: "workspace-1",
+        projector: { project },
+      },
     });
     await handler.execute({
       repo: "o/r",
@@ -107,6 +124,22 @@ describe("jobs/process-release integration", () => {
       expect.objectContaining({
         beforeSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         marketingEraStartSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+    );
+    expect(project).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        sourceReleaseId: "release-source-1",
+        versionKey: "1+2",
+        previousVersionKey: "1+1",
+        shortVersion: "1",
+        buildVersion: "2",
+        title: "R",
+        changelog: "What's new.",
+        beforeSha: "a".repeat(40),
+        headSha: "b".repeat(40),
+        compareUrl: "https://c",
+        releasedAt: releaseCreatedAt,
       }),
     );
   });
@@ -144,8 +177,7 @@ describe("jobs/process-release integration", () => {
       })
       .mockReturnValueOnce(releaseSelectRow([]));
 
-    const values = vi.fn();
-    const insert = vi.fn(() => ({ values }));
+    const { insert } = buildInsertChain();
     const publishRelease = vi.fn(async () => ({ pageId: "p99" }));
     const summarizeRelease = vi.fn(async () => ({
       title: "Rel",
@@ -221,7 +253,7 @@ describe("jobs/process-release integration", () => {
       })
       .mockReturnValueOnce(releaseSelectRow([]));
 
-    const insert = vi.fn(() => ({ values: vi.fn() }));
+    const { insert } = buildInsertChain();
     const publishRelease = vi.fn(async () => ({ pageId: "pd" }));
     const summarizeRelease = vi.fn(async () => ({
       title: "T",
@@ -387,8 +419,7 @@ describe("jobs/process-release integration", () => {
       .fn()
       .mockReturnValueOnce(releaseSelectRow([]))
       .mockReturnValueOnce(releaseSelectRow([]));
-    const values = vi.fn();
-    const insert = vi.fn(() => ({ values }));
+    const { insert, values } = buildInsertChain();
     const db = { select, insert } as never;
     const summarizeRelease = vi.fn(async () => ({
       title: "Wide",
