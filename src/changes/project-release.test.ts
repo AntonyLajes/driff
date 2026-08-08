@@ -1,4 +1,5 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it, vi } from "vitest";
 
 import { execute } from "@/changes/project-release.js";
@@ -23,6 +24,7 @@ const projectionInput = {
   headSha: "b".repeat(40),
   compareUrl: "https://github.com/acme/mobile-app/compare/a...b",
   prNumbers: [42, 43],
+  commitShas: ["commit-a", "commit-b"],
   releasedAt: new Date("2026-08-08T12:00:00.000Z"),
 };
 
@@ -39,7 +41,7 @@ const buildDbMock = (input?: {
   const previousWhere = vi.fn(() => ({ limit: previousLimit }));
   const previousFrom = vi.fn(() => ({ where: previousWhere }));
   const evidenceSubquery = { getSQL: () => sql`select change_id from change_evidence` };
-  const evidenceWhere = vi.fn(() => evidenceSubquery);
+  const evidenceWhere = vi.fn((_condition: SQL) => evidenceSubquery);
   const evidenceFrom = vi.fn(() => ({ where: evidenceWhere }));
   const select = vi
     .fn()
@@ -85,7 +87,7 @@ const buildDbMock = (input?: {
 };
 
 describe("changes/project-release execute", () => {
-  it("should project a release and link its unversioned PR changes atomically", async () => {
+  it("should project a release and link its unversioned PR and push changes atomically", async () => {
     const mocks = buildDbMock();
 
     const result = await execute({ db: mocks.db }).project(projectionInput);
@@ -115,19 +117,30 @@ describe("changes/project-release execute", () => {
       }),
     );
     expect(mocks.evidenceWhere).toHaveBeenCalledOnce();
+    const evidenceCondition = mocks.evidenceWhere.mock.calls[0]?.[0];
+    if (evidenceCondition === undefined) {
+      throw new Error("Expected evidence lookup condition.");
+    }
+    expect(new PgDialect().sqlToQuery(evidenceCondition).params).toEqual([
+      "github:acme/mobile-app:pull_request:42",
+      "github:acme/mobile-app:pull_request:43",
+      "github:acme/mobile-app:commit:commit-a",
+      "github:acme/mobile-app:commit:commit-b",
+    ]);
     expect(mocks.updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ versionId }),
     );
     expect(mocks.updateReturning).toHaveBeenCalledOnce();
   });
 
-  it("should project a first version without predecessor or PR updates", async () => {
+  it("should project a first version without predecessor or change updates", async () => {
     const mocks = buildDbMock();
 
     const result = await execute({ db: mocks.db }).project({
       ...projectionInput,
       previousVersionKey: null,
       prNumbers: [],
+      commitShas: [],
     });
 
     expect(result).toEqual({ versionId, linkedChangeIds: [] });

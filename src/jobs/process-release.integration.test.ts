@@ -69,10 +69,10 @@ describe("jobs/process-release integration", () => {
       afterVersion: { short: "1", build: "2" },
       previousVersionKey: "1+1",
       newVersionKey: "1+2",
-      compareCommits: [],
-      commitMessages: [],
+      compareCommits: [{ sha: "direct-commit", message: "fix: direct hotfix" }],
+      commitMessages: ["fix: direct hotfix"],
       prNumbers: [],
-      totalCommits: 0,
+      totalCommits: 1,
       compareUrl: "https://c",
       fileChangeSummary: "—",
     });
@@ -114,7 +114,9 @@ describe("jobs/process-release integration", () => {
     expect(summarizeRelease).toHaveBeenCalledWith(
       expect.objectContaining({
         prContributions: [],
-        standaloneCommitHints: [],
+        standaloneCommitHints: [
+          { sha: "direct-commit", messageLine: "fix: direct hotfix" },
+        ],
       }),
     );
     expect(publishRelease).toHaveBeenCalledOnce();
@@ -139,6 +141,7 @@ describe("jobs/process-release integration", () => {
         beforeSha: "a".repeat(40),
         headSha: "b".repeat(40),
         compareUrl: "https://c",
+        commitShas: ["direct-commit"],
         releasedAt: releaseCreatedAt,
       }),
     );
