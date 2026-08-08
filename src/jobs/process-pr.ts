@@ -1,3 +1,4 @@
+import type { PullRequestProjector } from "@/changes/project-pull-request.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable } from "@/db/schema.js";
@@ -15,6 +16,10 @@ export interface ExecuteInput {
   source: Source;
   summarizer: Summarizer;
   destination: Destination;
+  canonicalProjection?: {
+    projector: PullRequestProjector;
+    workspaceId: string;
+  };
   promptVersion: number;
 }
 
@@ -54,13 +59,23 @@ export const execute = (input: ExecuteInput) => {
         prUrl: `https://github.com/${pullRequest.repo}/pull/${pullRequest.prNumber}`,
       });
 
-      await dbUpsertPullRequest({
+      const sourceRecordId = await dbUpsertPullRequest({
         db: input.db,
         pullRequest,
         summary,
         notionPageId: publishResult.pageId,
         promptVersion: input.promptVersion,
       });
+
+      if (input.canonicalProjection !== undefined) {
+        await input.canonicalProjection.projector.project({
+          workspaceId: input.canonicalProjection.workspaceId,
+          sourceRecordId,
+          pullRequest,
+          summary,
+          promptVersion: input.promptVersion,
+        });
+      }
 
       await recordLlmUsage({
         db: input.db,
@@ -86,7 +101,7 @@ const dbUpsertPullRequest = async ({
   summary,
   notionPageId,
   promptVersion,
-}: DbUpsertPullRequestInput): Promise<void> => {
+}: DbUpsertPullRequestInput): Promise<string> => {
   /* Diff stats aggregated from the PR files listing. */
   const additions = pullRequest.files.reduce((sum, f) => sum + f.additions, 0);
   const deletions = pullRequest.files.reduce((sum, f) => sum + f.deletions, 0);
@@ -112,11 +127,18 @@ const dbUpsertPullRequest = async ({
     updatedAt: new Date(),
   };
 
-  await db
+  const rows = await db
     .insert(pullRequestsTable)
     .values(values)
     .onConflictDoUpdate({
       target: [pullRequestsTable.repo, pullRequestsTable.prNumber],
       set: values,
-    });
+    })
+    .returning({ id: pullRequestsTable.id });
+
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error("Pull request upsert did not return a source record id.");
+  }
+  return row.id;
 };

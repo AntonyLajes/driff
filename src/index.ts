@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { execute as createPullRequestProjector } from "@/changes/project-pull-request.js";
 import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
@@ -274,6 +275,10 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
             source,
             summarizer,
             destination,
+            canonicalProjection: {
+              projector: createPullRequestProjector({ db }),
+              workspaceId: workspace.workspaceId,
+            },
             promptVersion: input.promptVersion ?? 1,
           });
           await handler.execute(payload);
