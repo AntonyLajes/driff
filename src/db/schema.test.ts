@@ -124,6 +124,10 @@ describe("db/schema tables", () => {
     expect(columns.displayVersion).toBeDefined();
     expect(columns.normalizedVersion).toBeDefined();
     expect(columns.buildVersion).toBeDefined();
+    expect(columns.title).toBeDefined();
+    expect(columns.changelog).toBeDefined();
+    expect(columns.sections).toBeDefined();
+    expect(columns.promptVersion).toBeDefined();
     expect(columns.status).toBeDefined();
     expect(columns.strategy).toBeDefined();
     expect(columns.sourceRef).toBeDefined();
