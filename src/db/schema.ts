@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -423,6 +424,7 @@ export const projectVersionsTable = pgTable(
     sourceReleaseId: uuid("source_release_id").references(() => releasesTable.id, {
       onDelete: "set null",
     }),
+    previousVersionId: uuid("previous_version_id"),
     beforeSha: text("before_sha"),
     headSha: text("head_sha"),
     releasedAt: timestamp("released_at", { withTimezone: true }),
@@ -439,6 +441,14 @@ export const projectVersionsTable = pgTable(
     sourceReleaseIdIdx: index("project_versions_source_release_id_idx").on(
       table.sourceReleaseId,
     ),
+    previousVersionIdIdx: index("project_versions_previous_version_id_idx").on(
+      table.previousVersionId,
+    ),
+    previousVersionFk: foreignKey({
+      columns: [table.previousVersionId],
+      foreignColumns: [table.id],
+      name: "project_versions_previous_version_id_fk",
+    }).onDelete("set null"),
     statusCheck: check(
       "project_versions_status_check",
       sql`${table.status} IN ('released', 'in_development')`,

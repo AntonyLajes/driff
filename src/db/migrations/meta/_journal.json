@@ -141,6 +141,13 @@
       "when": 1786226737524,
       "tag": "0019_classy_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786226808604,
+      "tag": "0020_crazy_thunderbolts",
+      "breakpoints": true
     }
   ]
 }
