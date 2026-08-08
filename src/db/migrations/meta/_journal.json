@@ -169,6 +169,13 @@
       "when": 1786228602614,
       "tag": "0023_calm_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786230504643,
+      "tag": "0024_normal_ironclad",
+      "breakpoints": true
     }
   ]
 }

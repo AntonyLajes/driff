@@ -547,6 +547,9 @@ export const changeEvidenceTable = pgTable(
       table.sourceKey,
     ),
     sourceKeyIdx: index("change_evidence_source_key_idx").on(table.sourceKey),
+    sourceRecordIdx: index("change_evidence_source_record_idx")
+      .on(table.sourceRecordType, table.sourceRecordId)
+      .where(sql`${table.sourceRecordId} IS NOT NULL`),
     kindCheck: check(
       "change_evidence_kind_check",
       sql`${table.kind} IN ('pull_request', 'commit', 'file', 'compare', 'release', 'version_marker')`,

@@ -1,0 +1,1 @@
+CREATE INDEX "change_evidence_source_record_idx" ON "change_evidence" USING btree ("source_record_type","source_record_id") WHERE "change_evidence"."source_record_id" IS NOT NULL;
