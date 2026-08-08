@@ -14,6 +14,21 @@ const expectedJobTypeSchema = z.enum([
   "process_release",
 ]);
 
+const webhookSettingsSchema = z.object({
+  prSummaryBaseBranches: z.array(z.string().min(1).max(255)).max(50).nullable(),
+  release: z
+    .object({
+      branch: z.string().min(1).max(255),
+      versionWatchPaths: z.array(z.string().min(1).max(2_048)).min(1).max(20),
+    })
+    .nullable(),
+  push: z
+    .object({
+      branches: z.array(z.string().min(1).max(255)).min(1).max(50),
+    })
+    .nullable(),
+});
+
 const scenarioEventSchema = z.object({
   deliveryId: z.string().min(1).max(128),
   eventType: githubEventTypeSchema,
@@ -36,6 +51,11 @@ const scenarioSchema = z
       provider: z.literal("github"),
       fullName: repositoryFullNameSchema,
       defaultBranch: z.string().min(1).max(255),
+    }),
+    webhookSettings: webhookSettingsSchema.default({
+      prSummaryBaseBranches: null,
+      release: null,
+      push: null,
     }),
     events: z.array(scenarioEventSchema).min(1).max(250),
   })

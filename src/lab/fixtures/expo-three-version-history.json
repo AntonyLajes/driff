@@ -8,6 +8,16 @@
     "fullName": "driff-lab/mobile-app",
     "defaultBranch": "main"
   },
+  "webhookSettings": {
+    "prSummaryBaseBranches": ["main"],
+    "release": {
+      "branch": "main",
+      "versionWatchPaths": ["app.json"]
+    },
+    "push": {
+      "branches": ["main"]
+    }
+  },
   "events": [
     {
       "deliveryId": "lab-expo-pr-101",
