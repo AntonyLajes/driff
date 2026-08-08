@@ -3,7 +3,13 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import {
+  changeAreasTable,
+  changeContributorsTable,
+  changeEvidenceTable,
+  changesTable,
   jobsTable,
+  productAreasTable,
+  projectVersionsTable,
   promptsTable,
   pullRequestsTable,
   userSourceConnectionsTable,
@@ -108,5 +114,103 @@ describe("db/schema tables", () => {
     // unique(workspace_id, type)
     expect(config.uniqueConstraints.length).toBe(1);
     expect(config.indexes.length).toBe(1);
+  });
+
+  it("should define canonical project versions with source identity", () => {
+    const columns = getTableColumns(projectVersionsTable);
+    const config = getTableConfig(projectVersionsTable);
+
+    expect(columns.workspaceId).toBeDefined();
+    expect(columns.displayVersion).toBeDefined();
+    expect(columns.normalizedVersion).toBeDefined();
+    expect(columns.buildVersion).toBeDefined();
+    expect(columns.status).toBeDefined();
+    expect(columns.strategy).toBeDefined();
+    expect(columns.sourceRef).toBeDefined();
+    expect(columns.beforeSha).toBeDefined();
+    expect(columns.headSha).toBeDefined();
+    expect(columns.releasedAt).toBeDefined();
+    expect(config.foreignKeys.length).toBe(1);
+    expect(config.uniqueConstraints.length).toBe(1);
+    expect(config.indexes.length).toBe(1);
+    expect(config.checks.length).toBe(2);
+  });
+
+  it("should define canonical changes with version and workspace boundaries", () => {
+    const columns = getTableColumns(changesTable);
+    const config = getTableConfig(changesTable);
+
+    expect(columns.workspaceId).toBeDefined();
+    expect(columns.versionId).toBeDefined();
+    expect(columns.summaryExecutive).toBeDefined();
+    expect(columns.summaryTechnical).toBeDefined();
+    expect(columns.category).toBeDefined();
+    expect(columns.confidence).toBeDefined();
+    expect(columns.firstOccurredAt).toBeDefined();
+    expect(columns.lastOccurredAt).toBeDefined();
+    expect(columns.promptVersion).toBeDefined();
+    expect(columns.correctedAt).toBeDefined();
+    expect(config.foreignKeys.length).toBe(2);
+    expect(config.indexes.length).toBe(2);
+    expect(config.checks.length).toBe(3);
+  });
+
+  it("should define claim-level evidence with idempotent source keys", () => {
+    const columns = getTableColumns(changeEvidenceTable);
+    const config = getTableConfig(changeEvidenceTable);
+
+    expect(columns.changeId).toBeDefined();
+    expect(columns.kind).toBeDefined();
+    expect(columns.sourceKey).toBeDefined();
+    expect(columns.externalId).toBeDefined();
+    expect(columns.url).toBeDefined();
+    expect(columns.sha).toBeDefined();
+    expect(columns.path).toBeDefined();
+    expect(columns.sourceRecordType).toBeDefined();
+    expect(columns.sourceRecordId).toBeDefined();
+    expect(columns.metadata).toBeDefined();
+    expect(config.foreignKeys.length).toBe(1);
+    expect(config.uniqueConstraints.length).toBe(1);
+    expect(config.indexes.length).toBe(1);
+    expect(config.checks.length).toBe(1);
+  });
+
+  it("should define workspace-owned product areas and change assignments", () => {
+    const areaColumns = getTableColumns(productAreasTable);
+    const areaConfig = getTableConfig(productAreasTable);
+    const assignmentColumns = getTableColumns(changeAreasTable);
+    const assignmentConfig = getTableConfig(changeAreasTable);
+
+    expect(areaColumns.workspaceId).toBeDefined();
+    expect(areaColumns.name).toBeDefined();
+    expect(areaColumns.slug).toBeDefined();
+    expect(areaColumns.rules).toBeDefined();
+    expect(areaConfig.foreignKeys.length).toBe(1);
+    expect(areaConfig.uniqueConstraints.length).toBe(1);
+    expect(assignmentColumns.changeId).toBeDefined();
+    expect(assignmentColumns.areaId).toBeDefined();
+    expect(assignmentColumns.confidence).toBeDefined();
+    expect(assignmentColumns.source).toBeDefined();
+    expect(assignmentConfig.primaryKeys.length).toBe(1);
+    expect(assignmentConfig.foreignKeys.length).toBe(2);
+    expect(assignmentConfig.indexes.length).toBe(1);
+    expect(assignmentConfig.checks.length).toBe(2);
+  });
+
+  it("should define explicit contributor roles without productivity metrics", () => {
+    const columns = getTableColumns(changeContributorsTable);
+    const config = getTableConfig(changeContributorsTable);
+
+    expect(columns.changeId).toBeDefined();
+    expect(columns.externalIdentity).toBeDefined();
+    expect(columns.displayName).toBeDefined();
+    expect(columns.role).toBeDefined();
+    expect(columns.sourceUrl).toBeDefined();
+    expect(columns).not.toHaveProperty("score");
+    expect(columns).not.toHaveProperty("productivity");
+    expect(config.primaryKeys.length).toBe(1);
+    expect(config.foreignKeys.length).toBe(1);
+    expect(config.indexes.length).toBe(1);
+    expect(config.checks.length).toBe(1);
   });
 });
