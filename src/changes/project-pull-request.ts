@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-
+import { execute as buildCanonicalId } from "@/changes/canonical-id.js";
 import type { Database } from "@/db/client.js";
 import {
   changeAreasTable,
@@ -27,22 +26,6 @@ export interface ExecuteInput {
   db: Database;
 }
 
-const stableUuid = (...parts: string[]): string => {
-  const digest = createHash("sha256").update(["driff:v1", ...parts].join("\0")).digest();
-  const bytes = Buffer.from(digest.subarray(0, 16));
-  bytes.writeUInt8((bytes.readUInt8(6) & 0x0f) | 0x50, 6);
-  bytes.writeUInt8((bytes.readUInt8(8) & 0x3f) | 0x80, 8);
-  const hex = bytes.toString("hex");
-
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20),
-  ].join("-");
-};
-
 const slugify = (value: string): string =>
   value
     .normalize("NFKD")
@@ -63,7 +46,7 @@ export const execute = ({ db }: ExecuteInput): PullRequestProjector => ({
     const normalizedRepo = pullRequest.repo.trim().toLowerCase();
     const pullRequestUrl = `https://github.com/${pullRequest.repo}/pull/${pullRequest.prNumber}`;
     const pullRequestSourceKey = `github:${normalizedRepo}:pull_request:${pullRequest.prNumber}`;
-    const changeId = stableUuid("change", workspaceId, pullRequestSourceKey);
+    const changeId = buildCanonicalId("change", workspaceId, pullRequestSourceKey);
     const now = new Date();
 
     await db.transaction(async (tx) => {
@@ -143,7 +126,7 @@ export const execute = ({ db }: ExecuteInput): PullRequestProjector => ({
       const areaName = summary.area?.trim() ?? "";
       const areaSlug = slugify(areaName);
       if (areaSlug.length > 0) {
-        const areaId = stableUuid("product-area", workspaceId, areaSlug);
+        const areaId = buildCanonicalId("product-area", workspaceId, areaSlug);
 
         await tx
           .insert(productAreasTable)

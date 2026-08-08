@@ -171,6 +171,7 @@ docs/
   release-compare-windows.md  # Spec: Git compare windows for build vs marketing-version releases
 src/
   changes/
+    canonical-id.ts        # Stable IDs shared by idempotent graph projectors
     project-pull-request.ts # Idempotent PR → canonical graph projection
   config/
     env.ts                  # Env var validation with Zod (secrets + infra)
