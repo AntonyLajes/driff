@@ -3,8 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db/client.js";
 import { execute } from "@/jobs/process-pr.js";
 
-const buildDbMock = () => {
-  const onConflictDoUpdate = vi.fn(async () => undefined);
+const buildDbMock = (
+  returnedRows: Array<{ id: string }> = [
+    { id: "11111111-1111-4111-8111-111111111111" },
+  ],
+) => {
+  const returning = vi.fn(async () => returnedRows);
+  const onConflictDoUpdate = vi.fn(() => ({ returning }));
   const values = vi.fn(() => ({ onConflictDoUpdate }));
   const insert = vi.fn(() => ({ values }));
 
@@ -12,7 +17,7 @@ const buildDbMock = () => {
     insert,
   } as unknown as Database;
 
-  return { db, insert, onConflictDoUpdate, values };
+  return { db, insert, onConflictDoUpdate, returning, values };
 };
 
 describe("jobs/process-pr execute", () => {
@@ -42,12 +47,17 @@ describe("jobs/process-pr execute", () => {
       usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
     const publishPR = vi.fn(async () => ({ pageId: "notion-page-1" }));
+    const project = vi.fn(async () => undefined);
     const handler = execute({
       db,
       promptVersion: 1,
       source: { fetchPullRequest },
       summarizer: { summarizePR, prompt: "prompt" },
       destination: { publishPR, publishRelease: vi.fn(), publishPush: vi.fn() },
+      canonicalProjection: {
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        projector: { project },
+      },
     });
 
     await handler.execute({
@@ -75,6 +85,65 @@ describe("jobs/process-pr execute", () => {
       }),
     );
     expect(onConflictDoUpdate).toHaveBeenCalledOnce();
+    expect(project).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        sourceRecordId: "11111111-1111-4111-8111-111111111111",
+        promptVersion: 1,
+      }),
+    );
+  });
+
+  it("should fail before projection when the legacy upsert returns no source id", async () => {
+    const { db } = buildDbMock([]);
+    const project = vi.fn(async () => undefined);
+    const handler = execute({
+      db,
+      promptVersion: 1,
+      source: {
+        fetchPullRequest: vi.fn(async () => ({
+          repo: "acme/mobile-app",
+          prNumber: 100,
+          title: "feat: checkout",
+          body: null,
+          author: "octocat",
+          mergedAt: new Date("2026-04-25T19:10:00Z"),
+          headSha: "abc123",
+          baseBranch: "main",
+          diff: "diff",
+          files: [],
+        })),
+      },
+      summarizer: {
+        summarizePR: vi.fn(async () => ({
+          title: "Checkout updates",
+          summaryUserFacing: "Users can check out faster.",
+          summaryTechnical: "Adds checkout orchestration.",
+          category: "feature" as const,
+          area: "checkout",
+          usage: {
+            model: "claude-sonnet-4-6",
+            inputTokens: 100,
+            outputTokens: 50,
+          },
+        })),
+        prompt: "prompt",
+      },
+      destination: {
+        publishPR: vi.fn(async () => ({ pageId: "notion-page-1" })),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
+      canonicalProjection: {
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        projector: { project },
+      },
+    });
+
+    await expect(
+      handler.execute({ repo: "acme/mobile-app", prNumber: 100 }),
+    ).rejects.toThrow("Pull request upsert did not return a source record id.");
+    expect(project).not.toHaveBeenCalled();
   });
 
   it("should throw when payload is invalid", async () => {
