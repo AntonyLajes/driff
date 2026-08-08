@@ -127,12 +127,13 @@ describe("db/schema tables", () => {
     expect(columns.status).toBeDefined();
     expect(columns.strategy).toBeDefined();
     expect(columns.sourceRef).toBeDefined();
+    expect(columns.sourceReleaseId).toBeDefined();
     expect(columns.beforeSha).toBeDefined();
     expect(columns.headSha).toBeDefined();
     expect(columns.releasedAt).toBeDefined();
-    expect(config.foreignKeys.length).toBe(1);
+    expect(config.foreignKeys.length).toBe(2);
     expect(config.uniqueConstraints.length).toBe(1);
-    expect(config.indexes.length).toBe(1);
+    expect(config.indexes.length).toBe(2);
     expect(config.checks.length).toBe(2);
   });
 
