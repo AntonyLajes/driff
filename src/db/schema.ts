@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -398,6 +399,212 @@ export const workspaceSettingsTable = pgTable(
     workspaceIdUniqueWhenSet: uniqueIndex("workspace_settings_workspace_id_key")
       .on(table.workspaceId)
       .where(sql`${table.workspaceId} IS NOT NULL`),
+  }),
+);
+
+/**
+ * Canonical project versions used by the V1 timeline. Existing `releases` rows remain
+ * source records until projection parity is proven.
+ */
+export const projectVersionsTable = pgTable(
+  "project_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    displayVersion: text("display_version").notNull(),
+    normalizedVersion: text("normalized_version").notNull(),
+    buildVersion: text("build_version"),
+    status: text("status").notNull(),
+    strategy: text("strategy").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    sourceUrl: text("source_url"),
+    beforeSha: text("before_sha"),
+    headSha: text("head_sha"),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceSourceUnique: unique(
+      "project_versions_workspace_strategy_source_unique",
+    ).on(table.workspaceId, table.strategy, table.sourceRef),
+    workspaceReleasedAtIdx: index(
+      "project_versions_workspace_released_at_idx",
+    ).on(table.workspaceId, table.releasedAt),
+    statusCheck: check(
+      "project_versions_status_check",
+      sql`${table.status} IN ('released', 'in_development')`,
+    ),
+    strategyCheck: check(
+      "project_versions_strategy_check",
+      sql`${table.strategy} IN ('github_release', 'git_tag', 'version_file')`,
+    ),
+  }),
+);
+
+/** User-understandable units of change projected from PR, push, and release source records. */
+export const changesTable = pgTable(
+  "changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id").references(() => projectVersionsTable.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    summaryExecutive: text("summary_executive"),
+    summaryTechnical: text("summary_technical"),
+    category: text("category").notNull(),
+    confidence: integer("confidence"),
+    firstOccurredAt: timestamp("first_occurred_at", {
+      withTimezone: true,
+    }).notNull(),
+    lastOccurredAt: timestamp("last_occurred_at", {
+      withTimezone: true,
+    }).notNull(),
+    promptVersion: integer("prompt_version"),
+    correctedAt: timestamp("corrected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    workspaceLastOccurredAtIdx: index(
+      "changes_workspace_last_occurred_at_idx",
+    ).on(table.workspaceId, table.lastOccurredAt),
+    versionIdIdx: index("changes_version_id_idx").on(table.versionId),
+    categoryCheck: check(
+      "changes_category_check",
+      sql`${table.category} IN ('feature', 'bugfix', 'refactor', 'chore', 'other')`,
+    ),
+    confidenceCheck: check(
+      "changes_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+    occurrenceOrderCheck: check(
+      "changes_occurrence_order_check",
+      sql`${table.lastOccurredAt} >= ${table.firstOccurredAt}`,
+    ),
+  }),
+);
+
+/** Claim-level provenance for a canonical change. */
+export const changeEvidenceTable = pgTable(
+  "change_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    sourceKey: text("source_key").notNull(),
+    externalId: text("external_id"),
+    url: text("url"),
+    sha: text("sha"),
+    path: text("path"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    sourceRecordType: text("source_record_type"),
+    sourceRecordId: uuid("source_record_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    changeSourceUnique: unique("change_evidence_change_source_unique").on(
+      table.changeId,
+      table.sourceKey,
+    ),
+    sourceKeyIdx: index("change_evidence_source_key_idx").on(table.sourceKey),
+    kindCheck: check(
+      "change_evidence_kind_check",
+      sql`${table.kind} IN ('pull_request', 'commit', 'file', 'compare', 'release', 'version_marker')`,
+    ),
+  }),
+);
+
+/** Stable workspace-owned product areas and their matching/exclusion rules. */
+export const productAreasTable = pgTable(
+  "product_areas",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    rules: jsonb("rules").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceSlugUnique: unique("product_areas_workspace_slug_unique").on(
+      table.workspaceId,
+      table.slug,
+    ),
+  }),
+);
+
+/** Many-to-many relation between canonical changes and stable product areas. */
+export const changeAreasTable = pgTable(
+  "change_areas",
+  {
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => productAreasTable.id, { onDelete: "cascade" }),
+    confidence: integer("confidence"),
+    source: text("source").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.changeId, table.areaId] }),
+    areaIdIdx: index("change_areas_area_id_idx").on(table.areaId),
+    sourceCheck: check(
+      "change_areas_source_check",
+      sql`${table.source} IN ('rule', 'ai', 'human')`,
+    ),
+    confidenceCheck: check(
+      "change_areas_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+  }),
+);
+
+/** Attribution with explicit collaboration roles; never a productivity score source. */
+export const changeContributorsTable = pgTable(
+  "change_contributors",
+  {
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    externalIdentity: text("external_identity").notNull(),
+    displayName: text("display_name"),
+    role: text("role").notNull(),
+    sourceUrl: text("source_url"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.changeId, table.externalIdentity, table.role],
+    }),
+    externalIdentityIdx: index("change_contributors_external_identity_idx").on(
+      table.externalIdentity,
+    ),
+    roleCheck: check(
+      "change_contributors_role_check",
+      sql`${table.role} IN ('pr_author', 'commit_author', 'reviewer', 'coauthor')`,
+    ),
   }),
 );
 
