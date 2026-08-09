@@ -76,11 +76,25 @@ describe("http/routes/github-me", () => {
   });
 
   it("only enables registration when every OAuth setting is available", () => {
-    expect(
-      buildGithubMeRegistrationInput({
-        GITHUB_USER_OAUTH_CLIENT_ID: undefined,
-      } as never),
-    ).toBeUndefined();
+    const complete = {
+      GITHUB_USER_OAUTH_CLIENT_ID: "id",
+      GITHUB_USER_OAUTH_CLIENT_SECRET: "secret",
+      AUTH_JWT_SECRET: jwtSecret,
+      AUTH_PUBLIC_URL: "https://api.driff.dev",
+      FRONTEND_URL: "https://driff.dev",
+      NODE_ENV: "production",
+    };
+    for (const missing of [
+      "GITHUB_USER_OAUTH_CLIENT_ID",
+      "GITHUB_USER_OAUTH_CLIENT_SECRET",
+      "AUTH_JWT_SECRET",
+      "AUTH_PUBLIC_URL",
+      "FRONTEND_URL",
+    ] as const) {
+      const env = { ...complete };
+      delete env[missing];
+      expect(buildGithubMeRegistrationInput(env as never)).toBeUndefined();
+    }
 
     expect(
       buildGithubMeRegistrationInput({
@@ -129,6 +143,38 @@ describe("http/routes/github-me", () => {
       "https://api.driff.dev/api/me/github/oauth/callback",
     );
     expect(authorizeUrl.searchParams.get("state")).toBeTruthy();
+  });
+
+  const protectedGithubRoutes = [
+    ["POST", "/api/me/github/oauth/start"],
+    ["GET", "/api/me/github/status"],
+    ["DELETE", "/api/me/github/disconnect"],
+    ["GET", "/api/me/github/repos"],
+    ["POST", "/api/me/github/repo/infer"],
+    ["GET", "/api/me/github/repo/branches?repo=owner/repo"],
+    ["GET", "/api/me/github/repo/contents?repo=owner/repo"],
+  ] as const;
+
+  it.each(protectedGithubRoutes)("protects %s %s without authorization", async (method, url) => {
+    const server = await register();
+    const response = await server.inject({
+      method,
+      url,
+      payload: method === "POST" && url.endsWith("infer") ? { repoFullName: "owner/repo" } : undefined,
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it.each(protectedGithubRoutes)("rejects an invalid JWT for %s %s", async (method, url) => {
+    const server = await register();
+    const response = await server.inject({
+      method,
+      url,
+      headers: { authorization: "Bearer invalid" },
+      payload: method === "POST" && url.endsWith("infer") ? { repoFullName: "owner/repo" } : undefined,
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "invalid_session" });
   });
 
   it("handles missing and invalid OAuth callback parameters", async () => {
