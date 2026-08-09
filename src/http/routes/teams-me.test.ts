@@ -43,6 +43,62 @@ describe("http/routes/teams-me", () => {
     expect(response.json()).toMatchObject({ error: "missing_or_invalid_authorization" });
   });
 
+  const protectedTeamRoutes = [
+    ["GET", "/api/me/teams"],
+    ["GET", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/members"],
+    ["GET", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/invites"],
+    ["POST", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/invites"],
+    [
+      "DELETE",
+      "/api/me/teams/00000000-0000-4000-8000-0000000000ee/invites/00000000-0000-4000-8000-0000000000cc",
+    ],
+    [
+      "POST",
+      "/api/me/teams/00000000-0000-4000-8000-0000000000ee/invites/00000000-0000-4000-8000-0000000000cc/resend",
+    ],
+    ["POST", "/api/invites/invite-token/accept"],
+    [
+      "PATCH",
+      "/api/me/teams/00000000-0000-4000-8000-0000000000ee/members/00000000-0000-4000-8000-0000000000bb",
+    ],
+    [
+      "DELETE",
+      "/api/me/teams/00000000-0000-4000-8000-0000000000ee/members/00000000-0000-4000-8000-0000000000bb",
+    ],
+    ["POST", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/leave"],
+    ["PATCH", "/api/me/teams/00000000-0000-4000-8000-0000000000ee"],
+    ["DELETE", "/api/me/teams/00000000-0000-4000-8000-0000000000ee"],
+    ["POST", "/api/me/teams"],
+  ] as const;
+
+  it.each(protectedTeamRoutes)("protects %s %s without authorization", async (method, url) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url,
+      payload: method === "POST" || method === "PATCH" ? {} : undefined,
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it.each(protectedTeamRoutes)("rejects an invalid JWT for %s %s", async (method, url) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url,
+      headers: { authorization: "Bearer invalid" },
+      payload: method === "POST" || method === "PATCH" ? {} : undefined,
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "invalid_session" });
+  });
+
   it("lists teams with role and member counts, personal first", async () => {
     const personal = {
       id: userId,
