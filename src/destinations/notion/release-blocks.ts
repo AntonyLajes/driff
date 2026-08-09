@@ -42,7 +42,10 @@ const bullet = (s: string): NotionBlock => ({
 });
 
 export const execute = (summary: ReleaseNotesSummary): NotionBlock[] => {
-  const blocks: NotionBlock[] = [heading2("Changelog"), paragraph(summary.changelog)];
+  const blocks: NotionBlock[] = [
+    heading2("Changelog"),
+    paragraph(summary.changelog),
+  ];
 
   for (const section of summary.sections) {
     if (section.items.length === 0) {
@@ -55,4 +58,17 @@ export const execute = (summary: ReleaseNotesSummary): NotionBlock[] => {
   }
 
   return blocks;
+};
+
+/** Canonical body used when an existing release page is refreshed idempotently. */
+export const toMarkdown = (summary: ReleaseNotesSummary): string => {
+  const lines = ["## Changelog", "", summary.changelog.trim()];
+  for (const section of summary.sections) {
+    if (section.items.length === 0) continue;
+    lines.push("", `## ${section.label}`);
+    for (const item of section.items) {
+      lines.push(`- ${item}`);
+    }
+  }
+  return lines.join("\n");
 };

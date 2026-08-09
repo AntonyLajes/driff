@@ -20,11 +20,27 @@ const summary: PRSummary = {
   prUrl: "https://github.com/acme/mobile-app/pull/10",
 };
 
+const releaseSummary: ReleaseNotesSummary = {
+  title: "2.0.0 (50)",
+  repo: "acme/ios",
+  branch: "develop",
+  newVersionKey: "2.0.0+50",
+  previousVersionKey: "1.9.0+49",
+  shortVersion: "2.0.0",
+  buildVersion: "50",
+  compareUrl: "https://github.com/acme/ios/compare/1.9...2.0",
+  prNumbers: [10, 11],
+  changelog: "Better performance and onboarding polish.",
+  sections: [{ label: "Fixed", items: ["Crash on login."] }],
+};
+
 describe("destinations/notion/notion-destination execute", () => {
   it("should publish page with mapped properties and return page id", async () => {
-    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>(async () => ({
-      id: "notion-page-1",
-    }));
+    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>(
+      async () => ({
+        id: "notion-page-1",
+      }),
+    );
     const destination = execute({
       token: "notion-token",
       databaseId: "database-id",
@@ -55,9 +71,11 @@ describe("destinations/notion/notion-destination execute", () => {
   });
 
   it("should publish page with empty area rich text when area is null", async () => {
-    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>(async () => ({
-      id: "notion-page-2",
-    }));
+    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>(
+      async () => ({
+        id: "notion-page-2",
+      }),
+    );
     const destination = execute({
       token: "notion-token",
       databaseId: "database-id",
@@ -111,22 +129,11 @@ describe("destinations/notion/notion-destination execute", () => {
   });
 
   it("should publish release page to releases database", async () => {
-    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>(async () => ({
-      id: "release-page-1",
-    }));
-    const releaseSummary: ReleaseNotesSummary = {
-      title: "2.0.0 (50)",
-      repo: "acme/ios",
-      branch: "develop",
-      newVersionKey: "2.0.0+50",
-      previousVersionKey: "1.9.0+49",
-      shortVersion: "2.0.0",
-      buildVersion: "50",
-      compareUrl: "https://github.com/acme/ios/compare/1.9...2.0",
-      prNumbers: [10, 11],
-      changelog: "Better performance and onboarding polish.",
-      sections: [{ label: "Fixed", items: ["Crash on login."] }],
-    };
+    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>(
+      async () => ({
+        id: "release-page-1",
+      }),
+    );
     const destination = execute({
       token: "notion-token",
       databaseId: "pr-db",
@@ -145,7 +152,118 @@ describe("destinations/notion/notion-destination execute", () => {
         properties: expect.objectContaining({
           Title: expect.any(Object),
           Version: expect.any(Object),
+          "Driff Key": {
+            rich_text: [
+              {
+                type: "text",
+                text: { content: "github:acme/ios:release:2.0.0+50" },
+              },
+            ],
+          },
         }),
+      }),
+    );
+  });
+
+  it("should update an existing release page instead of creating a duplicate", async () => {
+    const create = vi.fn(async () => ({ id: "unexpected" }));
+    const update = vi.fn(async () => ({}));
+    const updateMarkdown = vi.fn(async () => ({}));
+    const query = vi.fn(async () => ({
+      results: [{ id: "release-page-existing" }],
+    }));
+    const destination = execute({
+      token: "notion-token",
+      releasesDatabaseId: "rel-db",
+      notionClientFactory: () => ({
+        databases: {
+          retrieve: vi.fn(async () => ({ data_sources: [{ id: "rel-ds" }] })),
+        },
+        dataSources: {
+          retrieve: vi.fn(async () => ({
+            properties: Object.fromEntries(
+              [
+                "Driff Key",
+                "Repo",
+                "Branch",
+                "Version",
+                "Short Version",
+                "Build",
+                "Previous Version",
+                "URL",
+                "PR Numbers",
+              ].map((name) => [name, {}]),
+            ),
+          })),
+          update: vi.fn(async () => ({})),
+          query,
+        },
+        pages: { create, update, updateMarkdown },
+      }),
+    });
+
+    await expect(destination.publishRelease(releaseSummary)).resolves.toEqual({
+      pageId: "release-page-existing",
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page_id: "release-page-existing",
+        properties: expect.objectContaining({ Version: expect.any(Object) }),
+      }),
+    );
+    expect(updateMarkdown).toHaveBeenCalledWith({
+      page_id: "release-page-existing",
+      type: "replace_content",
+      replace_content: {
+        new_str:
+          "## Changelog\n\nBetter performance and onboarding polish.\n\n## Fixed\n- Crash on login.",
+        allow_deleting_content: true,
+      },
+    });
+  });
+
+  it("should adopt a legacy release page when its Driff key is missing", async () => {
+    const create = vi.fn(async () => ({ id: "unexpected" }));
+    const update = vi.fn(async () => ({}));
+    const updateMarkdown = vi.fn(async () => ({}));
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [{ id: "legacy-release-page" }] });
+    const destination = execute({
+      token: "notion-token",
+      releasesDatabaseId: "rel-db",
+      notionClientFactory: () => ({
+        databases: {
+          retrieve: vi.fn(async () => ({ data_sources: [{ id: "rel-ds" }] })),
+        },
+        dataSources: {
+          retrieve: vi.fn(async () => ({ properties: {} })),
+          update: vi.fn(async () => ({})),
+          query,
+        },
+        pages: { create, update, updateMarkdown },
+      }),
+    });
+
+    const result = await destination.publishRelease(releaseSummary);
+
+    expect(result).toEqual({ pageId: "legacy-release-page" });
+    expect(create).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        filter: {
+          and: [
+            { property: "Repo", rich_text: { equals: "acme/ios" } },
+            {
+              property: "Version",
+              rich_text: { equals: "2.0.0+50" },
+            },
+          ],
+        },
       }),
     );
   });
@@ -186,8 +304,12 @@ describe("destinations/notion/notion-destination execute", () => {
       prNumbers: [],
     };
 
-    await expect(destination.publishRelease(releaseSummary)).resolves.toEqual({ pageId: "" });
-    await expect(destination.publishPush(pushSummary)).resolves.toEqual({ pageId: "" });
+    await expect(destination.publishRelease(releaseSummary)).resolves.toEqual({
+      pageId: "",
+    });
+    await expect(destination.publishPush(pushSummary)).resolves.toEqual({
+      pageId: "",
+    });
     expect(create).not.toHaveBeenCalled();
   });
 });

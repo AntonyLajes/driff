@@ -10,15 +10,18 @@ const buildClient = (opts: {
   existingProperties?: Record<string, unknown>;
 }) => {
   const retrieveDatabase = vi.fn(async () => ({
-    data_sources: opts.dataSourceId === null ? [] : [{ id: opts.dataSourceId ?? "ds-1" }],
+    data_sources:
+      opts.dataSourceId === null ? [] : [{ id: opts.dataSourceId ?? "ds-1" }],
   }));
   const retrieveDataSource = vi.fn(async () => ({
     properties: opts.existingProperties ?? {},
   }));
-  const updateDataSource =
-    vi.fn<
-      (input: { data_source_id: string; properties: Record<string, unknown> }) => Promise<unknown>
-    >(async () => ({}));
+  const updateDataSource = vi.fn<
+    (input: {
+      data_source_id: string;
+      properties: Record<string, unknown>;
+    }) => Promise<unknown>
+  >(async () => ({}));
   const notion = {
     databases: { retrieve: retrieveDatabase },
     dataSources: { retrieve: retrieveDataSource, update: updateDataSource },
@@ -56,7 +59,9 @@ describe("destinations/notion/notion-schema ensureDatabaseProperties", () => {
     for (const name of Object.keys(PUSH_PROPERTY_SPEC)) {
       existing[name] = {};
     }
-    const { notion, updateDataSource } = buildClient({ existingProperties: existing });
+    const { notion, updateDataSource } = buildClient({
+      existingProperties: existing,
+    });
 
     await ensureDatabaseProperties(notion, "db-1", PUSH_PROPERTY_SPEC);
 
@@ -65,16 +70,20 @@ describe("destinations/notion/notion-schema ensureDatabaseProperties", () => {
 
   it("should no-op when the client cannot introspect the schema", async () => {
     const update = vi.fn();
-    const notion = { pages: { create: vi.fn() } } as Parameters<typeof ensureDatabaseProperties>[0];
+    const notion = { pages: { create: vi.fn() } } as Parameters<
+      typeof ensureDatabaseProperties
+    >[0];
 
     await expect(
       ensureDatabaseProperties(notion, "db-1", PUSH_PROPERTY_SPEC),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(update).not.toHaveBeenCalled();
   });
 
   it("should no-op when the database has no resolvable data source", async () => {
-    const { notion, retrieveDataSource, updateDataSource } = buildClient({ dataSourceId: null });
+    const { notion, retrieveDataSource, updateDataSource } = buildClient({
+      dataSourceId: null,
+    });
 
     await ensureDatabaseProperties(notion, "db-1", PUSH_PROPERTY_SPEC);
 
