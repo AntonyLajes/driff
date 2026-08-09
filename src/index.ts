@@ -248,6 +248,10 @@ const buildRuntimeDependencies = async (
     googleOAuth !== undefined
       ? { db, jwtSecret: googleOAuth.jwtSecret }
       : undefined;
+  const askMe =
+    googleOAuth !== undefined
+      ? { db, jwtSecret: googleOAuth.jwtSecret }
+      : undefined;
   const githubMeBase = buildGithubMeRegistrationInput(env);
   const githubMe =
     githubMeBase !== undefined ? { ...githubMeBase, db } : undefined;
@@ -264,6 +268,7 @@ const buildRuntimeDependencies = async (
       googleOAuth,
       workspacesMe,
       timelineMe,
+      askMe,
       meStats: workspacesMe,
       teamsMe:
         workspacesMe !== undefined

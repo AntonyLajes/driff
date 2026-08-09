@@ -3,6 +3,10 @@ import fastify, { type FastifyInstance, type FastifyServerOptions } from "fastif
 
 import { execute as registerCors, type CorsRegistrationInput } from "@/http/cors.js";
 import {
+  handler as registerAskMeRoute,
+  type AskMeRegistrationInput,
+} from "@/http/routes/ask-me.js";
+import {
   handler as registerAuthGoogleRoute,
   type GoogleOAuthRegistrationInput,
 } from "@/http/routes/auth-google.js";
@@ -61,6 +65,8 @@ export interface ExecuteInput {
   teamsMe?: TeamsMeRegistrationInput;
   /** When set, registers the canonical workspace timeline (Bearer session JWT). */
   timelineMe?: TimelineMeRegistrationInput;
+  /** When set, registers cited canonical-history questions (Bearer session JWT). */
+  askMe?: AskMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
   githubMe?: GithubMeRegistrationInput;
   /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
@@ -100,6 +106,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.timelineMe !== undefined) {
       await registerTimelineMeRoute(instance, input.timelineMe);
+    }
+    if (input.askMe !== undefined) {
+      await registerAskMeRoute(instance, input.askMe);
     }
     if (input.githubMe !== undefined) {
       await registerGithubMeRoute(instance, input.githubMe);
