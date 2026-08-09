@@ -36,7 +36,12 @@ const parseCookies = (header: string | undefined): Record<string, string> => {
       continue;
     }
     const name = trimmed.slice(0, eq).trim();
-    const value = decodeURIComponent(trimmed.slice(eq + 1).trim());
+    let value: string;
+    try {
+      value = decodeURIComponent(trimmed.slice(eq + 1).trim());
+    } catch {
+      continue;
+    }
     entries.push([name, value]);
   }
   return Object.fromEntries(entries);
