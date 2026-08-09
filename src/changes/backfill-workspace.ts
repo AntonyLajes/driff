@@ -230,10 +230,14 @@ export const execute = async (
 
   for (const row of releaseRows) {
     const parsedSections = releaseSectionsSchema.safeParse(row.sections ?? {});
+    const build = row.buildVersion.trim();
+    const fallbackTitle =
+      build.length > 0
+        ? `Version ${row.shortVersion} (${build})`
+        : `Version ${row.shortVersion}`;
     const releaseTitle = parsedSections.success
-      ? (parsedSections.data.title ??
-        `Version ${row.shortVersion} (${row.buildVersion})`)
-      : `Version ${row.shortVersion} (${row.buildVersion})`;
+      ? (parsedSections.data.title ?? fallbackTitle)
+      : fallbackTitle;
     const sections = parsedSections.success
       ? (parsedSections.data.sections ?? [])
       : [];

@@ -441,6 +441,14 @@ export const handler = async (
     if (text === null) return null;
     return text.length > max ? `${text.slice(0, max)}…` : text;
   };
+  const wasDelivered = (pageId: string | null): boolean =>
+    Boolean(pageId?.trim());
+  const versionTitle = (shortVersion: string, buildVersion: string): string => {
+    const build = buildVersion.trim();
+    return build.length > 0
+      ? `Version ${shortVersion} (${build})`
+      : `Version ${shortVersion}`;
+  };
 
   instance.get("/api/me/workspaces/by-slug/:slug/summaries", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
@@ -576,7 +584,7 @@ export const handler = async (
           prNumber: r.prNumber,
           commitCount: null,
           shortVersion: null,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
         });
       }
     }
@@ -628,7 +636,7 @@ export const handler = async (
           prNumber: null,
           commitCount: r.commitCount,
           shortVersion: null,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
         });
       }
     }
@@ -665,7 +673,7 @@ export const handler = async (
         items.push({
           id: r.id,
           type: "version",
-          title: `Version ${r.shortVersion} (${r.buildVersion})`,
+          title: versionTitle(r.shortVersion, r.buildVersion),
           timestamp: r.createdAt,
           author: null,
           branch: r.branch,
@@ -676,7 +684,7 @@ export const handler = async (
           prNumber: null,
           commitCount: null,
           shortVersion: r.shortVersion,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
         });
       }
     }
@@ -818,7 +826,7 @@ export const handler = async (
             additions: r.additions,
             deletions: r.deletions,
             changedFiles: r.changedFiles,
-            delivered: r.notionPageId !== null,
+            delivered: wasDelivered(r.notionPageId),
             prNumber: r.prNumber,
             headSha: r.headSha,
           },
@@ -868,7 +876,7 @@ export const handler = async (
             additions: r.additions,
             deletions: r.deletions,
             changedFiles: r.changedFiles,
-            delivered: r.notionPageId !== null,
+            delivered: wasDelivered(r.notionPageId),
             commitCount: r.commitCount,
             compareUrl: r.compareUrl,
             prNumbers: r.prNumbers,
@@ -901,7 +909,7 @@ export const handler = async (
           ...base,
           id: r.id,
           type: "version",
-          title: `Version ${r.shortVersion} (${r.buildVersion})`,
+          title: versionTitle(r.shortVersion, r.buildVersion),
           timestamp: r.createdAt.toISOString(),
           author: null,
           branch: r.branch,
@@ -912,9 +920,9 @@ export const handler = async (
           additions: null,
           deletions: null,
           changedFiles: null,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
           shortVersion: r.shortVersion,
-          buildVersion: r.buildVersion,
+          buildVersion: r.buildVersion.trim() || null,
           headSha: r.headSha,
           prNumbers: r.prNumbers,
           sections: r.sections ?? null,

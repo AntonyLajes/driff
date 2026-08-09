@@ -106,6 +106,7 @@ const buildReleaseConfig = (
       workspace.releaseInfoPlistPath,
       workspace.releaseProjectPbxprojPath,
       workspace.releaseExpoAppConfigPath,
+      workspace.releaseVersionFilePath,
     ),
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
@@ -364,6 +365,8 @@ const buildRuntimeDependencies = async (
           infoPlistPath: workspace.releaseInfoPlistPath ?? "",
           projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
           expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
+          releaseProjectKind: workspace.releaseProjectKind,
+          releaseVersionFilePath: workspace.releaseVersionFilePath,
           releaseCompareRootSha: workspace.releaseCompareRootSha,
           releaseSummarizer,
           destination,

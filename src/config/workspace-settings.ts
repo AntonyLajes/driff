@@ -32,10 +32,7 @@ export interface MergedWorkspaceSettings {
 
 /** True when the workspace has a release version source configured (release notes can run). */
 export const hasReleaseVersionSource = (merged: MergedWorkspaceSettings): boolean =>
-  Boolean(merged.releaseProjectKind) &&
-  (Boolean(merged.releaseInfoPlistPath?.trim()) ||
-    Boolean(merged.releaseProjectPbxprojPath?.trim()) ||
-    Boolean(merged.releaseExpoAppConfigPath?.trim()));
+  Boolean(merged.releaseProjectKind) && Boolean(merged.releaseVersionFilePath?.trim());
 
 const firstNonBlank = (...candidates: ReadonlyArray<string | null | undefined>): string | null => {
   for (const raw of candidates) {
@@ -95,7 +92,7 @@ export const mergeWorkspaceSettingsRow = (
     const kind = parseReleaseProjectKind(unifiedKindRaw);
     if (!isSupportedReleaseProjectKind(kind)) {
       throw new Error(
-        `Workspace: release_project_kind "${kind}" is not supported yet. Use ios_plist, ios_pbx, or react_native_expo.`,
+        `Workspace: release_project_kind "${kind}" is not supported yet. Use ios_plist, ios_pbx, react_native_expo, or node_package.`,
       );
     }
     const applied = applyReleaseKindAndFilePath(kind, unifiedPathRaw);

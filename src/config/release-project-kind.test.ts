@@ -12,6 +12,7 @@ describe("config/release-project-kind", () => {
   it("should parse normalized kind strings", () => {
     expect(parseReleaseProjectKind("  IOS_PLIST ")).toBe("ios_plist");
     expect(parseReleaseProjectKind("react_native_expo")).toBe("react_native_expo");
+    expect(parseReleaseProjectKind("node_package")).toBe("node_package");
   });
 
   it("should reject unknown kinds", () => {
@@ -20,6 +21,7 @@ describe("config/release-project-kind", () => {
 
   it("should classify supported kinds", () => {
     expect(isSupportedReleaseProjectKind("ios_plist")).toBe(true);
+    expect(isSupportedReleaseProjectKind("node_package")).toBe(true);
     expect(isSupportedReleaseProjectKind("android_gradle")).toBe(false);
   });
 
@@ -51,11 +53,22 @@ describe("config/release-project-kind", () => {
     expect(() => applyReleaseKindAndFilePath("android_gradle", "a.gradle")).toThrow(/not implemented/);
   });
 
+  it("should keep package.json as a unified-only version source", () => {
+    expect(applyReleaseKindAndFilePath("node_package", "package.json")).toEqual({
+      releaseInfoPlistPath: null,
+      releaseProjectPbxprojPath: null,
+      releaseExpoAppConfigPath: null,
+    });
+  });
+
   it("should collect unique watch paths skipping blanks", () => {
     expect(collectVersionWatchPaths(" A ", "", "  A  ")).toEqual(["A"]);
     expect(
       collectVersionWatchPaths("p.plist", "x.pbxproj", "app.json"),
     ).toEqual(["p.plist", "x.pbxproj", "app.json"]);
+    expect(collectVersionWatchPaths(null, null, null, "package.json")).toEqual([
+      "package.json",
+    ]);
   });
 
   it("should infer kind from legacy with expo precedence", () => {

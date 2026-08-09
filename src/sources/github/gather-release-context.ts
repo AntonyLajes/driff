@@ -4,6 +4,7 @@ import {
   type OctokitLike,
 } from "@/sources/github/github-installation.js";
 import { execute as parseExpoAppConfig } from "@/lib/expo-app-config-version.js";
+import { execute as parsePackageJsonVersion } from "@/lib/package-json-version.js";
 import { execute as parsePbxVersion } from "@/lib/pbxproj-version.js";
 import {
   type IosPlistVersion,
@@ -115,6 +116,10 @@ export interface ExecuteInput {
    * (takes precedence over plist / pbxproj).
    */
   expoAppConfigPath?: string | null;
+  /** Unified project kind used for non-mobile version markers such as package.json. */
+  releaseProjectKind?: string | null;
+  /** Repo-relative version file paired with releaseProjectKind. */
+  releaseVersionFilePath?: string | null;
   octokitFactory?: (auth: string) => OctokitLike;
 }
 
@@ -210,8 +215,39 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
 
   let beforeVersion: IosPlistVersion | null;
   let afterVersion: IosPlistVersion;
+  const unifiedKind = input.releaseProjectKind?.trim() ?? "";
+  const unifiedPath = input.releaseVersionFilePath?.trim() ?? "";
   const expoPath = input.expoAppConfigPath?.trim() ?? "";
-  if (expoPath.length > 0) {
+  if (unifiedKind === "node_package") {
+    if (unifiedPath.length === 0) {
+      throw new Error("package.json path is required for node_package releases.");
+    }
+    const [beforePackage, afterPackage] = await Promise.all([
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: unifiedPath,
+        ref: trimmedBefore,
+      }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: unifiedPath,
+        ref: trimmedAfter,
+      }),
+    ]);
+    const b = parsePackageJsonVersion(beforePackage);
+    const a = parsePackageJsonVersion(afterPackage);
+    if (!a) {
+      throw new Error(
+        "Could not read a non-empty version field from package.json at the after ref.",
+      );
+    }
+    beforeVersion = b;
+    afterVersion = a;
+  } else if (expoPath.length > 0) {
     const [beforeExpo, afterExpo] = await Promise.all([
       fetchFileTextAt({ octokit, owner, repo: repository, path: expoPath, ref: trimmedBefore }),
       fetchFileTextAt({ octokit, owner, repo: repository, path: expoPath, ref: trimmedAfter }),

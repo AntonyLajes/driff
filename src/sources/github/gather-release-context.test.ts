@@ -211,6 +211,61 @@ describe("sources/github/gather-release-context execute", () => {
     expect(result.afterVersion).toEqual({ short: "1.2.0", build: "55" });
   });
 
+  it("should read a web release from package.json without a mobile build number", async () => {
+    const appOctokit = buildAppOctokitMock(7, "inst-token");
+    const installationRequest = (async (route, parameters) => {
+      if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+        const ref = (parameters as { ref?: string } | undefined)?.ref;
+        const text = JSON.stringify({
+          name: "web-app",
+          version: ref === "beforebbb" ? "2.0.0" : "2.1.0",
+        });
+        return {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(text, "utf8").toString("base64"),
+          },
+        };
+      }
+      if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
+        return {
+          data: {
+            total_commits: 1,
+            commits: [{ sha: "s1", commit: { message: "feat: web release" } }],
+            html_url: "https://github.com/o/r/compare/before...after",
+            files: [{ filename: "package.json", status: "modified" }],
+          },
+        };
+      }
+      throw new Error(`Unexpected installation route: ${String(route)}`);
+    }) as OctokitLike["request"];
+    const installationOctokit: OctokitLike = {
+      request: installationRequest,
+      pulls: { get: vi.fn(), listFiles: vi.fn() },
+    };
+    const octokitFactory = vi
+      .fn<(auth: string) => OctokitLike>()
+      .mockReturnValueOnce(appOctokit)
+      .mockReturnValueOnce(installationOctokit);
+
+    const result = await execute({
+      appId: "1",
+      privateKey: buildPrivateKey(),
+      repo: "o/r",
+      beforeSha: "beforebbb",
+      afterSha: "afterccc",
+      infoPlistPath: "",
+      releaseProjectKind: "node_package",
+      releaseVersionFilePath: "package.json",
+      octokitFactory,
+    });
+
+    expect(result.previousVersionKey).toBe("2.0.0");
+    expect(result.newVersionKey).toBe("2.1.0");
+    expect(result.afterVersion).toEqual({ short: "2.1.0", build: "" });
+  });
+
   it("should use compareBeforeSha only for GitHub compare, not for plist reads", async () => {
     const compareBefore = "w".repeat(40);
     const appOctokit = buildAppOctokitMock(7, "inst-token");

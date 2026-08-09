@@ -5,6 +5,7 @@ export const releaseProjectKindSchema = z.enum([
   "ios_plist",
   "ios_pbx",
   "react_native_expo",
+  "node_package",
   "android_gradle",
   "flutter_pubspec",
 ]);
@@ -15,6 +16,7 @@ const SUPPORTED: ReadonlySet<ReleaseProjectKind> = new Set([
   "ios_plist",
   "ios_pbx",
   "react_native_expo",
+  "node_package",
 ]);
 
 export const isSupportedReleaseProjectKind = (kind: ReleaseProjectKind): boolean => {
@@ -49,10 +51,12 @@ export const applyReleaseKindAndFilePath = (
       return { releaseInfoPlistPath: "", releaseProjectPbxprojPath: path, releaseExpoAppConfigPath: null };
     case "react_native_expo":
       return { releaseInfoPlistPath: "", releaseProjectPbxprojPath: null, releaseExpoAppConfigPath: path };
+    case "node_package":
+      return { releaseInfoPlistPath: null, releaseProjectPbxprojPath: null, releaseExpoAppConfigPath: null };
     case "android_gradle":
     case "flutter_pubspec":
       throw new Error(
-        `release_project_kind "${kind}" is not implemented yet; use ios_plist, ios_pbx, or react_native_expo.`,
+        `release_project_kind "${kind}" is not implemented yet; use ios_plist, ios_pbx, react_native_expo, or node_package.`,
       );
     default: {
       const _exhaustive: never = kind;
@@ -66,10 +70,16 @@ export const collectVersionWatchPaths = (
   releaseInfoPlistPath: string | null,
   releaseProjectPbxprojPath: string | null,
   releaseExpoAppConfigPath: string | null,
+  releaseVersionFilePath: string | null = null,
 ): string[] => {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const raw of [releaseInfoPlistPath, releaseProjectPbxprojPath, releaseExpoAppConfigPath]) {
+  for (const raw of [
+    releaseInfoPlistPath,
+    releaseProjectPbxprojPath,
+    releaseExpoAppConfigPath,
+    releaseVersionFilePath,
+  ]) {
     const t = raw?.trim();
     if (t && t.length > 0 && !seen.has(t)) {
       seen.add(t);

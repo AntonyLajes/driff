@@ -139,6 +139,18 @@ export const inferRepoKind = async (
             signals.push("react_native_no_android_gradle");
           }
         }
+        if (typeof (pkg as { version?: unknown }).version === "string") {
+          const version = (pkg as { version: string }).version.trim();
+          if (version.length > 0) {
+            return {
+              suggestedKind: "node_package",
+              confidence: "high",
+              defaultBranch,
+              versionFilePath: "package.json",
+              signals: [...signals, "file:package.json", "field:version"],
+            };
+          }
+        }
       } catch {
         signals.push("package_json_invalid");
       }

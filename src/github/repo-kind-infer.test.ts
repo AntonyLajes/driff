@@ -122,6 +122,26 @@ describe("github/repo-kind-infer", () => {
     });
   });
 
+  it("detects a versioned Node or web project from package.json", async () => {
+    const { octokit } = buildOctokit({
+      root: [{ type: "file", name: "package.json" }],
+      files: {
+        "package.json": encoded(
+          JSON.stringify({ name: "web-app", version: "3.2.1" }),
+        ),
+      },
+      defaultBranch: "main",
+    });
+
+    await expect(inferRepoKind(octokit, "acme/app")).resolves.toEqual({
+      suggestedKind: "node_package",
+      confidence: "high",
+      defaultBranch: "main",
+      versionFilePath: "package.json",
+      signals: ["github:acme/app", "file:package.json", "field:version"],
+    });
+  });
+
   it("detects the Android version file in a React Native repository", async () => {
     const { octokit } = buildOctokit({
       root: [

@@ -366,10 +366,14 @@ export const handler = async (
       .orderBy(desc(releasesTable.createdAt))
       .limit(limit);
     for (const row of versionRows) {
+      const build = row.buildVersion.trim();
       pushItem(row.repo, {
         id: row.id,
         type: "version",
-        title: `v${row.shortVersion} (${row.buildVersion})`,
+        title:
+          build.length > 0
+            ? `v${row.shortVersion} (${build})`
+            : `v${row.shortVersion}`,
         timestamp: row.createdAt,
       });
     }

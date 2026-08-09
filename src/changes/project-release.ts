@@ -77,7 +77,7 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
           workspaceId: input.workspaceId,
           displayVersion: input.shortVersion,
           normalizedVersion: input.versionKey,
-          buildVersion: input.buildVersion,
+          buildVersion: input.buildVersion.trim() || null,
           title: input.title,
           changelog: input.changelog,
           sections: input.sections,
@@ -102,7 +102,7 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
           set: {
             displayVersion: input.shortVersion,
             normalizedVersion: input.versionKey,
-            buildVersion: input.buildVersion,
+            buildVersion: input.buildVersion.trim() || null,
             title: input.title,
             changelog: input.changelog,
             sections: input.sections,

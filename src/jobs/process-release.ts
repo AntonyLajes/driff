@@ -7,6 +7,7 @@ import type { ReleaseSummarizer } from "@/llm/release-summarizer.js";
 import { recordLlmUsage } from "@/llm/usage.js";
 import { execute as buildStandaloneHints } from "@/lib/release-commit-hints.js";
 import { execute as resolveReleaseCompareBefore } from "@/jobs/resolve-release-compare-before.js";
+import type { ReleaseProjectKind } from "@/config/release-project-kind.js";
 import { execute as gatherReleaseContext } from "@/sources/github/gather-release-context.js";
 
 export interface ProcessReleaseJobPayload {
@@ -26,6 +27,8 @@ export interface ExecuteInput {
   projectPbxprojPath: string | null;
   /** Expo / RN app config path; when set, version is read from this file (see `expo-app-config-version`). */
   expoAppConfigPath: string | null;
+  releaseProjectKind?: ReleaseProjectKind | null;
+  releaseVersionFilePath?: string | null;
   promptVersion: number;
   releaseCompareRootSha: string | null;
   canonicalProjection?: {
@@ -77,6 +80,8 @@ export const execute = (input: ExecuteInput) => {
         infoPlistPath: input.infoPlistPath,
         projectPbxprojPath: input.projectPbxprojPath,
         expoAppConfigPath: input.expoAppConfigPath,
+        releaseProjectKind: input.releaseProjectKind,
+        releaseVersionFilePath: input.releaseVersionFilePath,
       });
 
       if (
@@ -116,6 +121,8 @@ export const execute = (input: ExecuteInput) => {
               infoPlistPath: input.infoPlistPath,
               projectPbxprojPath: input.projectPbxprojPath,
               expoAppConfigPath: input.expoAppConfigPath,
+              releaseProjectKind: input.releaseProjectKind,
+              releaseVersionFilePath: input.releaseVersionFilePath,
             });
 
       const existing = await input.db
