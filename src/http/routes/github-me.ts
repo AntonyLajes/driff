@@ -3,7 +3,10 @@ import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
-import { signGithubOAuthState, verifyGithubOAuthState } from "@/auth/github-oauth-state.js";
+import {
+  signGithubOAuthState,
+  verifyGithubOAuthState,
+} from "@/auth/github-oauth-state.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { sealSecret } from "@/auth/token-aes.js";
 import type { Env } from "@/config/env.js";
@@ -15,6 +18,13 @@ import { loadUserGithubAccessToken } from "@/github/load-user-github-access-toke
 import { inferRepoKind } from "@/github/repo-kind-infer.js";
 
 const GITHUB_OAUTH_SCOPES = "read:user repo";
+const REQUIRED_GITHUB_SCOPES = GITHUB_OAUTH_SCOPES.split(" ");
+
+const scopeList = (scope: string | null): string[] =>
+  scope
+    ?.split(/[\s,]+/u)
+    .map((value) => value.trim())
+    .filter(Boolean) ?? [];
 
 const readBearerToken = (authorization: string | undefined): string | null => {
   if (authorization === undefined || !authorization.startsWith("Bearer ")) {
@@ -101,13 +111,17 @@ const exchangeGithubOAuthCode = async (input: {
   }
   return {
     access_token: json.access_token,
-    refresh_token: typeof json.refresh_token === "string" ? json.refresh_token : undefined,
+    refresh_token:
+      typeof json.refresh_token === "string" ? json.refresh_token : undefined,
     scope: typeof json.scope === "string" ? json.scope : undefined,
-    expires_in: typeof json.expires_in === "number" ? json.expires_in : undefined,
+    expires_in:
+      typeof json.expires_in === "number" ? json.expires_in : undefined,
   };
 };
 
-const fetchGithubUserLogin = async (accessToken: string): Promise<{ id: string; login: string }> => {
+const fetchGithubUserLogin = async (
+  accessToken: string,
+): Promise<{ id: string; login: string }> => {
   const response = await fetch("https://api.github.com/user", {
     headers: {
       Accept: "application/vnd.github+json",
@@ -135,13 +149,18 @@ export const handler = async (
   instance.post("/api/me/github/oauth/start", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const state = signGithubOAuthState({ userId: session.userId, secret: input.jwtSecret });
+    const state = signGithubOAuthState({
+      userId: session.userId,
+      secret: input.jwtSecret,
+    });
     const params = new URLSearchParams({
       client_id: input.githubClientId,
       redirect_uri: redirectUri,
@@ -186,7 +205,10 @@ export const handler = async (
           ? new Date(now.getTime() + tokenBundle.expires_in * 1000)
           : null;
 
-      const accessCipher = sealSecret(tokenBundle.access_token, input.jwtSecret);
+      const accessCipher = sealSecret(
+        tokenBundle.access_token,
+        input.jwtSecret,
+      );
       const refreshCipher =
         tokenBundle.refresh_token !== undefined
           ? sealSecret(tokenBundle.refresh_token, input.jwtSecret)
@@ -207,7 +229,10 @@ export const handler = async (
           updatedAt: now,
         })
         .onConflictDoUpdate({
-          target: [userSourceConnectionsTable.userId, userSourceConnectionsTable.provider],
+          target: [
+            userSourceConnectionsTable.userId,
+            userSourceConnectionsTable.provider,
+          ],
           set: {
             accessTokenCiphertext: accessCipher,
             refreshTokenCiphertext: refreshCipher,
@@ -219,7 +244,10 @@ export const handler = async (
           },
         });
 
-      return redirectWith({ github_oauth: "success", github_login: ghUser.login });
+      return redirectWith({
+        github_oauth: "success",
+        github_login: ghUser.login,
+      });
     } catch (err) {
       request.log.warn({ err }, "github_oauth_callback_failed");
       return redirectWith({ github_oauth: "exchange_failed" });
@@ -229,7 +257,9 @@ export const handler = async (
   instance.get("/api/me/github/status", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
@@ -238,6 +268,8 @@ export const handler = async (
     const rows = await input.db
       .select({
         externalLogin: userSourceConnectionsTable.externalLogin,
+        scope: userSourceConnectionsTable.scope,
+        tokenExpiresAt: userSourceConnectionsTable.tokenExpiresAt,
       })
       .from(userSourceConnectionsTable)
       .where(
@@ -249,18 +281,83 @@ export const handler = async (
       .limit(1);
     const row = rows[0];
     if (row === undefined) {
-      return reply.send({ connected: false });
+      return reply.send({ connected: false, connectionState: "disconnected" });
+    }
+    const grantedScopes = scopeList(row.scope ?? null);
+    const missingScopes =
+      row.scope === null || row.scope === undefined
+        ? []
+        : REQUIRED_GITHUB_SCOPES.filter(
+            (scope) => !grantedScopes.includes(scope),
+          );
+    if (
+      row.tokenExpiresAt instanceof Date &&
+      row.tokenExpiresAt.getTime() <= Date.now()
+    ) {
+      return reply.send({
+        connected: false,
+        connectionState: "expired",
+        githubLogin: row.externalLogin ?? undefined,
+        missingScopes,
+      });
+    }
+    if (missingScopes.length > 0) {
+      return reply.send({
+        connected: false,
+        connectionState: "permissions",
+        githubLogin: row.externalLogin ?? undefined,
+        missingScopes,
+      });
+    }
+
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
+    if (accessToken === null) {
+      return reply.send({
+        connected: false,
+        connectionState: "revoked",
+        githubLogin: row.externalLogin ?? undefined,
+        missingScopes,
+      });
+    }
+    if (typeof accessToken === "string") {
+      try {
+        const octokit = new Octokit({ auth: accessToken });
+        await octokit.rest.users.getAuthenticated();
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "status" in error &&
+          error.status === 401
+        ) {
+          return reply.send({
+            connected: false,
+            connectionState: "revoked",
+            githubLogin: row.externalLogin ?? undefined,
+            missingScopes,
+          });
+        }
+        request.log.warn({ error }, "github_status_validation_failed");
+      }
     }
     return reply.send({
       connected: true,
+      connectionState: "active",
       githubLogin: row.externalLogin ?? undefined,
+      missingScopes,
     });
   });
 
   instance.delete("/api/me/github/disconnect", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
@@ -285,13 +382,19 @@ export const handler = async (
   instance.get("/api/me/github/repos", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
     if (accessToken === null) {
       return reply.status(400).send({ error: "github_not_connected" });
     }
@@ -335,13 +438,19 @@ export const handler = async (
   instance.post("/api/me/github/repo/infer", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
     if (accessToken === null) {
       return reply.status(400).send({ error: "github_not_connected" });
     }
@@ -378,13 +487,19 @@ export const handler = async (
   instance.get("/api/me/github/repo/branches", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
     if (accessToken === null) {
       return reply.status(400).send({ error: "github_not_connected" });
     }
@@ -456,13 +571,19 @@ export const handler = async (
   instance.get("/api/me/github/repo/contents", async (request, reply) => {
     const bearer = readBearerToken(request.headers.authorization);
     if (bearer === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(bearer, input.jwtSecret);
     if (session === null) {
       return reply.status(401).send({ error: "invalid_session" });
     }
-    const accessToken = await loadUserGithubAccessToken(input.db, session.userId, input.jwtSecret);
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
     if (accessToken === null) {
       return reply.status(400).send({ error: "github_not_connected" });
     }
@@ -490,9 +611,12 @@ export const handler = async (
         ...(refParam.length > 0 ? { ref: refParam } : {}),
       });
       if (!Array.isArray(data)) {
-        const name = "name" in data && typeof data.name === "string" ? data.name : "";
+        const name =
+          "name" in data && typeof data.name === "string" ? data.name : "";
         const path =
-          "path" in data && typeof data.path === "string" ? data.path : pathParam;
+          "path" in data && typeof data.path === "string"
+            ? data.path
+            : pathParam;
         return reply.send({
           ref: refParam,
           requestedPath: pathParam,

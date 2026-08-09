@@ -9,6 +9,7 @@ const octokitMocks = vi.hoisted(() => ({
   get: vi.fn(),
   listBranches: vi.fn(),
   getContent: vi.fn(),
+  getAuthenticated: vi.fn(),
 }));
 
 vi.mock("@octokit/rest", () => ({
@@ -20,6 +21,7 @@ vi.mock("@octokit/rest", () => ({
         listBranches: octokitMocks.listBranches,
         getContent: octokitMocks.getContent,
       },
+      users: { getAuthenticated: octokitMocks.getAuthenticated },
     };
   },
 }));
@@ -134,7 +136,9 @@ describe("http/routes/github-me", () => {
 
     expect(missing.statusCode).toBe(401);
     expect(invalid.json()).toEqual({ error: "invalid_session" });
-    const authorizeUrl = new URL(success.json<{ authorizeUrl: string }>().authorizeUrl);
+    const authorizeUrl = new URL(
+      success.json<{ authorizeUrl: string }>().authorizeUrl,
+    );
     expect(authorizeUrl.origin + authorizeUrl.pathname).toBe(
       "https://github.com/login/oauth/authorize",
     );
@@ -155,27 +159,39 @@ describe("http/routes/github-me", () => {
     ["GET", "/api/me/github/repo/contents?repo=owner/repo"],
   ] as const;
 
-  it.each(protectedGithubRoutes)("protects %s %s without authorization", async (method, url) => {
-    const server = await register();
-    const response = await server.inject({
-      method,
-      url,
-      payload: method === "POST" && url.endsWith("infer") ? { repoFullName: "owner/repo" } : undefined,
-    });
-    expect(response.statusCode).toBe(401);
-  });
+  it.each(protectedGithubRoutes)(
+    "protects %s %s without authorization",
+    async (method, url) => {
+      const server = await register();
+      const response = await server.inject({
+        method,
+        url,
+        payload:
+          method === "POST" && url.endsWith("infer")
+            ? { repoFullName: "owner/repo" }
+            : undefined,
+      });
+      expect(response.statusCode).toBe(401);
+    },
+  );
 
-  it.each(protectedGithubRoutes)("rejects an invalid JWT for %s %s", async (method, url) => {
-    const server = await register();
-    const response = await server.inject({
-      method,
-      url,
-      headers: { authorization: "Bearer invalid" },
-      payload: method === "POST" && url.endsWith("infer") ? { repoFullName: "owner/repo" } : undefined,
-    });
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toEqual({ error: "invalid_session" });
-  });
+  it.each(protectedGithubRoutes)(
+    "rejects an invalid JWT for %s %s",
+    async (method, url) => {
+      const server = await register();
+      const response = await server.inject({
+        method,
+        url,
+        headers: { authorization: "Bearer invalid" },
+        payload:
+          method === "POST" && url.endsWith("infer")
+            ? { repoFullName: "owner/repo" }
+            : undefined,
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toEqual({ error: "invalid_session" });
+    },
+  );
 
   it("handles missing and invalid OAuth callback parameters", async () => {
     const server = await register();
@@ -216,7 +232,9 @@ describe("http/routes/github-me", () => {
         ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ id: 42, login: "octocat" }), { status: 200 }),
+        new Response(JSON.stringify({ id: 42, login: "octocat" }), {
+          status: 200,
+        }),
       );
 
     const response = await server.inject({
@@ -287,10 +305,92 @@ describe("http/routes/github-me", () => {
       headers: authorization,
     });
 
-    expect(connected.json()).toEqual({ connected: true, githubLogin: "octocat" });
-    expect(disconnected.json()).toEqual({ connected: false });
+    expect(connected.json()).toEqual({
+      connected: true,
+      connectionState: "active",
+      githubLogin: "octocat",
+      missingScopes: [],
+    });
+    expect(disconnected.json()).toEqual({
+      connected: false,
+      connectionState: "disconnected",
+    });
     expect(removed.statusCode).toBe(204);
     expect(whereDelete).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      name: "expired",
+      row: {
+        externalLogin: "octocat",
+        scope: "read:user repo",
+        tokenExpiresAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+      expected: { connectionState: "expired", missingScopes: [] },
+    },
+    {
+      name: "missing permissions",
+      row: {
+        externalLogin: "octocat",
+        scope: "read:user",
+        tokenExpiresAt: null,
+      },
+      expected: { connectionState: "permissions", missingScopes: ["repo"] },
+    },
+  ])(
+    "reports a $name connection that needs reauthorization",
+    async ({ row, expected }) => {
+      const select = vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [row]) })),
+        })),
+      }));
+      const server = await register({ select });
+
+      const response = await server.inject({
+        method: "GET",
+        url: "/api/me/github/status",
+        headers: authorization,
+      });
+
+      expect(response.json()).toMatchObject({
+        connected: false,
+        githubLogin: "octocat",
+        ...expected,
+      });
+    },
+  );
+
+  it("reports a provider-revoked token", async () => {
+    const select = vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [
+            {
+              externalLogin: "octocat",
+              scope: "read:user repo",
+              tokenExpiresAt: null,
+            },
+          ]),
+        })),
+      })),
+    }));
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("revoked-token");
+    octokitMocks.getAuthenticated.mockRejectedValue({ status: 401 });
+    const server = await register({ select });
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/github/status",
+      headers: authorization,
+    });
+
+    expect(response.json()).toMatchObject({
+      connected: false,
+      connectionState: "revoked",
+      githubLogin: "octocat",
+    });
   });
 
   it("lists normalized repositories with pagination metadata", async () => {
@@ -366,7 +466,9 @@ describe("http/routes/github-me", () => {
         versionFilePath: "app.json",
         signals: ["dependency:expo"],
       })
-      .mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("missing"), { status: 404 }),
+      )
       .mockRejectedValueOnce(new Error("network"));
     const server = await register();
     const request = () =>
@@ -380,7 +482,9 @@ describe("http/routes/github-me", () => {
     expect((await request()).json()).toMatchObject({
       inference: { suggestedKind: "react_native_expo" },
     });
-    expect((await request()).json()).toEqual({ error: "repo_not_found_or_no_access" });
+    expect((await request()).json()).toEqual({
+      error: "repo_not_found_or_no_access",
+    });
     expect((await request()).json()).toEqual({ error: "infer_failed" });
     const invalid = await server.inject({
       method: "POST",
@@ -396,7 +500,9 @@ describe("http/routes/github-me", () => {
     octokitMocks.get.mockResolvedValue({ data: { default_branch: "develop" } });
     octokitMocks.listBranches
       .mockResolvedValueOnce({
-        data: Array.from({ length: 100 }, (_, index) => ({ name: `branch-${index}` })),
+        data: Array.from({ length: 100 }, (_, index) => ({
+          name: `branch-${index}`,
+        })),
       })
       .mockResolvedValueOnce({ data: [{ name: "last" }] });
     const server = await register();
@@ -408,7 +514,9 @@ describe("http/routes/github-me", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json<{ branches: string[]; defaultBranch: string }>()).toMatchObject({
+    expect(
+      response.json<{ branches: string[]; defaultBranch: string }>(),
+    ).toMatchObject({
       defaultBranch: "develop",
     });
     expect(response.json<{ branches: string[] }>().branches).toHaveLength(101);
@@ -418,7 +526,9 @@ describe("http/routes/github-me", () => {
   it("validates branch queries and translates GitHub failures", async () => {
     vi.mocked(loadUserGithubAccessToken).mockResolvedValue("token");
     octokitMocks.get
-      .mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("missing"), { status: 404 }),
+      )
       .mockRejectedValueOnce(new Error("network"));
     const server = await register();
 
@@ -481,8 +591,12 @@ describe("http/routes/github-me", () => {
   it("supports a file response and translates content failures", async () => {
     vi.mocked(loadUserGithubAccessToken).mockResolvedValue("token");
     octokitMocks.getContent
-      .mockResolvedValueOnce({ data: { type: "file", name: "app.json", path: "app.json" } })
-      .mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 }))
+      .mockResolvedValueOnce({
+        data: { type: "file", name: "app.json", path: "app.json" },
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("missing"), { status: 404 }),
+      )
       .mockRejectedValueOnce(new Error("network"));
     const server = await register();
     const request = () =>
@@ -497,7 +611,9 @@ describe("http/routes/github-me", () => {
       requestedPath: "app.json",
       entries: [{ name: "app.json", path: "app.json", type: "file" }],
     });
-    expect((await request()).json()).toEqual({ error: "repo_or_path_not_found" });
+    expect((await request()).json()).toEqual({
+      error: "repo_or_path_not_found",
+    });
     expect((await request()).json()).toEqual({ error: "contents_failed" });
   });
 });
