@@ -2,6 +2,7 @@ import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { signSessionJwt } from "@/auth/session-jwt.js";
+import { DEFAULT_HISTORY_EXCLUDED_PATHS } from "@/config/history-content-filter.js";
 import { handler } from "@/http/routes/workspaces-me.js";
 
 vi.mock("@/workspaces/infer-workspace-settings.js", () => ({
@@ -1511,7 +1512,13 @@ describe("http/routes/workspaces-me", () => {
     expect(detail.json()).toEqual({
       workspace: expect.objectContaining({ slug: "ride-pack" }),
     });
-    expect(settings.json()).toEqual({ settings: settingsRow });
+    expect(settings.json()).toEqual({
+      settings: {
+        ...settingsRow,
+        historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: [],
+      },
+    });
   });
 
   it("returns empty settings when the workspace has never been configured", async () => {
@@ -1537,6 +1544,8 @@ describe("http/routes/workspaces-me", () => {
         releaseProjectKind: null,
         releaseVersionFilePath: null,
         releaseVersionBranch: null,
+        historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: [],
       },
     });
   });
@@ -1702,6 +1711,8 @@ describe("http/routes/workspaces-me", () => {
     const resultRow = {
       pushSummaryBranches: ["main", "develop"],
       prSummaryBaseBranches: [],
+      historyExcludedPaths: ["dist/", "*.generated.*"],
+      historyExcludedActors: ["dependabot[bot]"],
       releaseProjectKind: "react_native_expo",
       releaseVersionFilePath: "app.json",
       releaseVersionBranch: "main",
@@ -1728,6 +1739,8 @@ describe("http/routes/workspaces-me", () => {
       payload: {
         pushSummaryBranches: [" main ", " ", " develop "],
         prSummaryBaseBranches: [],
+        historyExcludedPaths: [" dist/ ", "*.generated.*", "dist/"],
+        historyExcludedActors: [" dependabot[bot] "],
         releaseProjectKind: "react_native_expo",
         releaseVersionFilePath: " app.json ",
         releaseVersionBranch: " main ",
@@ -1735,11 +1748,15 @@ describe("http/routes/workspaces-me", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ settings: resultRow });
+    expect(response.json()).toEqual({
+      settings: resultRow,
+    });
     expect(set).toHaveBeenCalledWith(
       expect.objectContaining({
         pushSummaryBranches: ["main", "develop"],
         prSummaryBaseBranches: [],
+        historyExcludedPaths: ["dist/", "*.generated.*"],
+        historyExcludedActors: ["dependabot[bot]"],
         releaseProjectKind: "react_native_expo",
         releaseVersionFilePath: "app.json",
         releaseExpoAppConfigPath: "app.json",
@@ -1792,6 +1809,8 @@ describe("http/routes/workspaces-me", () => {
         releaseProjectKind: null,
         releaseVersionFilePath: null,
         releaseVersionBranch: null,
+        historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: [],
       }),
     );
   });
@@ -1833,6 +1852,8 @@ describe("http/routes/workspaces-me", () => {
         releaseProjectKind: null,
         releaseVersionFilePath: null,
         releaseVersionBranch: null,
+        historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: [],
       },
     });
   });

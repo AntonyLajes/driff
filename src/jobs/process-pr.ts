@@ -7,6 +7,11 @@ import { pullRequestsTable } from "@/db/schema.js";
 import type { Summarizer } from "@/llm/summarizer.js";
 import { recordLlmUsage } from "@/llm/usage.js";
 import type { Source } from "@/sources/source.js";
+import {
+  filterHistoryDiff,
+  isHistoryActorExcluded,
+  isHistoryPathExcluded,
+} from "@/config/history-content-filter.js";
 
 export interface ProcessPrJobPayload {
   repo: string;
@@ -21,6 +26,10 @@ export interface ExecuteInput {
   canonicalProjection?: {
     projector: PullRequestProjector;
     workspaceId: string;
+  };
+  contentFilter?: {
+    excludedPaths: readonly string[];
+    excludedActors: readonly string[];
   };
   promptVersion: number;
 }
@@ -58,10 +67,26 @@ export const execute = (input: ExecuteInput) => {
         return;
       }
 
-      const pullRequest = await input.source.fetchPullRequest(
+      const fetchedPullRequest = await input.source.fetchPullRequest(
         jobPayload.repo,
         jobPayload.prNumber,
       );
+      const excludedPaths = input.contentFilter?.excludedPaths ?? [];
+      const excludedActors = input.contentFilter?.excludedActors ?? [];
+      if (isHistoryActorExcluded(fetchedPullRequest.author, excludedActors)) {
+        return;
+      }
+      const files = fetchedPullRequest.files.filter(
+        (file) => !isHistoryPathExcluded(file.path, excludedPaths),
+      );
+      if (fetchedPullRequest.files.length > 0 && files.length === 0) {
+        return;
+      }
+      const pullRequest = {
+        ...fetchedPullRequest,
+        files,
+        diff: filterHistoryDiff(fetchedPullRequest.diff, excludedPaths),
+      };
       const summary = await input.summarizer.summarizePR({ pullRequest });
       const publishResult = await publishBestEffort("publishPR", () =>
         input.destination.publishPR({

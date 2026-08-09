@@ -351,6 +351,10 @@ const buildRuntimeDependencies = async (
             projector: createPullRequestProjector({ db }),
             workspaceId: workspace.workspaceId,
           },
+          contentFilter: {
+            excludedPaths: workspace.historyExcludedPaths,
+            excludedActors: workspace.historyExcludedActors,
+          },
           promptVersion: input.promptVersion ?? 1,
         });
         await handler.execute(payload);
@@ -410,6 +414,10 @@ const buildRuntimeDependencies = async (
           canonicalProjection: {
             projector: createPushProjector({ db }),
             workspaceId: workspace.workspaceId,
+          },
+          contentFilter: {
+            excludedPaths: workspace.historyExcludedPaths,
+            excludedActors: workspace.historyExcludedActors,
           },
           promptVersion: input.pushPromptVersion ?? 1,
         });

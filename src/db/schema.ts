@@ -500,6 +500,10 @@ export const workspaceSettingsTable = pgTable(
      * default branch (`workspaces.repo_default_branch`).
      */
     pushSummaryBranches: jsonb("push_summary_branches").$type<string[]>(),
+    /** Paths/globs omitted before history is summarized. Empty explicitly disables defaults. */
+    historyExcludedPaths: jsonb("history_excluded_paths").$type<string[]>(),
+    /** GitHub actor logins omitted before history is summarized. */
+    historyExcludedActors: jsonb("history_excluded_actors").$type<string[]>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

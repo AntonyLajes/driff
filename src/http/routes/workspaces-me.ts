@@ -5,6 +5,7 @@ import { and, count, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
+import { DEFAULT_HISTORY_EXCLUDED_PATHS } from "@/config/history-content-filter.js";
 import {
   applyReleaseKindAndFilePath,
   isSupportedReleaseProjectKind,
@@ -108,6 +109,12 @@ const patchWorkspaceSettingsBodySchema = z
     releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
     releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
     releaseVersionBranch: z.union([z.string().max(255), z.null()]).optional(),
+    historyExcludedPaths: z
+      .union([z.array(z.string().min(1).max(512)).max(100), z.null()])
+      .optional(),
+    historyExcludedActors: z
+      .union([z.array(z.string().min(1).max(255)).max(100), z.null()])
+      .optional(),
   })
   .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" })
   .superRefine((body, ctx) => {
@@ -1067,6 +1074,8 @@ export const handler = async (
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
+        historyExcludedPaths: workspaceSettingsTable.historyExcludedPaths,
+        historyExcludedActors: workspaceSettingsTable.historyExcludedActors,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -1079,6 +1088,9 @@ export const handler = async (
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
+        historyExcludedPaths:
+          row?.historyExcludedPaths ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: row?.historyExcludedActors ?? [],
       },
     });
   });
@@ -1549,6 +1561,24 @@ export const handler = async (
           ? null
           : patch.prSummaryBaseBranches.map((b) => b.trim()).filter((b) => b.length > 0);
 
+    const mapHistoryList = (
+      value: string[] | null | undefined,
+      fallback: readonly string[],
+    ): string[] | undefined => {
+      if (value === undefined) {
+        return undefined;
+      }
+      if (value === null) {
+        return [...fallback];
+      }
+      return [...new Set(value.map((entry) => entry.trim()).filter((entry) => entry.length > 0))];
+    };
+    const nextHistoryExcludedPaths = mapHistoryList(
+      patch.historyExcludedPaths,
+      DEFAULT_HISTORY_EXCLUDED_PATHS,
+    );
+    const nextHistoryExcludedActors = mapHistoryList(patch.historyExcludedActors, []);
+
     const nonBlankOrNull = (s: string | null): string | null => {
       const t = s?.trim();
       return t && t.length > 0 ? t : null;
@@ -1605,6 +1635,12 @@ export const handler = async (
           ...(nextPrBaseBranches !== undefined
             ? { prSummaryBaseBranches: nextPrBaseBranches }
             : {}),
+          ...(nextHistoryExcludedPaths !== undefined
+            ? { historyExcludedPaths: nextHistoryExcludedPaths }
+            : {}),
+          ...(nextHistoryExcludedActors !== undefined
+            ? { historyExcludedActors: nextHistoryExcludedActors }
+            : {}),
           ...releasePatch,
           updatedAt: now,
         })
@@ -1614,6 +1650,12 @@ export const handler = async (
         workspaceId: wsId,
         pushSummaryBranches: nextPushBranches === undefined ? null : nextPushBranches,
         prSummaryBaseBranches: nextPrBaseBranches === undefined ? null : nextPrBaseBranches,
+        historyExcludedPaths:
+          nextHistoryExcludedPaths === undefined
+            ? [...DEFAULT_HISTORY_EXCLUDED_PATHS]
+            : nextHistoryExcludedPaths,
+        historyExcludedActors:
+          nextHistoryExcludedActors === undefined ? [] : nextHistoryExcludedActors,
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
         releaseVersionFilePath:
@@ -1644,6 +1686,8 @@ export const handler = async (
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
+        historyExcludedPaths: workspaceSettingsTable.historyExcludedPaths,
+        historyExcludedActors: workspaceSettingsTable.historyExcludedActors,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -1656,6 +1700,9 @@ export const handler = async (
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
+        historyExcludedPaths:
+          row?.historyExcludedPaths ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: row?.historyExcludedActors ?? [],
       },
     });
   });

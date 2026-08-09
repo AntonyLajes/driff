@@ -191,6 +191,103 @@ describe("jobs/process-pr execute", () => {
     );
   });
 
+  it("removes configured file noise before summarization and persistence", async () => {
+    const { db, values } = buildDbMock();
+    const summarizePR = vi.fn(async ({ pullRequest }) => {
+      expect(pullRequest.files).toEqual([
+        { path: "src/home.ts", additions: 12, deletions: 2 },
+      ]);
+      expect(pullRequest.diff).not.toContain("package-lock.json");
+      return {
+        title: "Home update",
+        summaryUserFacing: "Improves Home.",
+        summaryTechnical: "Updates Home actions.",
+        category: "feature" as const,
+        area: "home",
+        usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
+      };
+    });
+    const handler = execute({
+      db,
+      promptVersion: 1,
+      source: {
+        fetchPullRequest: vi.fn(async () => ({
+          repo: "acme/mobile-app",
+          prNumber: 102,
+          title: "feat: home",
+          body: null,
+          author: "octocat",
+          mergedAt: new Date("2026-04-25T19:10:00Z"),
+          headSha: "ghi789",
+          baseBranch: "main",
+          diff: [
+            "diff --git a/package-lock.json b/package-lock.json\n+lock",
+            "diff --git a/src/home.ts b/src/home.ts\n+feature",
+          ].join("\n"),
+          files: [
+            { path: "package-lock.json", additions: 500, deletions: 100 },
+            { path: "src/home.ts", additions: 12, deletions: 2 },
+          ],
+        })),
+      },
+      summarizer: { summarizePR, prompt: "prompt" },
+      destination: {
+        publishPR: vi.fn(async () => ({ pageId: "" })),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
+      contentFilter: {
+        excludedPaths: ["package-lock.json"],
+        excludedActors: [],
+      },
+    });
+
+    await handler.execute({ repo: "acme/mobile-app", prNumber: 102 });
+
+    expect(summarizePR).toHaveBeenCalledOnce();
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ additions: 12, deletions: 2, changedFiles: 1 }),
+    );
+  });
+
+  it("skips a pull request when its actor is excluded", async () => {
+    const { db, insert } = buildDbMock();
+    const summarizePR = vi.fn();
+    const handler = execute({
+      db,
+      promptVersion: 1,
+      source: {
+        fetchPullRequest: vi.fn(async () => ({
+          repo: "acme/mobile-app",
+          prNumber: 103,
+          title: "deps",
+          body: null,
+          author: "dependabot[bot]",
+          mergedAt: new Date(),
+          headSha: "bot",
+          baseBranch: "main",
+          diff: "diff",
+          files: [{ path: "package.json", additions: 1, deletions: 1 }],
+        })),
+      },
+      summarizer: { summarizePR, prompt: "prompt" },
+      destination: {
+        publishPR: vi.fn(),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
+      contentFilter: {
+        excludedPaths: [],
+        excludedActors: ["Dependabot[bot]"],
+      },
+    });
+
+    await handler.execute({ repo: "acme/mobile-app", prNumber: 103 });
+
+    expect(summarizePR).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
   it("should fail before projection when the legacy upsert returns no source id", async () => {
     const { db } = buildDbMock([]);
     const project = vi.fn(async () => undefined);

@@ -8,12 +8,18 @@ import {
 } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import { workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
+import {
+  cleanHistoryFilterValues,
+  DEFAULT_HISTORY_EXCLUDED_PATHS,
+} from "@/config/history-content-filter.js";
 
 export interface MergedWorkspaceSettings {
   /** Id of the workspace this config belongs to (used to load output destinations). */
   workspaceId: string;
   prSummaryBaseBranches: string[] | null;
   pushSummaryBranches: string[] | null;
+  historyExcludedPaths: string[];
+  historyExcludedActors: string[];
   /** Repo default branch from the linked workspace; used as push-summary branch fallback. */
   repoDefaultBranch: string | null;
   releaseInfoPlistPath: string | null;
@@ -48,6 +54,8 @@ const emptyMergedSettings = (workspaceId: string): MergedWorkspaceSettings => ({
   workspaceId,
   prSummaryBaseBranches: null,
   pushSummaryBranches: null,
+  historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+  historyExcludedActors: [],
   repoDefaultBranch: null,
   releaseInfoPlistPath: null,
   releaseVersionBranch: null,
@@ -125,11 +133,16 @@ export const mergeWorkspaceSettingsRow = (
 
   const prSummaryBaseBranches = cleanBranchList(row.prSummaryBaseBranches);
   const pushSummaryBranches = cleanBranchList(row.pushSummaryBranches);
+  const historyExcludedPaths =
+    cleanHistoryFilterValues(row.historyExcludedPaths) ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS];
+  const historyExcludedActors = cleanHistoryFilterValues(row.historyExcludedActors) ?? [];
 
   return {
     workspaceId: row.workspaceId ?? "",
     prSummaryBaseBranches,
     pushSummaryBranches,
+    historyExcludedPaths,
+    historyExcludedActors,
     repoDefaultBranch: null,
     releaseInfoPlistPath,
     releaseVersionBranch,

@@ -217,6 +217,48 @@ describe("jobs/process-push execute", () => {
     expect(deps.project).not.toHaveBeenCalled();
   });
 
+  it("skips a push containing only configured path noise", async () => {
+    mockedGather.mockResolvedValue(
+      buildContext({
+        files: [{ path: "package-lock.json", additions: 120, deletions: 20 }],
+        fileChangeSummary: "modified: package-lock.json",
+        diff: "diff --git a/package-lock.json b/package-lock.json\n+lock",
+      }),
+    );
+    const dbMock = buildDbMock();
+    const deps = buildDeps(dbMock);
+    const handler = execute({
+      ...deps,
+      contentFilter: {
+        excludedPaths: ["package-lock.json"],
+        excludedActors: [],
+      },
+    });
+
+    await handler.execute(payload);
+
+    expect(deps.summarizePush).not.toHaveBeenCalled();
+    expect(dbMock.insert).not.toHaveBeenCalled();
+  });
+
+  it("skips an excluded push actor before fetching compare context", async () => {
+    const dbMock = buildDbMock();
+    const deps = buildDeps(dbMock);
+    const handler = execute({
+      ...deps,
+      contentFilter: {
+        excludedPaths: [],
+        excludedActors: ["renovate[bot]"],
+      },
+    });
+
+    await handler.execute({ ...payload, pusher: "Renovate[bot]" });
+
+    expect(mockedGather).not.toHaveBeenCalled();
+    expect(dbMock.select).not.toHaveBeenCalled();
+    expect(deps.summarizePush).not.toHaveBeenCalled();
+  });
+
   it("fails before projection when the legacy upsert returns no source id", async () => {
     mockedGather.mockResolvedValue(buildContext());
     const dbMock = buildDbMock([[], []], []);

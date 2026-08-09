@@ -9,6 +9,12 @@ import type { PushSummarizer } from "@/llm/push-summarizer.js";
 import { recordLlmUsage } from "@/llm/usage.js";
 import { findPushOverlap } from "@/jobs/push-dedup.js";
 import { execute as gatherPushContext } from "@/sources/github/gather-push-context.js";
+import {
+  filterHistoryDiff,
+  filterHistoryFileSummary,
+  isHistoryActorExcluded,
+  isHistoryPathExcluded,
+} from "@/config/history-content-filter.js";
 
 export interface ProcessPushJobPayload {
   repo: string;
@@ -28,6 +34,10 @@ export interface ExecuteInput {
   canonicalProjection?: {
     projector: PushProjector;
     workspaceId: string;
+  };
+  contentFilter?: {
+    excludedPaths: readonly string[];
+    excludedActors: readonly string[];
   };
   promptVersion: number;
 }
@@ -83,6 +93,11 @@ export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
       const job = parsePayload(payload);
+      const excludedPaths = input.contentFilter?.excludedPaths ?? [];
+      const excludedActors = input.contentFilter?.excludedActors ?? [];
+      if (isHistoryActorExcluded(job.pusher, excludedActors)) {
+        return;
+      }
 
       const existing = await input.db
         .select({ id: pushesTable.id })
@@ -119,13 +134,40 @@ export const execute = (input: ExecuteInput) => {
         return;
       }
 
-      const context = await gatherPushContext({
+      const gatheredContext = await gatherPushContext({
         appId: input.appId,
         privateKey: input.privateKey,
         repo: job.repo,
         beforeSha: job.beforeSha,
         afterSha: job.afterSha,
       });
+
+      const includedFiles = gatheredContext.files?.filter(
+        (file) => !isHistoryPathExcluded(file.path, excludedPaths),
+      );
+      if (
+        gatheredContext.files !== undefined &&
+        gatheredContext.files.length > 0 &&
+        includedFiles?.length === 0
+      ) {
+        return;
+      }
+      const context = {
+        ...gatheredContext,
+        files: includedFiles,
+        fileChangeSummary: filterHistoryFileSummary(
+          gatheredContext.fileChangeSummary,
+          excludedPaths,
+        ),
+        diff: filterHistoryDiff(gatheredContext.diff, excludedPaths),
+        ...(includedFiles !== undefined
+          ? {
+              additions: includedFiles.reduce((sum, file) => sum + file.additions, 0),
+              deletions: includedFiles.reduce((sum, file) => sum + file.deletions, 0),
+              changedFiles: includedFiles.length,
+            }
+          : {}),
+      };
 
       if (context.compareCommits.length === 0) {
         return;
