@@ -1609,4 +1609,87 @@ describe("http/routes/workspaces-me", () => {
     expect(response.json().releases[0].changelogPreview).toHaveLength(481);
     expect(response.json()).toMatchObject({ pullRequests: [], pushes: [] });
   });
+
+  const protectedWorkspaceRoutes = [
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/summary"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/summaries"],
+    [
+      "GET",
+      "/api/me/workspaces/by-slug/ride-pack/summaries/pr/00000000-0000-4000-8000-0000000000ab",
+    ],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/stats"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/settings"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/diagnostics"],
+    ["POST", "/api/me/workspaces/by-slug/ride-pack/settings/infer"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/repo/contents"],
+    ["PATCH", "/api/me/workspaces/by-slug/ride-pack/settings"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack"],
+    ["POST", "/api/me/workspaces"],
+    ["PATCH", "/api/me/workspaces/00000000-0000-4000-8000-0000000000ab"],
+    ["DELETE", "/api/me/workspaces/00000000-0000-4000-8000-0000000000ab"],
+  ] as const;
+
+  it.each(protectedWorkspaceRoutes)("protects %s %s without authorization", async (method, url) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url,
+      payload:
+        method === "POST"
+          ? url === "/api/me/workspaces"
+            ? { repoFullName: "owner/repo" }
+            : {}
+          : method === "PATCH"
+            ? { name: "Updated" }
+            : undefined,
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  const slugWorkspaceRoutes = [
+    ["GET", "/summary"],
+    ["GET", "/summaries"],
+    ["GET", "/summaries/pr/00000000-0000-4000-8000-0000000000ab"],
+    ["GET", "/stats"],
+    ["GET", "/settings"],
+    ["GET", "/diagnostics"],
+    ["POST", "/settings/infer"],
+    ["GET", "/repo/contents"],
+    ["PATCH", "/settings"],
+    ["GET", ""],
+  ] as const;
+
+  it.each(slugWorkspaceRoutes)("rejects an invalid slug for %s %s", async (method, suffix) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url: `/api/me/workspaces/by-slug/---${suffix}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: method === "POST" ? {} : method === "PATCH" ? { pushSummaryBranches: ["main"] } : undefined,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_slug" });
+  });
+
+  it.each(slugWorkspaceRoutes)("returns not found for a missing project from %s %s", async (method, suffix) => {
+    const select = vi.fn().mockImplementationOnce(lookupSelect([]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url: `/api/me/workspaces/by-slug/missing${suffix}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: method === "POST" ? {} : method === "PATCH" ? { pushSummaryBranches: ["main"] } : undefined,
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "workspace_not_found" });
+  });
 });
