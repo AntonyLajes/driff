@@ -72,4 +72,20 @@ describe("lab/inspect-replay", () => {
     });
     expect(failed.status).toBe("failed");
   });
+
+  it("passes a received event that intentionally enqueues no jobs", async () => {
+    const noJobScenario = {
+      ...scenario,
+      events: [{ ...scenario.events[0], expectedJobs: [] }],
+    };
+    const result = await execute({
+      scenario: noJobScenario,
+      store: {
+        hasWebhook: async () => true,
+        findJobs: async () => [],
+      },
+    });
+
+    expect(result.status).toBe("passed");
+  });
 });

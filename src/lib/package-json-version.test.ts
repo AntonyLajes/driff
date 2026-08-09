@@ -13,6 +13,7 @@ describe("lib/package-json-version", () => {
   it("rejects invalid or unversioned package files", () => {
     expect(execute('{"name":"app"}')).toBeNull();
     expect(execute('{"version":42}')).toBeNull();
+    expect(execute('{"version":"   "}')).toBeNull();
     expect(execute("not-json")).toBeNull();
   });
 });
