@@ -736,6 +736,16 @@ describe("http/routes/workspaces-me", () => {
       where: vi.fn(() => ({ orderBy: vi.fn(async () => rows) })),
     })),
   });
+  /** select().from().innerJoin().where().orderBy().limit() — correction audit lookup. */
+  const correctionSelect = (rows: unknown[]) => () => ({
+    from: vi.fn(() => ({
+      innerJoin: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn(() => ({ limit: vi.fn(async () => rows) })),
+        })),
+      })),
+    })),
+  });
 
   /** A shared (non-personal) team the user belongs to with a given role. */
   const SHARED_TEAM_ID = "00000000-0000-4000-8000-0000000000ee";
@@ -1231,6 +1241,16 @@ describe("http/routes/workspaces-me", () => {
             occurredAt: new Date("2026-06-03T12:00:00.000Z"),
           },
         ]),
+      )
+      .mockImplementationOnce(
+        correctionSelect([
+          {
+            correctedAt: new Date("2026-06-04T10:00:00.000Z"),
+            correctedByUserId: "00000000-0000-4000-8000-000000000099",
+            correctedByName: "Antony Lajes",
+            correctedByEmail: "user@example.com",
+          },
+        ]),
       );
     const db = { select } as never;
 
@@ -1274,6 +1294,14 @@ describe("http/routes/workspaces-me", () => {
             occurredAt: "2026-06-03T12:00:00.000Z",
           },
         ],
+        correction: {
+          correctedAt: "2026-06-04T10:00:00.000Z",
+          correctedBy: {
+            id: "00000000-0000-4000-8000-000000000099",
+            name: "Antony Lajes",
+            email: "user@example.com",
+          },
+        },
       },
     });
   });
@@ -1314,9 +1342,11 @@ describe("http/routes/workspaces-me", () => {
       .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
       .mockImplementationOnce(detailSelect([pushRow]))
       .mockImplementationOnce(evidenceSelect([]))
+      .mockImplementationOnce(correctionSelect([]))
       .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
       .mockImplementationOnce(detailSelect([releaseRow]))
-      .mockImplementationOnce(evidenceSelect([]));
+      .mockImplementationOnce(evidenceSelect([]))
+      .mockImplementationOnce(correctionSelect([]));
     const server = fastify({ logger: false });
     servers.push(server);
     await handler(server, { db: { select } as never, jwtSecret });

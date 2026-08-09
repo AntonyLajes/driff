@@ -21,6 +21,7 @@ import {
   pushesTable,
   releasesTable,
   summaryCorrectionsTable,
+  usersTable,
   workspaceDestinationsTable,
   workspaceSettingsTable,
   workspacesTable,
@@ -824,6 +825,36 @@ export const handler = async (
             ),
           )
           .orderBy(desc(changeEvidenceTable.occurredAt), desc(changeEvidenceTable.id));
+      const loadLatestCorrection = async (sourceRecordType: string) => {
+        const rows = await input.db
+          .select({
+            correctedAt: summaryCorrectionsTable.createdAt,
+            correctedByUserId: summaryCorrectionsTable.editedByUserId,
+            correctedByName: usersTable.name,
+            correctedByEmail: usersTable.email,
+          })
+          .from(summaryCorrectionsTable)
+          .innerJoin(usersTable, eq(usersTable.id, summaryCorrectionsTable.editedByUserId))
+          .where(
+            and(
+              eq(summaryCorrectionsTable.sourceRecordType, sourceRecordType),
+              eq(summaryCorrectionsTable.sourceRecordId, id),
+            ),
+          )
+          .orderBy(desc(summaryCorrectionsTable.createdAt))
+          .limit(1);
+        const correction = rows[0];
+        return correction === undefined
+          ? null
+          : {
+              correctedAt: correction.correctedAt.toISOString(),
+              correctedBy: {
+                id: correction.correctedByUserId,
+                name: correction.correctedByName,
+                email: correction.correctedByEmail,
+              },
+            };
+      };
 
       if (type === "pr") {
         const rows = await input.db
@@ -851,7 +882,10 @@ export const handler = async (
         if (r === undefined) {
           return reply.status(404).send({ error: "summary_not_found" });
         }
-        const evidence = await loadEvidence("pull_requests");
+        const [evidence, correction] = await Promise.all([
+          loadEvidence("pull_requests"),
+          loadLatestCorrection("pull_requests"),
+        ]);
         return reply.send({
           summary: {
             ...base,
@@ -875,6 +909,7 @@ export const handler = async (
               ...item,
               occurredAt: item.occurredAt.toISOString(),
             })),
+            correction,
           },
         });
       }
@@ -906,7 +941,10 @@ export const handler = async (
         if (r === undefined) {
           return reply.status(404).send({ error: "summary_not_found" });
         }
-        const evidence = await loadEvidence("pushes");
+        const [evidence, correction] = await Promise.all([
+          loadEvidence("pushes"),
+          loadLatestCorrection("pushes"),
+        ]);
         return reply.send({
           summary: {
             ...base,
@@ -931,6 +969,7 @@ export const handler = async (
               ...item,
               occurredAt: item.occurredAt.toISOString(),
             })),
+            correction,
           },
         });
       }
@@ -955,7 +994,10 @@ export const handler = async (
       if (r === undefined) {
         return reply.status(404).send({ error: "summary_not_found" });
       }
-      const evidence = await loadEvidence("releases");
+      const [evidence, correction] = await Promise.all([
+        loadEvidence("releases"),
+        loadLatestCorrection("releases"),
+      ]);
       return reply.send({
         summary: {
           ...base,
@@ -982,6 +1024,7 @@ export const handler = async (
             ...item,
             occurredAt: item.occurredAt.toISOString(),
           })),
+          correction,
         },
       });
     },
