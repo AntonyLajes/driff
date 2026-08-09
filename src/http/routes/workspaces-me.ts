@@ -161,6 +161,13 @@ const patchWorkspaceSettingsBodySchema = z
     }
   });
 
+const patchSummaryBodySchema = z
+  .object({
+    summaryUserFacing: z.string().trim().min(1).max(20_000),
+    summaryTechnical: z.string().trim().max(20_000).nullable().optional(),
+  })
+  .strict();
+
 const patchProductAreaBodySchema = z.object({
   name: z.string().trim().min(1).max(120),
 });
@@ -976,6 +983,93 @@ export const handler = async (
           })),
         },
       });
+    },
+  );
+
+  instance.patch(
+    "/api/me/workspaces/by-slug/:slug/summaries/:type/:id",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; type?: string; id?: string };
+      const type = params.type ?? "";
+      const id = params.id ?? "";
+      if (!isSummaryType(type) || !uuidPattern.test(id)) {
+        return reply.status(400).send({ error: "invalid_summary_reference" });
+      }
+      const parsedBody = patchSummaryBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.status(400).send({ error: "invalid_body" });
+      }
+
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(loaded.team.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      const repo = loaded.workspace.repoFullName?.trim();
+      if (!repo) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+
+      const now = new Date();
+      const body = parsedBody.data;
+      let updated: Array<{ id: string }>;
+      if (type === "pr") {
+        updated = await input.db
+          .update(pullRequestsTable)
+          .set({
+            summaryUserFacing: body.summaryUserFacing,
+            summaryTechnical: body.summaryTechnical,
+            updatedAt: now,
+          })
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .returning({ id: pullRequestsTable.id });
+      } else if (type === "push") {
+        updated = await input.db
+          .update(pushesTable)
+          .set({
+            summaryUserFacing: body.summaryUserFacing,
+            summaryTechnical: body.summaryTechnical,
+            updatedAt: now,
+          })
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .returning({ id: pushesTable.id });
+      } else {
+        updated = await input.db
+          .update(releasesTable)
+          .set({ changelog: body.summaryUserFacing, updatedAt: now })
+          .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+          .returning({ id: releasesTable.id });
+      }
+
+      if (updated.length === 0) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+      return reply.send({ updated: true, updatedAt: now.toISOString() });
     },
   );
 

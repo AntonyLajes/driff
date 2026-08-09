@@ -1342,6 +1342,58 @@ describe("http/routes/workspaces-me", () => {
     });
   });
 
+  it("allows workspace editors to correct a generated summary", async () => {
+    const summaryId = "00000000-0000-4000-8000-000000000b41";
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const returning = vi.fn(async () => [{ id: summaryId }]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    const update = vi.fn(() => ({ set }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select, update } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/workspaces/by-slug/ride-pack/summaries/pr/${summaryId}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: {
+        summaryUserFacing: "  Customers can now plan fuel stops.  ",
+        summaryTechnical: "  Adds deterministic stop estimates.  ",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ updated: true });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summaryUserFacing: "Customers can now plan fuel stops.",
+        summaryTechnical: "Adds deterministic stop estimates.",
+      }),
+    );
+  });
+
+  it("rejects an empty summary correction", async () => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select: vi.fn() } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries/pr/00000000-0000-4000-8000-000000000b41",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { summaryUserFacing: "" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_body" });
+  });
+
   it("returns 404 when the summary detail row does not exist for the repo", async () => {
     const select = vi
       .fn()
