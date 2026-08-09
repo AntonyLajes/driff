@@ -228,6 +228,7 @@ describe("jobs/process-release integration", () => {
     expect(summarizeRelease).toHaveBeenCalledWith({
       repo: "acme/ios",
       branch: "develop",
+      language: "auto",
       context: expect.any(Object),
       prContributions: [
         {
@@ -307,6 +308,7 @@ describe("jobs/process-release integration", () => {
     expect(summarizeRelease).toHaveBeenCalledWith({
       repo: "o/r",
       branch: "develop",
+      language: "auto",
       context: expect.objectContaining({
         prNumbers: [9],
       }),
