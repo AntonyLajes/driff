@@ -29,8 +29,8 @@ describe("ask/evaluate-golden-corpus execute", () => {
     expect(evaluation).toEqual(
       expect.objectContaining({
         corpusId: "ride-pack-cited-history",
-        totalCases: 9,
-        passedCases: 9,
+        totalCases: 12,
+        passedCases: 12,
         passRate: 1,
         citationPrecision: 1,
         refusalAccuracy: 1,
@@ -61,7 +61,7 @@ describe("ask/evaluate-golden-corpus execute", () => {
     const evaluation = await execute({ filePath: failingPath });
 
     expect(evaluation.thresholdPassed).toBe(false);
-    expect(evaluation.passedCases).toBe(8);
+    expect(evaluation.passedCases).toBe(11);
     expect(
       evaluation.cases.find((item) => item.id === "home-actions-en"),
     ).toEqual(
@@ -91,8 +91,8 @@ describe("ask/evaluate-golden-suite execute", () => {
     expect(evaluation).toEqual(
       expect.objectContaining({
         totalCorpora: 3,
-        totalCases: 23,
-        passedCases: 23,
+        totalCases: 30,
+        passedCases: 30,
         thresholdPassed: true,
       }),
     );

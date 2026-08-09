@@ -115,10 +115,7 @@ describe("ask/search-history execute", () => {
       "16",
       "Improve touch feedback on Home quick action buttons",
     );
-    const fuelStops = change(
-      "15",
-      "Estimate fuel stops on ride cards",
-    );
+    const fuelStops = change("15", "Estimate fuel stops on ride cards");
     const timelineReader = vi.fn(async () =>
       page([], [fuelStops, quickActions]),
     );
@@ -209,10 +206,7 @@ describe("ask/search-history execute", () => {
 
   it("should ignore short stop words instead of returning an unrelated cited change", async () => {
     const apiChange = {
-      ...change(
-        "204",
-        "Add idempotency keys to the payment creation endpoint",
-      ),
+      ...change("204", "Add idempotency keys to the payment creation endpoint"),
       summaryExecutive:
         "Clients can retry payment creation without duplicate charges.",
       summaryTechnical:
@@ -244,5 +238,152 @@ describe("ask/search-history execute", () => {
         matches: [],
       }),
     );
+  });
+
+  it("should scope a team activity question to the current week", async () => {
+    const currentWeek = {
+      ...change("21", "Add saved searches to the projects page"),
+      firstOccurredAt: "2026-08-07T12:00:00.000Z",
+      lastOccurredAt: "2026-08-07T12:00:00.000Z",
+    };
+    const previousWeek = {
+      ...change("20", "Add CSV export to reports"),
+      firstOccurredAt: "2026-08-01T12:00:00.000Z",
+      lastOccurredAt: "2026-08-01T12:00:00.000Z",
+    };
+    const timelineReader = vi.fn(async () =>
+      page([], [previousWeek, currentWeek]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "O que o time fez esta semana?",
+      now: new Date("2026-08-08T20:00:00.000Z"),
+      timelineReader,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "answered",
+        confidence: "high",
+        period: {
+          kind: "this_week",
+          startAt: "2026-08-03T00:00:00.000Z",
+          endAt: "2026-08-08T20:00:00.000Z",
+          days: null,
+        },
+        matches: [
+          expect.objectContaining({
+            change: expect.objectContaining({ id: "21" }),
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("should combine a contributor with a rolling time period", async () => {
+    const antonyChange = {
+      ...change("22", "Improve workspace navigation"),
+      contributors: [
+        {
+          externalIdentity: "github:antonylajes",
+          displayName: "AntonyLajes",
+          role: "pr_author",
+          sourceUrl: "https://github.com/AntonyLajes",
+        },
+      ],
+      firstOccurredAt: "2026-08-07T12:00:00.000Z",
+      lastOccurredAt: "2026-08-07T12:00:00.000Z",
+    };
+    const marinaChange = {
+      ...change("23", "Improve onboarding diagnostics"),
+      contributors: [
+        {
+          externalIdentity: "github:marina-dev",
+          displayName: "Marina Costa",
+          role: "pr_author",
+          sourceUrl: "https://github.com/marina-dev",
+        },
+      ],
+      firstOccurredAt: "2026-08-06T12:00:00.000Z",
+      lastOccurredAt: "2026-08-06T12:00:00.000Z",
+    };
+    const timelineReader = vi.fn(async () =>
+      page([], [marinaChange, antonyChange]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "O que Antony fez nos últimos 7 dias?",
+      now: new Date("2026-08-08T20:00:00.000Z"),
+      timelineReader,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.queryTerms).toEqual(["antony"]);
+    expect(result.period).toEqual(
+      expect.objectContaining({ kind: "last_days", days: 7 }),
+    );
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.change.id).toBe("22");
+  });
+
+  it("should filter an exact version by contributor", async () => {
+    const antonyChange = change("24", "Improve project cards");
+    const marinaChange = {
+      ...change("25", "Add project search"),
+      contributors: [
+        {
+          externalIdentity: "github:marina-dev",
+          displayName: "Marina Costa",
+          role: "pr_author",
+          sourceUrl: "https://github.com/marina-dev",
+        },
+      ],
+    };
+    const timelineReader = vi.fn(async () =>
+      page([version("1.4.0", [antonyChange, marinaChange])]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "O que Marina fez na versão 1.4.0?",
+      timelineReader,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.mode).toBe("version");
+    expect(result.queryTerms).toEqual(["1.4.0", "marina"]);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.change.id).toBe("25");
+  });
+
+  it("should disclose when a team answer has more cited matches", async () => {
+    const changes = Array.from({ length: 6 }, (_, index) => ({
+      ...change(String(30 + index), `Team change ${index + 1}`),
+      firstOccurredAt: `2026-08-0${index + 3}T12:00:00.000Z`,
+      lastOccurredAt: `2026-08-0${index + 3}T12:00:00.000Z`,
+    }));
+    const timelineReader = vi.fn(async () => page([], changes));
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "What did the team ship this week?",
+      now: new Date("2026-08-08T20:00:00.000Z"),
+      timelineReader,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "answered",
+        totalMatches: 6,
+        hasMore: true,
+      }),
+    );
+    expect(result.matches).toHaveLength(5);
   });
 });

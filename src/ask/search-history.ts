@@ -19,13 +19,24 @@ const STOP_WORDS = new Set([
   "da",
   "das",
   "de",
+  "did",
   "do",
   "dos",
   "em",
+  "entregou",
+  "entregaram",
+  "esta",
+  "este",
+  "feita",
+  "feitas",
+  "feito",
+  "feitos",
+  "fez",
   "for",
   "foi",
   "foram",
   "from",
+  "has",
   "in",
   "is",
   "na",
@@ -59,6 +70,25 @@ const STOP_WORDS = new Set([
   "mudou",
   "mudanca",
   "mudancas",
+  "implemented",
+  "implementou",
+  "last",
+  "past",
+  "shipped",
+  "semana",
+  "semanas",
+  "this",
+  "trabalhou",
+  "ultima",
+  "ultimas",
+  "ultimo",
+  "ultimos",
+  "week",
+  "weeks",
+  "dia",
+  "dias",
+  "day",
+  "days",
   "changed",
   "change",
   "changes",
@@ -95,10 +125,16 @@ export interface ExecuteInput {
   db: Database;
   workspaceId: string;
   question: string;
-  timelineReader?: (
-    input: ReadTimelineInput,
-  ) => Promise<TimelineResult>;
+  now?: Date;
+  timelineReader?: (input: ReadTimelineInput) => Promise<TimelineResult>;
 }
+
+type QueryPeriod = {
+  kind: "this_week" | "last_days";
+  startAt: string;
+  endAt: string;
+  days: number | null;
+};
 
 const normalize = (value: string): string =>
   value
@@ -108,9 +144,7 @@ const normalize = (value: string): string =>
     .trim();
 
 const extractVersion = (question: string): string | null => {
-  const match = question.match(
-    /\bv?\d+(?:\.\d+){1,3}(?:[-+][0-9a-z.-]+)?\b/i,
-  );
+  const match = question.match(/\bv?\d+(?:\.\d+){1,3}(?:[-+][0-9a-z.-]+)?\b/i);
   return match?.[0] === undefined
     ? null
     : normalize(match[0]).replace(/^v/, "");
@@ -150,6 +184,46 @@ const extractLatestIntent = (
       null,
   };
 };
+
+const extractPeriod = (question: string, now: Date): QueryPeriod | null => {
+  const normalized = normalize(question);
+  const lastDays = normalized.match(
+    /\b(?:ultimos|ultimas|last|past)\s+(\d{1,3})\s+(?:dias|days)\b/u,
+  );
+  if (lastDays?.[1] !== undefined) {
+    const days = Number.parseInt(lastDays[1], 10);
+    if (days >= 1 && days <= 365) {
+      return {
+        kind: "last_days",
+        startAt: new Date(now.getTime() - days * 86_400_000).toISOString(),
+        endAt: now.toISOString(),
+        days,
+      };
+    }
+  }
+
+  if (/\b(?:esta semana|this week)\b/u.test(normalized)) {
+    const start = new Date(now);
+    const day = start.getUTCDay();
+    const daysSinceMonday = day === 0 ? 6 : day - 1;
+    start.setUTCDate(start.getUTCDate() - daysSinceMonday);
+    start.setUTCHours(0, 0, 0, 0);
+    return {
+      kind: "this_week",
+      startAt: start.toISOString(),
+      endAt: now.toISOString(),
+      days: null,
+    };
+  }
+
+  return null;
+};
+
+const hasTeamOverviewIntent = (question: string): boolean =>
+  /\b(?:time|equipe|team|everyone|todos|todas)\b/u.test(normalize(question)) ||
+  /\bcada\s+(?:pessoa|dev|desenvolvedor|desenvolvedora)\b/u.test(
+    normalize(question),
+  );
 
 const tokenize = (question: string): string[] => {
   const normalized = normalize(question);
@@ -212,6 +286,7 @@ const scoreChange = (change: TimelineChange, terms: string[]): number => {
     { value: change.title, weight: 5 },
     { value: change.summaryExecutive ?? "", weight: 4 },
     { value: change.summaryTechnical ?? "", weight: 2 },
+    { value: change.category, weight: 4 },
     { value: change.areas.map((area) => area.name).join(" "), weight: 4 },
     {
       value: change.contributors
@@ -220,7 +295,16 @@ const scoreChange = (change: TimelineChange, terms: string[]): number => {
             contributor.displayName ?? contributor.externalIdentity,
         )
         .join(" "),
-      weight: 2,
+      weight: 8,
+    },
+    {
+      value: change.evidence
+        .map(
+          (item) =>
+            `${item.externalId ?? ""} ${item.path ?? ""} ${item.sourceKey}`,
+        )
+        .join(" "),
+      weight: 5,
     },
   ];
   return terms.reduce(
@@ -235,11 +319,14 @@ const scoreChange = (change: TimelineChange, terms: string[]): number => {
   );
 };
 
-const noEvidence = (terms: string[]) => ({
+const noEvidence = (terms: string[], period: QueryPeriod | null = null) => ({
   status: "no_evidence" as const,
   mode: "change" as const,
   confidence: "none" as const,
   queryTerms: terms,
+  period,
+  totalMatches: 0,
+  hasMore: false,
   version: null,
   matches: [],
 });
@@ -255,9 +342,42 @@ const latestMatch = (candidates: ChangeCandidate[], category: string | null) =>
       right.change.lastOccurredAt.localeCompare(left.change.lastOccurredAt),
     )[0];
 
+const isInPeriod = (
+  change: TimelineChange,
+  period: QueryPeriod | null,
+): boolean =>
+  period === null ||
+  (change.lastOccurredAt >= period.startAt &&
+    change.lastOccurredAt <= period.endAt);
+
+const confidenceForScore = (score: number) =>
+  score >= 12
+    ? ("high" as const)
+    : score >= 6
+      ? ("medium" as const)
+      : ("low" as const);
+
+const removeScopeTerms = (
+  terms: string[],
+  versionQuery: string | null,
+  period: QueryPeriod | null,
+): string[] =>
+  terms.filter(
+    (term) =>
+      term !== versionQuery &&
+      (period === null || period.days === null || term !== String(period.days)),
+  );
+
 export const execute = async (input: ExecuteInput) => {
   const history = await loadHistory(input);
   const versionQuery = extractVersion(input.question);
+  const period = extractPeriod(input.question, input.now ?? new Date());
+  const queryTerms = removeScopeTerms(
+    tokenize(input.question),
+    versionQuery,
+    period,
+  );
+  const teamOverview = hasTeamOverviewIntent(input.question);
 
   if (versionQuery !== null) {
     const version = history.versions.find((candidate) => {
@@ -273,28 +393,53 @@ export const execute = async (input: ExecuteInput) => {
       );
     });
     if (version === undefined) {
-      return noEvidence([versionQuery]);
+      return noEvidence([versionQuery, ...queryTerms], period);
     }
 
     const citedChanges = version.changes.filter(hasCitedEvidence);
     if (version.sourceUrl === null && citedChanges.length === 0) {
-      return noEvidence([versionQuery]);
+      return noEvidence([versionQuery, ...queryTerms], period);
     }
+    const rankedChanges =
+      queryTerms.length === 0 || teamOverview
+        ? citedChanges.map((change) => ({ change, score: 100 }))
+        : citedChanges
+            .map((change) => ({
+              change,
+              score: scoreChange(change, queryTerms),
+            }))
+            .filter(({ score }) => score > 0)
+            .sort(
+              (left, right) =>
+                right.score - left.score ||
+                right.change.lastOccurredAt.localeCompare(
+                  left.change.lastOccurredAt,
+                ),
+            );
+    if (queryTerms.length > 0 && !teamOverview && rankedChanges.length === 0) {
+      return noEvidence([versionQuery, ...queryTerms], period);
+    }
+    const topScore = rankedChanges[0]?.score ?? 100;
     return {
       status: "answered" as const,
       mode: "version" as const,
-      confidence: "high" as const,
-      queryTerms: [versionQuery],
+      confidence:
+        queryTerms.length === 0 || teamOverview
+          ? ("high" as const)
+          : confidenceForScore(topScore),
+      queryTerms: [versionQuery, ...queryTerms],
+      period,
+      totalMatches: rankedChanges.length,
+      hasMore: rankedChanges.length > MAX_MATCHES,
       version: versionSummary(version),
-      matches: citedChanges.slice(0, MAX_MATCHES).map((change) => ({
-        score: 100,
+      matches: rankedChanges.slice(0, MAX_MATCHES).map(({ change, score }) => ({
+        score,
         change,
         version: versionSummary(version),
       })),
     };
   }
 
-  const terms = tokenize(input.question);
   const candidates: ChangeCandidate[] = [
     ...history.inDevelopment.map((change) => ({ change, version: null })),
     ...history.versions.flatMap((version) =>
@@ -303,54 +448,75 @@ export const execute = async (input: ExecuteInput) => {
         version: versionSummary(version),
       })),
     ),
-  ];
+  ].filter(
+    ({ change }) => hasCitedEvidence(change) && isInPeriod(change, period),
+  );
   const latestIntent = extractLatestIntent(input.question);
   if (latestIntent.latest) {
     const match = latestMatch(candidates, latestIntent.category);
-    if (match === undefined) return noEvidence(terms);
+    if (match === undefined) return noEvidence(queryTerms, period);
     return {
       status: "answered" as const,
       mode: "change" as const,
       confidence: "high" as const,
-      queryTerms: terms,
+      queryTerms,
+      period,
+      totalMatches: 1,
+      hasMore: false,
       version: null,
       matches: [{ ...match, score: 100 }],
     };
   }
 
-  if (terms.length === 0) {
-    return noEvidence(terms);
+  if (teamOverview || (period !== null && queryTerms.length === 0)) {
+    const rankedCandidates = candidates.sort((left, right) =>
+      right.change.lastOccurredAt.localeCompare(left.change.lastOccurredAt),
+    );
+    if (rankedCandidates.length === 0) return noEvidence(queryTerms, period);
+    return {
+      status: "answered" as const,
+      mode: "change" as const,
+      confidence: "high" as const,
+      queryTerms,
+      period,
+      totalMatches: rankedCandidates.length,
+      hasMore: rankedCandidates.length > MAX_MATCHES,
+      version: null,
+      matches: rankedCandidates
+        .slice(0, MAX_MATCHES)
+        .map((candidate) => ({ ...candidate, score: 100 })),
+    };
   }
 
-  const matches = candidates
-    .filter(({ change }) => hasCitedEvidence(change))
+  if (queryTerms.length === 0) {
+    return noEvidence(queryTerms, period);
+  }
+
+  const rankedMatches = candidates
     .map((candidate) => ({
       ...candidate,
-      score: scoreChange(candidate.change, terms),
+      score: scoreChange(candidate.change, queryTerms),
     }))
     .filter((candidate) => candidate.score > 0)
     .sort(
       (left, right) =>
         right.score - left.score ||
         right.change.lastOccurredAt.localeCompare(left.change.lastOccurredAt),
-    )
-    .slice(0, MAX_MATCHES);
+    );
 
-  if (matches.length === 0) {
-    return noEvidence(terms);
+  if (rankedMatches.length === 0) {
+    return noEvidence(queryTerms, period);
   }
-  const topScore = matches[0]?.score ?? 0;
+  const topScore = rankedMatches[0]?.score ?? 0;
   return {
     status: "answered" as const,
     mode: "change" as const,
-    confidence:
-      topScore >= 12
-        ? ("high" as const)
-        : topScore >= 6
-          ? ("medium" as const)
-          : ("low" as const),
-    queryTerms: terms,
+    confidence: confidenceForScore(topScore),
+    queryTerms,
+    period,
+    totalMatches: rankedMatches.length,
+    hasMore: rankedMatches.length > MAX_MATCHES,
     version: null,
-    matches,
+    matches: rankedMatches.slice(0, MAX_MATCHES),
   };
 };

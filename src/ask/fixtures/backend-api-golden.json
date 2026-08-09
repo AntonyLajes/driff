@@ -3,6 +3,7 @@
   "id": "backend-api-cited-history",
   "name": "Backend API cited history",
   "workspaceId": "00000000-0000-4000-8000-000000000003",
+  "evaluatedAt": "2026-08-08T20:00:00.000Z",
   "history": {
     "versions": [
       {
@@ -230,6 +231,30 @@
       "id": "api-unknown-dark-mode",
       "question": "Who added dark mode to the dashboard?",
       "expected": { "status": "no_evidence", "mode": "change" }
+    },
+    {
+      "id": "api-team-this-week-pt",
+      "question": "O que a equipe fez esta semana?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": [
+          "api-change-pool-observability",
+          "api-change-payment-idempotency"
+        ],
+        "contributors": ["Renata Melo", "Camila Rocha"]
+      }
+    },
+    {
+      "id": "api-contributor-version-pt",
+      "question": "O que Camila fez na versão 3.2.0?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "3.2.0",
+        "changeIds": ["api-change-payment-idempotency"],
+        "contributors": ["Camila Rocha"]
+      }
     }
   ],
   "thresholds": {

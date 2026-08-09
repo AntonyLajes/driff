@@ -3,6 +3,7 @@
   "id": "ride-pack-cited-history",
   "name": "Ride Pack cited history baseline",
   "workspaceId": "00000000-0000-4000-8000-000000000001",
+  "evaluatedAt": "2026-08-08T20:00:00.000Z",
   "history": {
     "versions": [
       {
@@ -203,6 +204,38 @@
       "id": "unknown-checkout",
       "question": "Who changed the payment checkout?",
       "expected": { "status": "no_evidence", "mode": "change" }
+    },
+    {
+      "id": "team-this-week-pt",
+      "question": "O que o time fez esta semana?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "contributor-last-30-days-pt",
+      "question": "O que Antony fez nos últimos 30 dias?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "contributor-version-pt",
+      "question": "O que Antony fez na versão 1.3.4?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "1.3.4",
+        "changeIds": ["change-home-actions"],
+        "contributors": ["AntonyLajes"]
+      }
     }
   ],
   "thresholds": {

@@ -56,6 +56,9 @@ describe("http/routes/ask-me", () => {
       mode: "change" as const,
       confidence: "none" as const,
       queryTerms: ["checkout"],
+      period: null,
+      totalMatches: 0,
+      hasMore: false,
       version: null,
       matches: [],
     }));

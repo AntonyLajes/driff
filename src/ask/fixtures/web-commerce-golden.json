@@ -3,6 +3,7 @@
   "id": "web-commerce-cited-history",
   "name": "Web commerce cited history",
   "workspaceId": "00000000-0000-4000-8000-000000000002",
+  "evaluatedAt": "2026-08-08T20:00:00.000Z",
   "history": {
     "versions": [
       {
@@ -231,6 +232,30 @@
       "id": "web-unknown-offline-map",
       "question": "Who added offline map downloads?",
       "expected": { "status": "no_evidence", "mode": "change" }
+    },
+    {
+      "id": "web-team-this-week",
+      "question": "What did the team ship this week?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": [
+          "web-change-checkout-validation",
+          "web-change-order-filters"
+        ],
+        "contributors": ["Diego Alves", "Marina Costa"]
+      }
+    },
+    {
+      "id": "web-contributor-version",
+      "question": "What did Marina do in version 2.4.0?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "2.4.0",
+        "changeIds": ["web-change-order-filters"],
+        "contributors": ["Marina Costa"]
+      }
     }
   ],
   "thresholds": {

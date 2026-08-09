@@ -88,6 +88,7 @@ const corpusSchema = z
       .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, "expected kebab-case corpus id"),
     name: z.string().min(1).max(200),
     workspaceId: z.string().min(1),
+    evaluatedAt: z.string().datetime({ offset: true }).optional(),
     history: z.object({
       versions: z.array(versionSchema).max(200),
       inDevelopment: z.array(changeSchema).max(200),

@@ -57,6 +57,10 @@ export const execute = async ({
       db: {} as Database,
       workspaceId: corpus.workspaceId,
       question: goldenCase.question,
+      now:
+        corpus.evaluatedAt === undefined
+          ? undefined
+          : new Date(corpus.evaluatedAt),
       timelineReader: async () => timeline,
     });
     const failures: string[] = [];
