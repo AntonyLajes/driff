@@ -45,6 +45,10 @@ import {
   type ProductFunnelMeRegistrationInput,
 } from "@/http/routes/product-funnel-me.js";
 import {
+  handler as registerSystemReadinessMeRoute,
+  type SystemReadinessMeRegistrationInput,
+} from "@/http/routes/system-readiness-me.js";
+import {
   handler as registerTeamsMeRoute,
   type TeamsMeRegistrationInput,
 } from "@/http/routes/teams-me.js";
@@ -83,6 +87,8 @@ export interface ExecuteInput {
   aiUsageMe?: AiUsageMeRegistrationInput;
   /** When set, registers privacy-preserving first-value funnel aggregates. */
   productFunnelMe?: ProductFunnelMeRegistrationInput;
+  /** When set, registers aggregate Ask and destination readiness diagnostics. */
+  systemReadinessMe?: SystemReadinessMeRegistrationInput;
   /** When set, registers `/api/me/teams` (Bearer session JWT). */
   teamsMe?: TeamsMeRegistrationInput;
   /** When set, registers the canonical workspace timeline (Bearer session JWT). */
@@ -130,6 +136,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.productFunnelMe !== undefined) {
       await registerProductFunnelMeRoute(instance, input.productFunnelMe);
+    }
+    if (input.systemReadinessMe !== undefined) {
+      await registerSystemReadinessMeRoute(instance, input.systemReadinessMe);
     }
     if (input.teamsMe !== undefined) {
       await registerTeamsMeRoute(instance, input.teamsMe);
