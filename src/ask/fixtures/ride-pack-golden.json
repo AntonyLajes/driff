@@ -181,6 +181,17 @@
       }
     },
     {
+      "id": "first-feature-natural-pt",
+      "question": "Qual a primeira feature feita no app e por quem?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-fuel-stops"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/15"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
       "id": "fuel-stops-pt",
       "question": "Quando adicionamos as paradas de combustível?",
       "expected": {

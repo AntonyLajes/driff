@@ -150,14 +150,18 @@ const extractVersion = (question: string): string | null => {
     : normalize(match[0]).replace(/^v/, "");
 };
 
-const extractLatestIntent = (
+const extractTemporalIntent = (
   question: string,
-): { latest: boolean; category: string | null } => {
+): { order: "earliest" | "latest" | null; category: string | null } => {
   const normalized = normalize(question);
   const latest =
     /\b(?:ultima|ultimo|latest|newest)\b/u.test(normalized) ||
     /\b(?:mais|most)\s+recente\b/u.test(normalized);
-  if (!latest) return { latest: false, category: null };
+  const earliest = /\b(?:primeira|primeiro|first|oldest|earliest)\b/u.test(
+    normalized,
+  );
+  const order = latest ? "latest" : earliest ? "earliest" : null;
+  if (order === null) return { order, category: null };
 
   const categories: Array<{ category: string; pattern: RegExp }> = [
     {
@@ -178,7 +182,7 @@ const extractLatestIntent = (
     },
   ];
   return {
-    latest: true,
+    order,
     category:
       categories.find(({ pattern }) => pattern.test(normalized))?.category ??
       null,
@@ -331,16 +335,23 @@ const noEvidence = (terms: string[], period: QueryPeriod | null = null) => ({
   matches: [],
 });
 
-const latestMatch = (candidates: ChangeCandidate[], category: string | null) =>
+const temporalMatch = (
+  candidates: ChangeCandidate[],
+  category: string | null,
+  order: "earliest" | "latest",
+) =>
   candidates
     .filter(
       ({ change }) =>
         hasCitedEvidence(change) &&
         (category === null || change.category === category),
     )
-    .sort((left, right) =>
-      right.change.lastOccurredAt.localeCompare(left.change.lastOccurredAt),
-    )[0];
+    .sort((left, right) => {
+      const comparison = left.change.lastOccurredAt.localeCompare(
+        right.change.lastOccurredAt,
+      );
+      return order === "earliest" ? comparison : -comparison;
+    })[0];
 
 const isInPeriod = (
   change: TimelineChange,
@@ -451,9 +462,13 @@ export const execute = async (input: ExecuteInput) => {
   ].filter(
     ({ change }) => hasCitedEvidence(change) && isInPeriod(change, period),
   );
-  const latestIntent = extractLatestIntent(input.question);
-  if (latestIntent.latest) {
-    const match = latestMatch(candidates, latestIntent.category);
+  const temporalIntent = extractTemporalIntent(input.question);
+  if (temporalIntent.order !== null) {
+    const match = temporalMatch(
+      candidates,
+      temporalIntent.category,
+      temporalIntent.order,
+    );
     if (match === undefined) return noEvidence(queryTerms, period);
     return {
       status: "answered" as const,

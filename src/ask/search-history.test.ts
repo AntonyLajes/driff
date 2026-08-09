@@ -183,6 +183,49 @@ describe("ask/search-history execute", () => {
     );
   });
 
+  it("should return the earliest cited feature for a natural first-feature question", async () => {
+    const firstFeature = {
+      ...change("15", "Estimate fuel stops on ride cards"),
+      firstOccurredAt: "2026-06-06T12:00:00.000Z",
+      lastOccurredAt: "2026-06-06T12:00:00.000Z",
+    };
+    const latestFeature = change(
+      "16",
+      "Improve touch feedback on Home quick action buttons",
+    );
+    const olderChore = {
+      ...change("14", "Prepare the repository for release automation"),
+      category: "chore",
+      firstOccurredAt: "2026-05-01T12:00:00.000Z",
+      lastOccurredAt: "2026-05-01T12:00:00.000Z",
+    };
+    const timelineReader = vi.fn(async () =>
+      page([version("1.3.4", [latestFeature])], [firstFeature, olderChore]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "Qual a primeira feature feita no app e por quem?",
+      timelineReader,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "answered",
+        mode: "change",
+        confidence: "high",
+        matches: [
+          expect.objectContaining({
+            score: 100,
+            change: expect.objectContaining({ id: "15" }),
+            version: null,
+          }),
+        ],
+      }),
+    );
+  });
+
   it("should refuse to answer when matching history has no linked evidence", async () => {
     const timelineReader = vi.fn(async () =>
       page([], [change("17", "Improve checkout button", null)]),
