@@ -1559,6 +1559,7 @@ describe("http/routes/workspaces-me", () => {
         slug: "home",
         rules: null,
         updatedAt,
+        changeCount: 5,
       },
       {
         id: "00000000-0000-4000-8000-0000000000c2",
@@ -1566,11 +1567,16 @@ describe("http/routes/workspaces-me", () => {
         slug: "ride-creation",
         rules: { aliases: ["create ride"] },
         updatedAt,
+        changeCount: 12,
       },
     ];
     const orderedSelect = () => ({
       from: vi.fn(() => ({
-        where: vi.fn(() => ({ orderBy: vi.fn(async () => areaRows) })),
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            groupBy: vi.fn(() => ({ orderBy: vi.fn(async () => areaRows) })),
+          })),
+        })),
       })),
     });
     const select = vi

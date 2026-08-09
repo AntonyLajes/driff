@@ -14,6 +14,7 @@ import {
 import type { Database } from "@/db/client.js";
 import {
   jobsTable,
+  changeAreasTable,
   productAreasTable,
   pullRequestsTable,
   pushesTable,
@@ -1134,9 +1135,18 @@ export const handler = async (
           slug: productAreasTable.slug,
           rules: productAreasTable.rules,
           updatedAt: productAreasTable.updatedAt,
+          changeCount: count(changeAreasTable.changeId).mapWith(Number),
         })
         .from(productAreasTable)
+        .innerJoin(changeAreasTable, eq(changeAreasTable.areaId, productAreasTable.id))
         .where(eq(productAreasTable.workspaceId, loaded.workspace.id))
+        .groupBy(
+          productAreasTable.id,
+          productAreasTable.name,
+          productAreasTable.slug,
+          productAreasTable.rules,
+          productAreasTable.updatedAt,
+        )
         .orderBy(productAreasTable.name);
 
       return reply.send({ areas });
