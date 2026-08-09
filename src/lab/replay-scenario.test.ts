@@ -185,7 +185,7 @@ describe("lab/replay-scenario", () => {
         sleeper: async () => undefined,
       }),
     ).rejects.toMatchObject({
-      message: "Driff Lab request failed for delivery-1.",
+      message: "Driff Lab request failed for delivery-1. connection refused",
       cause,
     });
   });

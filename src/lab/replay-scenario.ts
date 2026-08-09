@@ -133,9 +133,14 @@ export const execute = async (input: ExecuteInput): Promise<ReplayResult> => {
         body,
       });
     } catch (error) {
-      throw new Error(`Driff Lab request failed for ${event.deliveryId}.`, {
-        cause: error,
-      });
+      const detail =
+        error instanceof Error && error.message.trim().length > 0
+          ? ` ${error.message.trim()}`
+          : "";
+      throw new Error(
+        `Driff Lab request failed for ${event.deliveryId}.${detail}`,
+        { cause: error },
+      );
     }
 
     if (!response.ok) {
