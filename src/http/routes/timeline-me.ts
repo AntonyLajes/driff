@@ -29,6 +29,12 @@ const versionParamsSchema = z.object({
   versionId: z.string().uuid(),
 });
 
+const versionComparisonParamsSchema = z.object({
+  slug: z.string(),
+  baseVersionId: z.string().uuid(),
+  targetVersionId: z.string().uuid(),
+});
+
 export interface TimelineMeRegistrationInput {
   db: Database;
   jwtSecret: string;
@@ -226,6 +232,114 @@ export const handler = async (
       }
 
       return reply.send({ workspace, version });
+    },
+  );
+
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/versions/:baseVersionId/compare/:targetVersionId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const paramsParsed = versionComparisonParamsSchema.safeParse(
+        request.params,
+      );
+      if (!paramsParsed.success) {
+        return reply.status(400).send({ error: "invalid_version_comparison" });
+      }
+      if (
+        paramsParsed.data.baseVersionId === paramsParsed.data.targetVersionId
+      ) {
+        return reply.status(400).send({ error: "versions_must_be_different" });
+      }
+      const slug = normalizeWorkspaceSlug(paramsParsed.data.slug);
+      if (slug.length === 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+        return reply.status(400).send({ error: "invalid_workspace_slug" });
+      }
+
+      const team = await resolveTeamContext(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+      );
+      if (team.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (team.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+
+      const workspaceRows = await input.db
+        .select({
+          id: workspacesTable.id,
+          name: workspacesTable.name,
+          slug: workspacesTable.slug,
+        })
+        .from(workspacesTable)
+        .where(
+          and(
+            eq(workspacesTable.teamId, team.context.teamId),
+            eq(workspacesTable.slug, slug),
+          ),
+        )
+        .limit(1);
+      const workspace = workspaceRows[0];
+      if (workspace === undefined) {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const result = await (input.timelineReader ?? readTimeline)({
+        db: input.db,
+        workspaceId: workspace.id,
+        versionIds: [
+          paramsParsed.data.baseVersionId,
+          paramsParsed.data.targetVersionId,
+        ],
+      });
+      const baseVersion = result.versions.find(
+        (version) => version.id === paramsParsed.data.baseVersionId,
+      );
+      const targetVersion = result.versions.find(
+        (version) => version.id === paramsParsed.data.targetVersionId,
+      );
+      if (baseVersion === undefined || targetVersion === undefined) {
+        return reply
+          .status(404)
+          .send({ error: "version_comparison_not_found" });
+      }
+
+      const baseChangeIds = new Set(
+        baseVersion.changes.map((change) => change.id),
+      );
+      const targetChangeIds = new Set(
+        targetVersion.changes.map((change) => change.id),
+      );
+
+      return reply.send({
+        workspace,
+        baseVersion,
+        targetVersion,
+        comparison: {
+          onlyInBase: baseVersion.changes.filter(
+            (change) => !targetChangeIds.has(change.id),
+          ),
+          onlyInTarget: targetVersion.changes.filter(
+            (change) => !baseChangeIds.has(change.id),
+          ),
+          shared: targetVersion.changes.filter((change) =>
+            baseChangeIds.has(change.id),
+          ),
+          classification: "snapshot",
+        },
+      });
     },
   );
 };

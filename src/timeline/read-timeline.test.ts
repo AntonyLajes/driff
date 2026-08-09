@@ -254,4 +254,48 @@ describe("timeline/read-timeline execute", () => {
     });
     expect(db.select).toHaveBeenCalledTimes(5);
   });
+
+  it("should load two selected version snapshots in one relation pass", async () => {
+    const versionsPage = pagedQuery([
+      version("version-2", "2026-08-08T12:00:00.000Z"),
+      version("version-1", "2026-08-01T12:00:00.000Z"),
+    ]);
+    const db = buildDb([
+      versionsPage.query,
+      orderedQuery([
+        change("change-target", "version-2", "2026-08-08T11:00:00.000Z"),
+        change("change-base", "version-1", "2026-08-01T11:00:00.000Z"),
+      ]),
+      whereQuery([]),
+      joinedWhereQuery([]),
+      orderedQuery([]),
+    ]);
+
+    const result = await execute({
+      db: db.db,
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      versionIds: [
+        "22222222-2222-4222-8222-222222222221",
+        "22222222-2222-4222-8222-222222222222",
+      ],
+    });
+
+    expect(versionsPage.limit).toHaveBeenCalledWith(2);
+    expect(result.versions).toEqual([
+      expect.objectContaining({
+        id: "version-2",
+        changes: [expect.objectContaining({ id: "change-target" })],
+      }),
+      expect.objectContaining({
+        id: "version-1",
+        changes: [expect.objectContaining({ id: "change-base" })],
+      }),
+    ]);
+    expect(result.inDevelopment).toBeNull();
+    expect(result.pageInfo).toEqual({
+      hasNextPage: false,
+      nextCursor: null,
+    });
+    expect(db.select).toHaveBeenCalledTimes(5);
+  });
 });

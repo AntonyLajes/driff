@@ -35,6 +35,7 @@ export interface ExecuteInput {
   limit?: number;
   cursor?: TimelineCursor | null;
   versionId?: string;
+  versionIds?: string[];
 }
 
 const normalizeLimit = (value: number | undefined): number => {
@@ -43,16 +44,23 @@ const normalizeLimit = (value: number | undefined): number => {
 };
 
 export const execute = async (input: ExecuteInput) => {
-  const versionDetail = input.versionId !== undefined;
-  const limit = versionDetail ? 1 : normalizeLimit(input.limit);
+  const selectedVersionIds =
+    input.versionIds ??
+    (input.versionId === undefined ? null : [input.versionId]);
+  const versionDetail = selectedVersionIds !== null;
+  const limit = versionDetail
+    ? Math.max(1, selectedVersionIds.length)
+    : normalizeLimit(input.limit);
   const cursor = input.cursor ?? null;
   const versionConditions: SQL[] = [
     eq(projectVersionsTable.workspaceId, input.workspaceId),
     eq(projectVersionsTable.status, "released"),
     isNotNull(projectVersionsTable.releasedAt),
   ];
-  if (input.versionId !== undefined) {
-    versionConditions.push(eq(projectVersionsTable.id, input.versionId));
+  if (selectedVersionIds !== null) {
+    versionConditions.push(
+      inArray(projectVersionsTable.id, selectedVersionIds),
+    );
   } else if (cursor !== null) {
     versionConditions.push(
       or(
@@ -86,7 +94,7 @@ export const execute = async (input: ExecuteInput) => {
       desc(projectVersionsTable.releasedAt),
       desc(projectVersionsTable.id),
     )
-    .limit(versionDetail ? 1 : limit + 1);
+    .limit(versionDetail ? limit : limit + 1);
 
   const hasNextPage = !versionDetail && versionRowsWithExtra.length > limit;
   const versionRows = versionRowsWithExtra.slice(0, limit);
