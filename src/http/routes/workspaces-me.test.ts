@@ -520,6 +520,42 @@ describe("http/routes/workspaces-me", () => {
     expect(inferAndApplyWorkspaceSettings).toHaveBeenCalledOnce();
   });
 
+  it("returns ready diagnostics when summaries and release detection are configured", async () => {
+    const settingsRow = {
+      releaseProjectKind: "react_native_expo",
+      releaseVersionFilePath: "app.json",
+      releaseVersionBranch: "main",
+      pushSummaryBranches: ["main"],
+    };
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([settingsRow]))
+      .mockImplementationOnce(lookupSelect([{ id: "destination-id" }]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/diagnostics",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().diagnostics).toMatchObject({
+      status: "ready",
+      checks: {
+        repoLinked: true,
+        destinationConnected: true,
+        prSummaryReady: true,
+        releaseSummaryReady: true,
+        pushSummaryReady: true,
+      },
+      issues: [],
+    });
+  });
+
   it("deletes a workspace and its repo summary history", async () => {
     const userId = "00000000-0000-4000-8000-000000000099";
     const workspaceId = "00000000-0000-4000-8000-0000000000ae";
