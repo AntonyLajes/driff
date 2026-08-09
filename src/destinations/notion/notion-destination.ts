@@ -201,9 +201,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishPR: async (summary) => {
       const databaseId = getPrDatabaseId(input);
       if (!databaseId) {
-        throw new Error(
-          "Notion PR database id is not configured; set the PR database on the Notion destination.",
-        );
+        return { pageId: "" };
       }
       await ensureDatabaseProperties(notion, databaseId, PR_PROPERTY_SPEC);
       const createInput = {
@@ -218,9 +216,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishRelease: async (summary) => {
       const releasesId = getReleasesDatabaseId(input);
       if (!releasesId) {
-        throw new Error(
-          "Notion releases database id is not configured; pass releasesDatabaseId from workspace settings.",
-        );
+        return { pageId: "" };
       }
       await ensureDatabaseProperties(notion, releasesId, RELEASE_PROPERTY_SPEC);
       const createInput = {
@@ -235,9 +231,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishPush: async (summary) => {
       const pushesId = getPushesDatabaseId(input);
       if (!pushesId) {
-        throw new Error(
-          "Notion pushes database id is not configured; pass pushesDatabaseId from workspace settings.",
-        );
+        return { pageId: "" };
       }
       await ensureDatabaseProperties(notion, pushesId, PUSH_PROPERTY_SPEC);
       const createInput = {
