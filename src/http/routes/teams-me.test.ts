@@ -896,6 +896,175 @@ describe("http/routes/teams-me", () => {
     expect(select).toHaveBeenCalledTimes(1);
   });
 
+  it("returns not found when inviting into a missing team", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+      }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/invites`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { email: "new@example.com", role: "member" },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "team_not_found" });
+  });
+
+  it.each([
+    ["DELETE", `/api/me/teams/${TEAM_ID}/invites/not-a-uuid`],
+    ["POST", `/api/me/teams/${TEAM_ID}/invites/not-a-uuid/resend`],
+  ] as const)("rejects malformed invite identifiers for %s", async (method, url) => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_invite" });
+  });
+
+  it("returns not found when previewing or accepting a missing invite", async () => {
+    const emptySelect = () => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+        where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+      })),
+    });
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select: vi.fn(emptySelect) } as never, jwtSecret });
+    await server.ready();
+    const preview = await server.inject({ method: "GET", url: "/api/invites/missing" });
+    const accept = await server.inject({
+      method: "POST",
+      url: "/api/invites/missing/accept",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(preview.statusCode).toBe(404);
+    expect(accept.statusCode).toBe(404);
+  });
+
+  it("validates role changes before loading the target member", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000bb`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { role: "owner" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_body" });
+  });
+
+  it("returns not found when removing an unknown member", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+      }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "DELETE",
+      url: `/api/me/teams/${TEAM_ID}/members/00000000-0000-4000-8000-0000000000bb`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "member_not_found" });
+  });
+
+  it("lets an owner leave when another owner remains", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(async () => [{ value: 2 }]) })),
+      }));
+    const del = vi.fn(() => ({ where: vi.fn(async () => undefined) }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select, delete: del } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/teams/${TEAM_ID}/leave`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(response.statusCode).toBe(204);
+    expect(del).toHaveBeenCalledOnce();
+  });
+
+  it("validates team renames and handles a disappeared team", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"))
+      .mockImplementationOnce(membershipSelect("owner"));
+    const returning = vi.fn(async () => []);
+    const update = vi.fn(() => ({
+      set: vi.fn(() => ({ where: vi.fn(() => ({ returning })) })),
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select, update } as never, jwtSecret });
+    await server.ready();
+    const invalid = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { name: " " },
+    });
+    const missing = await server.inject({
+      method: "PATCH",
+      url: `/api/me/teams/${TEAM_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { name: "Renamed" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it.each([
+    [[], 500, "insert_failed"],
+    [new Error("database down"), 500, "internal_error"],
+  ] as const)("handles team creation failures", async (result, status, error) => {
+    const returning = vi.fn(async () => {
+      if (result instanceof Error) throw result;
+      return result;
+    });
+    const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { insert } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/teams",
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { name: "Acme" },
+    });
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toMatchObject({ error });
+  });
+
   /* ---- Edge cases filling the permission/lifecycle matrix ---- */
 
   const startTeams = async (db: unknown) => {
