@@ -6,7 +6,7 @@ import {
 } from "@/analytics/load-system-readiness.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
-import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import { readTeamIdHeader, resolveTeamContext, type TeamRole } from "@/teams/team-context.js";
 
 export interface SystemReadinessMeRegistrationInput {
   db: Database;
@@ -14,6 +14,8 @@ export interface SystemReadinessMeRegistrationInput {
   readinessLoader?: (input: {
     db: Database;
     teamId: string;
+    userId: string;
+    role: TeamRole;
   }) => Promise<SystemReadiness>;
 }
 
@@ -51,6 +53,8 @@ export const handler = async (
     const readiness = await (input.readinessLoader ?? loadSystemReadiness)({
       db: input.db,
       teamId: team.context.teamId,
+      userId: session.userId,
+      role: team.context.role,
     });
     return reply.send({ readiness });
   });

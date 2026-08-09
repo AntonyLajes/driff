@@ -336,11 +336,11 @@ export const teamAuditEventsTable = pgTable(
     ),
     actionCheck: check(
       "team_audit_events_action_check",
-      sql`${table.action} IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left')`,
+      sql`${table.action} IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left', 'workspace_access_changed')`,
     ),
     targetTypeCheck: check(
       "team_audit_events_target_type_check",
-      sql`${table.targetType} IN ('team', 'invite', 'member')`,
+      sql`${table.targetType} IN ('team', 'invite', 'member', 'workspace')`,
     ),
   }),
 );
@@ -408,6 +408,8 @@ export const workspacesTable = pgTable(
     repoFullName: text("repo_full_name"),
     /** Default branch from the source provider metadata (optional cache). */
     repoDefaultBranch: text("repo_default_branch"),
+    /** `all` lets every team member read it; `restricted` requires an explicit member grant. */
+    memberAccess: text("member_access").notNull().default("all"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -426,6 +428,34 @@ export const workspacesTable = pgTable(
     providerRepoUnique: uniqueIndex("workspaces_provider_repo_unique")
       .on(table.sourceProvider, table.repoFullName)
       .where(sql`${table.repoFullName} IS NOT NULL`),
+    memberAccessCheck: check(
+      "workspaces_member_access_check",
+      sql`${table.memberAccess} IN ('all', 'restricted')`,
+    ),
+  }),
+);
+
+/** Explicit read grants used only when a workspace's member access is restricted. */
+export const workspaceMemberAccessTable = pgTable(
+  "workspace_member_access",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    grantedByUserId: uuid("granted_by_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.userId] }),
+    userIdIdx: index("workspace_member_access_user_id_idx").on(table.userId),
   }),
 );
 

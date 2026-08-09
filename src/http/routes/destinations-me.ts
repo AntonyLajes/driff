@@ -27,6 +27,7 @@ import {
   resolveTeamContext,
   type TeamRole,
 } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 const NOTION_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
@@ -111,6 +112,7 @@ const loadWorkspaceForUser = async (
       and(
         eq(workspacesTable.teamId, teamResult.context.teamId),
         eq(workspacesTable.slug, slug),
+        workspaceVisibilityCondition({ userId, role: teamResult.context.role }),
       ),
     )
     .limit(1);

@@ -1,7 +1,9 @@
-import { count, eq, inArray, sql } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db/client.js";
 import { llmUsageTable, workspacesTable } from "@/db/schema.js";
+import type { TeamRole } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 export interface AiUsageProject {
   workspaceId: string;
@@ -25,6 +27,8 @@ export interface AiUsage {
 export const execute = async (input: {
   db: Database;
   teamId: string;
+  userId: string;
+  role: TeamRole;
 }): Promise<AiUsage> => {
   const workspaces = await input.db
     .select({
@@ -34,7 +38,12 @@ export const execute = async (input: {
       repo: workspacesTable.repoFullName,
     })
     .from(workspacesTable)
-    .where(eq(workspacesTable.teamId, input.teamId));
+    .where(
+      and(
+        eq(workspacesTable.teamId, input.teamId),
+        workspaceVisibilityCondition({ userId: input.userId, role: input.role }),
+      ),
+    );
   const linked = workspaces.filter(
     (workspace): workspace is typeof workspace & { repo: string } =>
       workspace.repo !== null && workspace.repo.trim().length > 0,

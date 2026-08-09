@@ -256,7 +256,11 @@ const buildRuntimeDependencies = async (
   const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
   const workspacesMe =
     googleOAuth !== undefined
-      ? { db, jwtSecret: googleOAuth.jwtSecret }
+      ? {
+          db,
+          jwtSecret: googleOAuth.jwtSecret,
+          auditRecorder: createTeamAuditRecorder({ db }),
+        }
       : undefined;
   const timelineMe =
     googleOAuth !== undefined

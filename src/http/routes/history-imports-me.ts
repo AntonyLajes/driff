@@ -16,6 +16,7 @@ import {
   resolveTeamContext,
   type TeamRole,
 } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 const createBodySchema = z.object({
   periodMonths: z.number().int().min(1).max(24).optional().default(12),
@@ -92,6 +93,7 @@ const defaultWorkspaceResolver =
         and(
           eq(workspacesTable.teamId, team.context.teamId),
           eq(workspacesTable.slug, normalizedSlug),
+          workspaceVisibilityCondition({ userId, role: team.context.role }),
         ),
       )
       .limit(1);

@@ -1,4 +1,4 @@
-import { count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 
 import type { Database } from "@/db/client.js";
 import {
@@ -6,6 +6,8 @@ import {
   workspaceDestinationsTable,
   workspacesTable,
 } from "@/db/schema.js";
+import type { TeamRole } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 export interface SystemReadiness {
   projects: number;
@@ -28,11 +30,18 @@ const emptyReadiness = (): SystemReadiness => ({
 export const execute = async (input: {
   db: Database;
   teamId: string;
+  userId: string;
+  role: TeamRole;
 }): Promise<SystemReadiness> => {
   const workspaces = await input.db
     .select({ id: workspacesTable.id })
     .from(workspacesTable)
-    .where(eq(workspacesTable.teamId, input.teamId));
+    .where(
+      and(
+        eq(workspacesTable.teamId, input.teamId),
+        workspaceVisibilityCondition({ userId: input.userId, role: input.role }),
+      ),
+    );
   const workspaceIds = workspaces.map((workspace) => workspace.id);
   if (workspaceIds.length === 0) return emptyReadiness();
 

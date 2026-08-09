@@ -6,12 +6,17 @@ import {
 } from "@/analytics/load-ai-usage.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
-import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import { readTeamIdHeader, resolveTeamContext, type TeamRole } from "@/teams/team-context.js";
 
 export interface AiUsageMeRegistrationInput {
   db: Database;
   jwtSecret: string;
-  usageLoader?: (input: { db: Database; teamId: string }) => Promise<AiUsage>;
+  usageLoader?: (input: {
+    db: Database;
+    teamId: string;
+    userId: string;
+    role: TeamRole;
+  }) => Promise<AiUsage>;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -48,6 +53,8 @@ export const handler = async (
     const usage = await (input.usageLoader ?? loadAiUsage)({
       db: input.db,
       teamId: team.context.teamId,
+      userId: session.userId,
+      role: team.context.role,
     });
     return reply.send({ usage });
   });

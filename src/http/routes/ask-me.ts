@@ -11,6 +11,7 @@ import type { Database } from "@/db/client.js";
 import { askInteractionsTable, workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
 import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 const askBodySchema = z.object({
   question: z.string().trim().min(3).max(500),
@@ -105,6 +106,7 @@ export const handler = async (
           and(
             eq(workspacesTable.teamId, team.context.teamId),
             eq(workspacesTable.slug, slug),
+            workspaceVisibilityCondition({ userId: session.userId, role: team.context.role }),
           ),
         )
         .limit(1);
@@ -187,6 +189,7 @@ export const handler = async (
           and(
             eq(workspacesTable.teamId, team.context.teamId),
             eq(workspacesTable.slug, slug),
+            workspaceVisibilityCondition({ userId: session.userId, role: team.context.role }),
           ),
         )
         .limit(1);

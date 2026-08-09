@@ -13,8 +13,9 @@ export interface TeamAuditEventInput {
     | "invite_accepted"
     | "member_role_changed"
     | "member_removed"
-    | "member_left";
-  targetType: "team" | "invite" | "member";
+    | "member_left"
+    | "workspace_access_changed";
+  targetType: "team" | "invite" | "member" | "workspace";
   targetId?: string | null;
   targetLabel?: string | null;
   metadata?: Record<string, unknown>;

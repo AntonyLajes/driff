@@ -111,6 +111,139 @@ describe("http/routes/workspaces-me", () => {
     expect(select).toHaveBeenCalledOnce();
   });
 
+  it("returns project access mode and regular members to a manager", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const memberId = "00000000-0000-4000-8000-000000000088";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "owner@example.com",
+      expiresInSeconds: 3600,
+    });
+    const workspace = {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      name: "Acme",
+      slug: "acme",
+      sourceProvider: "github",
+      workspaceKind: null,
+      repoFullName: "acme/app",
+      repoDefaultBranch: "main",
+      memberAccess: "restricted",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const select = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => [workspace]) })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          innerJoin: vi.fn(() => ({
+            where: vi.fn(() => ({
+              orderBy: vi.fn(async () => [
+                { userId: memberId, name: "Mia", email: "mia@example.com", picture: null },
+              ]),
+            })),
+          })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(async () => [{ userId: memberId }]) })),
+      }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/acme/access",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      access: {
+        mode: "restricted",
+        members: [
+          {
+            userId: memberId,
+            name: "Mia",
+            email: "mia@example.com",
+            picture: null,
+            hasAccess: true,
+          },
+        ],
+      },
+    });
+  });
+
+  it("replaces explicit project grants and records an audit event", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const memberId = "00000000-0000-4000-8000-000000000088";
+    const workspaceId = "00000000-0000-4000-8000-0000000000aa";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "owner@example.com",
+      expiresInSeconds: 3600,
+    });
+    const select = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [{
+              id: workspaceId,
+              name: "Acme",
+              slug: "acme",
+              memberAccess: "all",
+            }]),
+          })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(async () => [{ userId: memberId }]) })),
+      }));
+    const updateWhere = vi.fn(async () => undefined);
+    const deleteWhere = vi.fn(async () => undefined);
+    const insertValues = vi.fn(async () => undefined);
+    const tx = {
+      update: vi.fn(() => ({ set: vi.fn(() => ({ where: updateWhere })) })),
+      delete: vi.fn(() => ({ where: deleteWhere })),
+      insert: vi.fn(() => ({ values: insertValues })),
+    };
+    const transaction = vi.fn(async (callback: (value: typeof tx) => Promise<void>) => callback(tx));
+    const auditRecorder = vi.fn(async () => undefined);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select, transaction } as never, jwtSecret, auditRecorder });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/acme/access",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { mode: "restricted", memberUserIds: [memberId] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(insertValues).toHaveBeenCalledWith([
+      { workspaceId, userId: memberId, grantedByUserId: userId },
+    ]);
+    expect(auditRecorder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "workspace_access_changed",
+        targetType: "workspace",
+        targetId: workspaceId,
+        metadata: { mode: "restricted", grantedMembers: 1 },
+      }),
+    );
+  });
+
   it("returns 201 after creating a workspace linked to a repo", async () => {
     const userId = "00000000-0000-4000-8000-000000000099";
     const token = signSessionJwt({

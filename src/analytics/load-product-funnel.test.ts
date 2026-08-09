@@ -36,7 +36,7 @@ describe("analytics/load-product-funnel", () => {
       );
 
     await expect(
-      execute({ db: { select } as never, teamId: "team-1" }),
+      execute({ db: { select } as never, teamId: "team-1", userId: "user-1", role: "owner" }),
     ).resolves.toEqual({
       connectedProjects: 2,
       historyReadyProjects: 1,
@@ -51,7 +51,7 @@ describe("analytics/load-product-funnel", () => {
     const select = vi.fn().mockImplementationOnce(flatSelect([]));
 
     await expect(
-      execute({ db: { select } as never, teamId: "team-1" }),
+      execute({ db: { select } as never, teamId: "team-1", userId: "user-1", role: "owner" }),
     ).resolves.toEqual({
       connectedProjects: 0,
       historyReadyProjects: 0,

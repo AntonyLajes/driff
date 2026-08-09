@@ -23,9 +23,11 @@ import {
   pushesTable,
   releasesTable,
   summaryCorrectionsTable,
+  teamMembersTable,
   usersTable,
   webhookEventsTable,
   workspaceDestinationsTable,
+  workspaceMemberAccessTable,
   workspaceSettingsTable,
   workspacesTable,
 } from "@/db/schema.js";
@@ -39,12 +41,15 @@ import {
   readTeamIdHeader,
   resolveTeamContext,
 } from "@/teams/team-context.js";
+import type { TeamAuditRecorder } from "@/teams/record-audit-event.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
 import { execute as deleteWorkspaceData } from "@/workspaces/delete-workspace-data.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
   jwtSecret: string;
+  auditRecorder?: TeamAuditRecorder;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -104,9 +109,17 @@ const workspaceRowSelect = {
   workspaceKind: workspacesTable.workspaceKind,
   repoFullName: workspacesTable.repoFullName,
   repoDefaultBranch: workspacesTable.repoDefaultBranch,
+  memberAccess: workspacesTable.memberAccess,
   createdAt: workspacesTable.createdAt,
   updatedAt: workspacesTable.updatedAt,
 };
+
+const patchWorkspaceAccessBodySchema = z
+  .object({
+    mode: z.enum(["all", "restricted"]),
+    memberUserIds: z.array(z.string().uuid()).max(100).default([]),
+  })
+  .strict();
 
 const patchWorkspaceSettingsBodySchema = z
   .object({
@@ -214,7 +227,13 @@ const loadWorkspaceForMember = async (
   const rows = await db
     .select(workspaceRowSelect)
     .from(workspacesTable)
-    .where(and(eq(workspacesTable.teamId, team.teamId), eq(workspacesTable.slug, slug)))
+    .where(
+      and(
+        eq(workspacesTable.teamId, team.teamId),
+        eq(workspacesTable.slug, slug),
+        workspaceVisibilityCondition({ userId, role: team.role }),
+      ),
+    )
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
@@ -402,10 +421,158 @@ export const handler = async (
     const rows = await input.db
       .select(workspaceRowSelect)
       .from(workspacesTable)
-      .where(eq(workspacesTable.teamId, team.context.teamId))
+      .where(
+        and(
+          eq(workspacesTable.teamId, team.context.teamId),
+          workspaceVisibilityCondition({ userId: session.userId, role: team.context.role }),
+        ),
+      )
       .orderBy(desc(workspacesTable.createdAt));
 
     return reply.send({ workspaces: [...rows] });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/access", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+
+    const [members, grantRows] = await Promise.all([
+      input.db
+        .select({
+          userId: teamMembersTable.userId,
+          name: usersTable.name,
+          email: usersTable.email,
+          picture: usersTable.picture,
+        })
+        .from(teamMembersTable)
+        .innerJoin(usersTable, eq(usersTable.id, teamMembersTable.userId))
+        .where(
+          and(
+            eq(teamMembersTable.teamId, loaded.team.teamId),
+            eq(teamMembersTable.role, "member"),
+          ),
+        )
+        .orderBy(usersTable.name, usersTable.email),
+      input.db
+        .select({ userId: workspaceMemberAccessTable.userId })
+        .from(workspaceMemberAccessTable)
+        .where(eq(workspaceMemberAccessTable.workspaceId, loaded.workspace.id)),
+    ]);
+    const granted = new Set(grantRows.map((row) => row.userId));
+    return reply.send({
+      access: {
+        mode: loaded.workspace.memberAccess,
+        members: members.map((member) => ({
+          ...member,
+          hasAccess: granted.has(member.userId),
+        })),
+      },
+    });
+  });
+
+  instance.patch("/api/me/workspaces/by-slug/:slug/access", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const parsed = patchWorkspaceAccessBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: "invalid_body" });
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+
+    const requestedIds = [...new Set(parsed.data.memberUserIds)];
+    const memberRows = await input.db
+      .select({ userId: teamMembersTable.userId })
+      .from(teamMembersTable)
+      .where(
+        and(
+          eq(teamMembersTable.teamId, loaded.team.teamId),
+          eq(teamMembersTable.role, "member"),
+        ),
+      );
+    const validIds = new Set(memberRows.map((row) => row.userId));
+    if (requestedIds.some((userId) => !validIds.has(userId))) {
+      return reply.status(400).send({ error: "invalid_workspace_access_members" });
+    }
+
+    await input.db.transaction(async (tx) => {
+      await tx
+        .update(workspacesTable)
+        .set({ memberAccess: parsed.data.mode, updatedAt: new Date() })
+        .where(eq(workspacesTable.id, loaded.workspace.id));
+      await tx
+        .delete(workspaceMemberAccessTable)
+        .where(eq(workspaceMemberAccessTable.workspaceId, loaded.workspace.id));
+      if (parsed.data.mode === "restricted" && requestedIds.length > 0) {
+        await tx.insert(workspaceMemberAccessTable).values(
+          requestedIds.map((userId) => ({
+            workspaceId: loaded.workspace.id,
+            userId,
+            grantedByUserId: session.userId,
+          })),
+        );
+      }
+    });
+    if (input.auditRecorder !== undefined) {
+      try {
+        await input.auditRecorder({
+          teamId: loaded.team.teamId,
+          actorUserId: session.userId,
+          action: "workspace_access_changed",
+          targetType: "workspace",
+          targetId: loaded.workspace.id,
+          targetLabel: loaded.workspace.name,
+          metadata: {
+            mode: parsed.data.mode,
+            grantedMembers: parsed.data.mode === "restricted" ? requestedIds.length : 0,
+          },
+        });
+      } catch (error) {
+        request.log.warn({ err: error }, "Failed to record workspace access audit event");
+      }
+    }
+    return reply.send({
+      access: {
+        mode: parsed.data.mode,
+        memberUserIds: parsed.data.mode === "restricted" ? requestedIds : [],
+      },
+    });
   });
 
   instance.get("/api/me/workspaces/by-slug/:slug/summary", async (request, reply) => {

@@ -32,7 +32,7 @@ describe("analytics/load-system-readiness", () => {
       );
 
     await expect(
-      execute({ db: { select } as never, teamId: "team-1" }),
+      execute({ db: { select } as never, teamId: "team-1", userId: "user-1", role: "owner" }),
     ).resolves.toEqual({
       projects: 2,
       searchableProjects: 1,
@@ -46,7 +46,7 @@ describe("analytics/load-system-readiness", () => {
   it("should avoid readiness scans when the team has no projects", async () => {
     const select = vi.fn().mockImplementationOnce(flatSelect([]));
     await expect(
-      execute({ db: { select } as never, teamId: "team-1" }),
+      execute({ db: { select } as never, teamId: "team-1", userId: "user-1", role: "owner" }),
     ).resolves.toEqual({
       projects: 0,
       searchableProjects: 0,

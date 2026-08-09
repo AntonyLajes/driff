@@ -30,7 +30,7 @@ describe("analytics/load-ai-usage", () => {
       );
 
     await expect(
-      execute({ db: { select } as never, teamId: "team-1" }),
+      execute({ db: { select } as never, teamId: "team-1", userId: "user-1", role: "owner" }),
     ).resolves.toEqual({
       calls: 2,
       inputTokens: 1200,
@@ -69,7 +69,7 @@ describe("analytics/load-ai-usage", () => {
       );
 
     await expect(
-      execute({ db: { select } as never, teamId: "team-1" }),
+      execute({ db: { select } as never, teamId: "team-1", userId: "user-1", role: "owner" }),
     ).resolves.toEqual({
       calls: 0,
       inputTokens: 0,

@@ -253,6 +253,20 @@
       "when": 1786314324262,
       "tag": "0035_dizzy_victor_mancha",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786318163941,
+      "tag": "0036_little_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786318183035,
+      "tag": "0037_misty_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,8 @@ import {
   historyImportsTable,
   workspacesTable,
 } from "@/db/schema.js";
+import type { TeamRole } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 export interface ProductFunnel {
   connectedProjects: number;
@@ -28,11 +30,18 @@ const emptyFunnel = (): ProductFunnel => ({
 export const execute = async (input: {
   db: Database;
   teamId: string;
+  userId: string;
+  role: TeamRole;
 }): Promise<ProductFunnel> => {
   const workspaceRows = await input.db
     .select({ id: workspacesTable.id })
     .from(workspacesTable)
-    .where(eq(workspacesTable.teamId, input.teamId));
+    .where(
+      and(
+        eq(workspacesTable.teamId, input.teamId),
+        workspaceVisibilityCondition({ userId: input.userId, role: input.role }),
+      ),
+    );
   const workspaceIds = workspaceRows.map((row) => row.id);
   if (workspaceIds.length === 0) return emptyFunnel();
 
