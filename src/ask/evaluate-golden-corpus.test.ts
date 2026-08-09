@@ -7,6 +7,13 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { execute } from "@/ask/evaluate-golden-corpus.js";
 import { execute as evaluateSuite } from "@/ask/evaluate-golden-suite.js";
+import {
+  compareSnapshots,
+  createSnapshot,
+  goldenSuiteSnapshotSchema,
+  readSnapshot,
+  writeSnapshot,
+} from "@/ask/golden-baseline.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/ride-pack-golden.json", import.meta.url),
@@ -46,9 +53,7 @@ describe("ask/evaluate-golden-corpus execute", () => {
       inputTokens: 0,
       outputTokens: 0,
     });
-    expect(
-      evaluation.cases.every((item) => item.durationMs >= 0),
-    ).toBe(true);
+    expect(evaluation.cases.every((item) => item.durationMs >= 0)).toBe(true);
   });
 
   it("should report the precise missing expectation and fail the threshold", async () => {
@@ -139,5 +144,98 @@ describe("ask/evaluate-golden-suite execute", () => {
       inputTokens: 0,
       outputTokens: 0,
     });
+  });
+
+  it("should compare the current suite with an approved stable baseline", async () => {
+    const evaluation = await evaluateSuite({
+      directoryPath: fixtureDirectory,
+    });
+    const baseline = createSnapshot(evaluation, "ask-retrieval-v1");
+    const current = createSnapshot(evaluation, "candidate-sha");
+
+    expect(compareSnapshots({ baseline, current })).toEqual({
+      baselineRevision: "ask-retrieval-v1",
+      currentRevision: "candidate-sha",
+      passed: true,
+      regressions: [],
+      improvements: [],
+      additions: [],
+    });
+    expect(baseline).not.toHaveProperty("durationMs");
+    expect(baseline.corpora[0]).not.toHaveProperty("meanCaseDurationMs");
+  });
+
+  it("should fail comparison when approved coverage or quality regresses", async () => {
+    const evaluation = await evaluateSuite({
+      directoryPath: fixtureDirectory,
+    });
+    const baseline = createSnapshot(evaluation, "approved");
+    const current = structuredClone(baseline);
+    current.revision = "candidate";
+    const corpus = current.corpora[0];
+    if (corpus === undefined) throw new Error("Expected baseline corpus.");
+    corpus.citationPrecision = 0.8;
+    const goldenCase = corpus.cases[0];
+    if (goldenCase === undefined) throw new Error("Expected baseline case.");
+    goldenCase.passed = false;
+    corpus.passedCases -= 1;
+    current.passedCases -= 1;
+    const removedCase = corpus.cases.splice(1, 1)[0];
+    if (removedCase === undefined) throw new Error("Expected removable case.");
+    corpus.totalCases -= 1;
+    current.totalCases -= 1;
+    if (removedCase.passed) {
+      corpus.passedCases -= 1;
+      current.passedCases -= 1;
+    }
+    corpus.passRate = corpus.passedCases / corpus.totalCases;
+    const removedCorpus = current.corpora.splice(1, 1)[0];
+    if (removedCorpus === undefined)
+      throw new Error("Expected removable corpus.");
+    current.totalCorpora -= 1;
+    current.totalCases -= removedCorpus.totalCases;
+    current.passedCases -= removedCorpus.passedCases;
+
+    const comparison = compareSnapshots({ baseline, current });
+
+    expect(comparison.passed).toBe(false);
+    expect(comparison.regressions).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("pass rate decreased"),
+        expect.stringContaining("citation precision decreased"),
+        expect.stringContaining("changed from pass to fail"),
+        expect.stringContaining("was removed"),
+        expect.stringContaining("corpus ride-pack-cited-history was removed"),
+      ]),
+    );
+  });
+
+  it("should persist and validate an explicitly approved baseline", async () => {
+    const evaluation = await evaluateSuite({
+      directoryPath: fixtureDirectory,
+    });
+    const snapshot = createSnapshot(evaluation, "approved-revision");
+    const directory = await mkdtemp(join(tmpdir(), "driff-ask-baseline-"));
+    temporaryDirectories.push(directory);
+    const baselinePath = join(directory, "baseline.json");
+
+    await writeSnapshot(baselinePath, snapshot);
+
+    expect(await readSnapshot(baselinePath)).toEqual(snapshot);
+    expect(
+      goldenSuiteSnapshotSchema.parse(
+        JSON.parse(await readFile(baselinePath, "utf8")) as unknown,
+      ),
+    ).toEqual(snapshot);
+  });
+
+  it("should reject a baseline whose totals do not match its case records", async () => {
+    const evaluation = await evaluateSuite({
+      directoryPath: fixtureDirectory,
+    });
+    const snapshot = createSnapshot(evaluation, "invalid-revision");
+    snapshot.corpora[0]!.totalCases += 1;
+
+    expect(() => goldenSuiteSnapshotSchema.parse(snapshot)).toThrow();
   });
 });

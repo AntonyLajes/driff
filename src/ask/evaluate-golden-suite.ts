@@ -7,6 +7,12 @@ import {
   execute as evaluateCorpus,
   type GoldenEvaluation,
 } from "@/ask/evaluate-golden-corpus.js";
+import {
+  compareSnapshots,
+  createSnapshot,
+  readSnapshot,
+  writeSnapshot,
+} from "@/ask/golden-baseline.js";
 
 export interface ExecuteInput {
   directoryPath: string;
@@ -48,7 +54,9 @@ export const execute = async ({
   const caseDurations = corpora.flatMap((corpus) =>
     corpus.cases.map((item) => item.durationMs),
   );
-  const sortedDurations = [...caseDurations].sort((left, right) => left - right);
+  const sortedDurations = [...caseDurations].sort(
+    (left, right) => left - right,
+  );
   const p95Index = Math.max(0, Math.ceil(sortedDurations.length * 0.95) - 1);
   return {
     totalCorpora: corpora.length,
@@ -85,9 +93,23 @@ const runCli = async (): Promise<void> => {
   const defaultDirectory = dirname(
     fileURLToPath(new URL("./fixtures/ride-pack-golden.json", import.meta.url)),
   );
+  const args = process.argv.slice(2);
+  const directoryPath = args.find((arg) => !arg.startsWith("--"));
+  const option = (name: string): string | undefined =>
+    args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+  const defaultBaselinePath = fileURLToPath(
+    new URL("./fixtures/ask-golden-baseline.json", import.meta.url),
+  );
+  const requestedRevision = option("revision");
+  const revision =
+    requestedRevision ??
+    process.env.ASK_EVALUATOR_REVISION ??
+    process.env.GITHUB_SHA ??
+    "working-tree";
   const evaluation = await execute({
-    directoryPath: process.argv[2] ?? defaultDirectory,
+    directoryPath: directoryPath ?? defaultDirectory,
   });
+  const snapshot = createSnapshot(evaluation, revision);
   process.stdout.write(
     `Ask suite: ${evaluation.passedCases}/${evaluation.totalCases} cases passed across ${evaluation.totalCorpora} corpora. Threshold: ${evaluation.thresholdPassed ? "PASS" : "FAIL"}. Latency: mean ${evaluation.meanCaseDurationMs.toFixed(3)}ms, p95 ${evaluation.p95CaseDurationMs.toFixed(3)}ms. Runtime LLM usage: ${evaluation.runtimeUsage.llmCalls} calls, ${evaluation.runtimeUsage.inputTokens + evaluation.runtimeUsage.outputTokens} tokens.\n`,
   );
@@ -98,6 +120,37 @@ const runCli = async (): Promise<void> => {
     for (const item of corpus.cases.filter((item) => !item.passed)) {
       process.stderr.write(`  - ${item.id}: ${item.failures.join("; ")}\n`);
     }
+  }
+  const writeBaselinePath = option("write-baseline");
+  if (writeBaselinePath !== undefined) {
+    if (requestedRevision === undefined) {
+      throw new Error(
+        "Writing a baseline requires --revision=<approved-revision>.",
+      );
+    }
+    await writeSnapshot(writeBaselinePath, snapshot);
+    process.stdout.write(
+      `Baseline written to ${resolve(writeBaselinePath)}.\n`,
+    );
+  } else {
+    const baselinePath = option("baseline") ?? defaultBaselinePath;
+    const comparison = compareSnapshots({
+      baseline: await readSnapshot(baselinePath),
+      current: snapshot,
+    });
+    process.stdout.write(
+      `Baseline ${comparison.baselineRevision} → ${comparison.currentRevision}: ${comparison.passed ? "NO REGRESSIONS" : "REGRESSION"}. ${comparison.improvements.length} improvements, ${comparison.additions.length} additions.\n`,
+    );
+    for (const regression of comparison.regressions) {
+      process.stderr.write(`  - regression: ${regression}\n`);
+    }
+    for (const improvement of comparison.improvements) {
+      process.stdout.write(`  - improvement: ${improvement}\n`);
+    }
+    for (const addition of comparison.additions) {
+      process.stdout.write(`  - addition: ${addition}\n`);
+    }
+    if (!comparison.passed) process.exitCode = 1;
   }
   if (!evaluation.thresholdPassed) process.exitCode = 1;
 };

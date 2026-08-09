@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "revision": "ask-retrieval-v1",
+  "totalCorpora": 3,
+  "totalCases": 31,
+  "passedCases": 31,
+  "thresholdPassed": true,
+  "corpora": [
+    {
+      "corpusId": "backend-api-cited-history",
+      "totalCases": 9,
+      "passedCases": 9,
+      "passRate": 1,
+      "citationPrecision": 1,
+      "refusalAccuracy": 1,
+      "cases": [
+        {
+          "id": "api-version-320",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "api-payment-idempotency-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "api-webhook-retry-fix",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "api-latest-feature-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "api-latest-fix",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "api-latest-maintenance-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "api-unknown-dark-mode",
+          "passed": true,
+          "returnedMatches": 0,
+          "citedMatches": 0
+        },
+        {
+          "id": "api-team-this-week-pt",
+          "passed": true,
+          "returnedMatches": 2,
+          "citedMatches": 2
+        },
+        {
+          "id": "api-contributor-version-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        }
+      ]
+    },
+    {
+      "corpusId": "ride-pack-cited-history",
+      "totalCases": 13,
+      "passedCases": 13,
+      "passRate": 1,
+      "citationPrecision": 1,
+      "refusalAccuracy": 1,
+      "cases": [
+        {
+          "id": "version-134-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "version-133-empty",
+          "passed": true,
+          "returnedMatches": 0,
+          "citedMatches": 0
+        },
+        {
+          "id": "version-missing",
+          "passed": true,
+          "returnedMatches": 0,
+          "citedMatches": 0
+        },
+        {
+          "id": "home-actions-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "home-actions-en",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "latest-feature-natural-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "first-feature-natural-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "fuel-stops-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "fuel-stops-en",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "unknown-checkout",
+          "passed": true,
+          "returnedMatches": 0,
+          "citedMatches": 0
+        },
+        {
+          "id": "team-this-week-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "contributor-last-30-days-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "contributor-version-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        }
+      ]
+    },
+    {
+      "corpusId": "web-commerce-cited-history",
+      "totalCases": 9,
+      "passedCases": 9,
+      "passRate": 1,
+      "citationPrecision": 1,
+      "refusalAccuracy": 1,
+      "cases": [
+        {
+          "id": "web-version-240",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "web-order-filters",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "web-analytics-fix",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "web-latest-refactor-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "web-checkout-contributor-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "web-latest-fix-pt",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        },
+        {
+          "id": "web-unknown-offline-map",
+          "passed": true,
+          "returnedMatches": 0,
+          "citedMatches": 0
+        },
+        {
+          "id": "web-team-this-week",
+          "passed": true,
+          "returnedMatches": 2,
+          "citedMatches": 2
+        },
+        {
+          "id": "web-contributor-version",
+          "passed": true,
+          "returnedMatches": 1,
+          "citedMatches": 1
+        }
+      ]
+    }
+  ]
+}
