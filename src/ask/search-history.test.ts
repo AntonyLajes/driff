@@ -206,4 +206,43 @@ describe("ask/search-history execute", () => {
       }),
     );
   });
+
+  it("should ignore short stop words instead of returning an unrelated cited change", async () => {
+    const apiChange = {
+      ...change(
+        "204",
+        "Add idempotency keys to the payment creation endpoint",
+      ),
+      summaryExecutive:
+        "Clients can retry payment creation without duplicate charges.",
+      summaryTechnical:
+        "Stores idempotency keys and replays repeated payment requests.",
+      areas: [
+        {
+          id: "area-payments",
+          name: "Payments API",
+          slug: "payments-api",
+          confidence: 98,
+          source: "ai",
+        },
+      ],
+    };
+    const timelineReader = vi.fn(async () => page([], [apiChange]));
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "Who added dark mode to the dashboard?",
+      timelineReader,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "no_evidence",
+        confidence: "none",
+        queryTerms: ["dark", "mode", "dashboard"],
+        matches: [],
+      }),
+    );
+  });
 });
