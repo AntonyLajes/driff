@@ -527,4 +527,92 @@ describe("http/routes/timeline-me", () => {
       error: "version_comparison_not_found",
     });
   });
+
+  const canonicalRoutes = [
+    "/timeline",
+    "/lineages",
+    `/versions/${VERSION_ID}`,
+    `/versions/${BASE_VERSION_ID}/compare/${VERSION_ID}`,
+  ] as const;
+
+  it.each(canonicalRoutes)("rejects an invalid session for %s", async (suffix) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret: JWT_SECRET });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack${suffix}`,
+      headers: { authorization: "Bearer invalid" },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "invalid_session" });
+  });
+
+  it.each(canonicalRoutes)("rejects an invalid workspace slug for %s", async (suffix) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret: JWT_SECRET });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/---${suffix}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_workspace_slug" });
+  });
+
+  it.each(canonicalRoutes)("rejects an invalid team for %s", async (suffix) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret: JWT_SECRET });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack${suffix}`,
+      headers: { authorization: `Bearer ${token()}`, "x-team-id": "invalid" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_team" });
+  });
+
+  it.each(canonicalRoutes)("rejects a non-member for %s", async (suffix) => {
+    const select = vi.fn(() => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
+      })),
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret: JWT_SECRET });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack${suffix}`,
+      headers: {
+        authorization: `Bearer ${token()}`,
+        "x-team-id": "00000000-0000-4000-8000-0000000000ee",
+      },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "not_a_team_member" });
+  });
+
+  it.each(canonicalRoutes)("returns not found for a missing workspace from %s", async (suffix) => {
+    const workspaceDb = buildWorkspaceDb([]);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: workspaceDb.db, jwtSecret: JWT_SECRET });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/missing${suffix}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "workspace_not_found" });
+  });
 });
