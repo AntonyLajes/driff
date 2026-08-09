@@ -16,6 +16,7 @@ import {
   promptsTable,
   pullRequestsTable,
   summaryCorrectionsTable,
+  teamAuditEventsTable,
   userSourceConnectionsTable,
   usersTable,
   webhookEventsTable,
@@ -320,6 +321,27 @@ describe("db/schema tables", () => {
     expect(config.foreignKeys.length).toBe(1);
     expect(config.indexes.length).toBe(1);
     expect(config.checks.length).toBe(1);
+  });
+
+  it("should keep team administration events without repository content", () => {
+    const columns = getTableColumns(teamAuditEventsTable);
+    const config = getTableConfig(teamAuditEventsTable);
+
+    expect(columns.teamId).toBeDefined();
+    expect(columns.actorUserId).toBeDefined();
+    expect(columns.action).toBeDefined();
+    expect(columns.targetType).toBeDefined();
+    expect(columns.targetId).toBeDefined();
+    expect(columns.targetLabel).toBeDefined();
+    expect(columns.metadata).toBeDefined();
+    expect(columns.createdAt).toBeDefined();
+    expect(columns).not.toHaveProperty("repository");
+    expect(columns).not.toHaveProperty("sourceCode");
+    expect(config.foreignKeys.length).toBe(2);
+    expect(config.indexes.map((candidate) => candidate.config.name)).toContain(
+      "team_audit_events_team_created_at_idx",
+    );
+    expect(config.checks.length).toBe(2);
   });
 
   it("should allow explicit pusher attribution for direct pushes", () => {

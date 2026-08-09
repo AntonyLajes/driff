@@ -37,16 +37,22 @@ describe("http/routes/teams-me", () => {
     await handler(server, { db: {} as never, jwtSecret });
     await server.ready();
 
-    const response = await server.inject({ method: "GET", url: "/api/me/teams" });
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/teams",
+    });
 
     expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ error: "missing_or_invalid_authorization" });
+    expect(response.json()).toMatchObject({
+      error: "missing_or_invalid_authorization",
+    });
   });
 
   const protectedTeamRoutes = [
     ["GET", "/api/me/teams"],
     ["GET", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/members"],
     ["GET", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/invites"],
+    ["GET", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/audit-events"],
     ["POST", "/api/me/teams/00000000-0000-4000-8000-0000000000ee/invites"],
     [
       "DELETE",
@@ -71,33 +77,39 @@ describe("http/routes/teams-me", () => {
     ["POST", "/api/me/teams"],
   ] as const;
 
-  it.each(protectedTeamRoutes)("protects %s %s without authorization", async (method, url) => {
-    const server = fastify({ logger: false });
-    servers.push(server);
-    await handler(server, { db: {} as never, jwtSecret });
-    await server.ready();
-    const response = await server.inject({
-      method,
-      url,
-      payload: method === "POST" || method === "PATCH" ? {} : undefined,
-    });
-    expect(response.statusCode).toBe(401);
-  });
+  it.each(protectedTeamRoutes)(
+    "protects %s %s without authorization",
+    async (method, url) => {
+      const server = fastify({ logger: false });
+      servers.push(server);
+      await handler(server, { db: {} as never, jwtSecret });
+      await server.ready();
+      const response = await server.inject({
+        method,
+        url,
+        payload: method === "POST" || method === "PATCH" ? {} : undefined,
+      });
+      expect(response.statusCode).toBe(401);
+    },
+  );
 
-  it.each(protectedTeamRoutes)("rejects an invalid JWT for %s %s", async (method, url) => {
-    const server = fastify({ logger: false });
-    servers.push(server);
-    await handler(server, { db: {} as never, jwtSecret });
-    await server.ready();
-    const response = await server.inject({
-      method,
-      url,
-      headers: { authorization: "Bearer invalid" },
-      payload: method === "POST" || method === "PATCH" ? {} : undefined,
-    });
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ error: "invalid_session" });
-  });
+  it.each(protectedTeamRoutes)(
+    "rejects an invalid JWT for %s %s",
+    async (method, url) => {
+      const server = fastify({ logger: false });
+      servers.push(server);
+      await handler(server, { db: {} as never, jwtSecret });
+      await server.ready();
+      const response = await server.inject({
+        method,
+        url,
+        headers: { authorization: "Bearer invalid" },
+        payload: method === "POST" || method === "PATCH" ? {} : undefined,
+      });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ error: "invalid_session" });
+    },
+  );
 
   it("lists teams with role and member counts, personal first", async () => {
     const personal = {
@@ -173,7 +185,9 @@ describe("http/routes/teams-me", () => {
   const membershipSelect = (role: string) => () => ({
     from: vi.fn(() => ({
       innerJoin: vi.fn(() => ({
-        where: vi.fn(() => ({ limit: vi.fn(async () => [{ role, isPersonal: false }]) })),
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [{ role, isPersonal: false }]),
+        })),
       })),
     })),
   });
@@ -223,7 +237,11 @@ describe("http/routes/teams-me", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.yourRole).toBe("owner");
-    expect(body.members[0]).toMatchObject({ role: "owner", isYou: true, name: "Antony Lajes" });
+    expect(body.members[0]).toMatchObject({
+      role: "owner",
+      isYou: true,
+      name: "Antony Lajes",
+    });
     expect(body.members[1]).toMatchObject({ role: "member", isYou: false });
   });
 
@@ -292,7 +310,9 @@ describe("http/routes/teams-me", () => {
 
   const teamLimitSelect = (name: string, maxMembers: number) => () => ({
     from: vi.fn(() => ({
-      where: vi.fn(() => ({ limit: vi.fn(async () => [{ name, maxMembers }]) })),
+      where: vi.fn(() => ({
+        limit: vi.fn(async () => [{ name, maxMembers }]),
+      })),
     })),
   });
   const memberEmailsSelect = (emails: string[]) => () => ({
@@ -441,9 +461,13 @@ describe("http/routes/teams-me", () => {
       })),
     }));
     const onConflictDoNothing = vi.fn(async () => undefined);
-    const insert = vi.fn(() => ({ values: vi.fn(() => ({ onConflictDoNothing })) }));
+    const insert = vi.fn(() => ({
+      values: vi.fn(() => ({ onConflictDoNothing })),
+    }));
     const updateWhere = vi.fn(async () => undefined);
-    const update = vi.fn(() => ({ set: vi.fn(() => ({ where: updateWhere })) }));
+    const update = vi.fn(() => ({
+      set: vi.fn(() => ({ where: updateWhere })),
+    }));
     const db = { select, insert, update } as never;
 
     const server = fastify({ logger: false });
@@ -552,7 +576,10 @@ describe("http/routes/teams-me", () => {
     await handler(server, { db, jwtSecret });
     await server.ready();
 
-    const response = await server.inject({ method: "GET", url: "/api/invites/tok_abc" });
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/invites/tok_abc",
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().invite).toMatchObject({
@@ -575,7 +602,9 @@ describe("http/routes/teams-me", () => {
       .mockImplementationOnce(membershipSelect("owner"))
       .mockImplementationOnce(targetMemberSelect("member"));
     const updateWhere = vi.fn(async () => undefined);
-    const update = vi.fn(() => ({ set: vi.fn(() => ({ where: updateWhere })) }));
+    const update = vi.fn(() => ({
+      set: vi.fn(() => ({ where: updateWhere })),
+    }));
     const db = { select, update } as never;
 
     const server = fastify({ logger: false });
@@ -625,7 +654,10 @@ describe("http/routes/teams-me", () => {
 
     const server1 = fastify({ logger: false });
     servers.push(server1);
-    await handler(server1, { db: { select: memberSelect, delete: deleteFn } as never, jwtSecret });
+    await handler(server1, {
+      db: { select: memberSelect, delete: deleteFn } as never,
+      jwtSecret,
+    });
     await server1.ready();
     const ok = await server1.inject({
       method: "DELETE",
@@ -640,7 +672,10 @@ describe("http/routes/teams-me", () => {
       .mockImplementationOnce(targetMemberSelect("admin"));
     const server2 = fastify({ logger: false });
     servers.push(server2);
-    await handler(server2, { db: { select: adminSelect, delete: vi.fn() } as never, jwtSecret });
+    await handler(server2, {
+      db: { select: adminSelect, delete: vi.fn() } as never,
+      jwtSecret,
+    });
     await server2.ready();
     const blocked = await server2.inject({
       method: "DELETE",
@@ -699,13 +734,20 @@ describe("http/routes/teams-me", () => {
     const renameReturning = vi.fn(async () => [
       { id: TEAM_ID, name: "Renamed", slug: "acme-mobile" },
     ]);
-    const renameSelect = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+    const renameSelect = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("owner"));
     const update = vi.fn(() => ({
-      set: vi.fn(() => ({ where: vi.fn(() => ({ returning: renameReturning })) })),
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({ returning: renameReturning })),
+      })),
     }));
     const server1 = fastify({ logger: false });
     servers.push(server1);
-    await handler(server1, { db: { select: renameSelect, update } as never, jwtSecret });
+    await handler(server1, {
+      db: { select: renameSelect, update } as never,
+      jwtSecret,
+    });
     await server1.ready();
     const ok = await server1.inject({
       method: "PATCH",
@@ -719,7 +761,10 @@ describe("http/routes/teams-me", () => {
     // Personal team (id === userId) short-circuits to personal context.
     const server2 = fastify({ logger: false });
     servers.push(server2);
-    await handler(server2, { db: { select: vi.fn(), update: vi.fn() } as never, jwtSecret });
+    await handler(server2, {
+      db: { select: vi.fn(), update: vi.fn() } as never,
+      jwtSecret,
+    });
     await server2.ready();
     const blocked = await server2.inject({
       method: "PATCH",
@@ -794,7 +839,11 @@ describe("http/routes/teams-me", () => {
       expect.objectContaining({ name: "Acme Mobile", isPersonal: false }),
     );
     expect(memberValues).toHaveBeenCalledWith(
-      expect.objectContaining({ teamId: createdTeam.id, userId, role: "owner" }),
+      expect.objectContaining({
+        teamId: createdTeam.id,
+        userId,
+        role: "owner",
+      }),
     );
   });
 
@@ -901,7 +950,9 @@ describe("http/routes/teams-me", () => {
       .fn()
       .mockImplementationOnce(membershipSelect("owner"))
       .mockImplementationOnce(() => ({
-        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
       }));
     const server = fastify({ logger: false });
     servers.push(server);
@@ -920,33 +971,44 @@ describe("http/routes/teams-me", () => {
   it.each([
     ["DELETE", `/api/me/teams/${TEAM_ID}/invites/not-a-uuid`],
     ["POST", `/api/me/teams/${TEAM_ID}/invites/not-a-uuid/resend`],
-  ] as const)("rejects malformed invite identifiers for %s", async (method, url) => {
-    const select = vi.fn().mockImplementationOnce(membershipSelect("owner"));
-    const server = fastify({ logger: false });
-    servers.push(server);
-    await handler(server, { db: { select } as never, jwtSecret });
-    await server.ready();
-    const response = await server.inject({
-      method,
-      url,
-      headers: { authorization: `Bearer ${token()}` },
-    });
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: "invalid_invite" });
-  });
+  ] as const)(
+    "rejects malformed invite identifiers for %s",
+    async (method, url) => {
+      const select = vi.fn().mockImplementationOnce(membershipSelect("owner"));
+      const server = fastify({ logger: false });
+      servers.push(server);
+      await handler(server, { db: { select } as never, jwtSecret });
+      await server.ready();
+      const response = await server.inject({
+        method,
+        url,
+        headers: { authorization: `Bearer ${token()}` },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: "invalid_invite" });
+    },
+  );
 
   it("returns not found when previewing or accepting a missing invite", async () => {
     const emptySelect = () => ({
       from: vi.fn(() => ({
-        innerJoin: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
         where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
       })),
     });
     const server = fastify({ logger: false });
     servers.push(server);
-    await handler(server, { db: { select: vi.fn(emptySelect) } as never, jwtSecret });
+    await handler(server, {
+      db: { select: vi.fn(emptySelect) } as never,
+      jwtSecret,
+    });
     await server.ready();
-    const preview = await server.inject({ method: "GET", url: "/api/invites/missing" });
+    const preview = await server.inject({
+      method: "GET",
+      url: "/api/invites/missing",
+    });
     const accept = await server.inject({
       method: "POST",
       url: "/api/invites/missing/accept",
@@ -977,7 +1039,9 @@ describe("http/routes/teams-me", () => {
       .fn()
       .mockImplementationOnce(membershipSelect("owner"))
       .mockImplementationOnce(() => ({
-        from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
       }));
     const server = fastify({ logger: false });
     servers.push(server);
@@ -1045,32 +1109,38 @@ describe("http/routes/teams-me", () => {
   it.each([
     [[], 500, "insert_failed"],
     [new Error("database down"), 500, "internal_error"],
-  ] as const)("handles team creation failures", async (result, status, error) => {
-    const returning = vi.fn(async () => {
-      if (result instanceof Error) throw result;
-      return result;
-    });
-    const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
-    const server = fastify({ logger: false });
-    servers.push(server);
-    await handler(server, { db: { insert } as never, jwtSecret });
-    await server.ready();
-    const response = await server.inject({
-      method: "POST",
-      url: "/api/me/teams",
-      headers: { authorization: `Bearer ${token()}` },
-      payload: { name: "Acme" },
-    });
-    expect(response.statusCode).toBe(status);
-    expect(response.json()).toMatchObject({ error });
-  });
+  ] as const)(
+    "handles team creation failures",
+    async (result, status, error) => {
+      const returning = vi.fn(async () => {
+        if (result instanceof Error) throw result;
+        return result;
+      });
+      const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
+      const server = fastify({ logger: false });
+      servers.push(server);
+      await handler(server, { db: { insert } as never, jwtSecret });
+      await server.ready();
+      const response = await server.inject({
+        method: "POST",
+        url: "/api/me/teams",
+        headers: { authorization: `Bearer ${token()}` },
+        payload: { name: "Acme" },
+      });
+      expect(response.statusCode).toBe(status);
+      expect(response.json()).toMatchObject({ error });
+    },
+  );
 
   /* ---- Edge cases filling the permission/lifecycle matrix ---- */
 
-  const startTeams = async (db: unknown) => {
+  const startTeams = async (
+    db: unknown,
+    auditRecorder?: Parameters<typeof handler>[1]["auditRecorder"],
+  ) => {
     const server = fastify({ logger: false });
     servers.push(server);
-    await handler(server, { db: db as never, jwtSecret });
+    await handler(server, { db: db as never, jwtSecret, auditRecorder });
     await server.ready();
     return server;
   };
@@ -1109,9 +1179,20 @@ describe("http/routes/teams-me", () => {
 
   it("revokes an invite", async () => {
     const select = vi.fn().mockImplementationOnce(membershipSelect("admin"));
-    const deleteWhere = vi.fn(async () => undefined);
+    const returning = vi.fn(async () => [
+      {
+        id: "00000000-0000-4000-8000-0000000000c1",
+        email: "new@acme.io",
+        role: "member",
+      },
+    ]);
+    const deleteWhere = vi.fn(() => ({ returning }));
     const deleteFn = vi.fn(() => ({ where: deleteWhere }));
-    const server = await startTeams({ select, delete: deleteFn });
+    const auditRecorder = vi.fn(async () => undefined);
+    const server = await startTeams(
+      { select, delete: deleteFn },
+      auditRecorder,
+    );
     const res = await server.inject({
       method: "DELETE",
       url: `/api/me/teams/${TEAM_ID}/invites/00000000-0000-4000-8000-0000000000c1`,
@@ -1119,6 +1200,80 @@ describe("http/routes/teams-me", () => {
     });
     expect(res.statusCode).toBe(204);
     expect(deleteFn).toHaveBeenCalledOnce();
+    expect(auditRecorder).toHaveBeenCalledWith({
+      teamId: TEAM_ID,
+      actorUserId: userId,
+      action: "invite_revoked",
+      targetType: "invite",
+      targetId: "00000000-0000-4000-8000-0000000000c1",
+      targetLabel: "new@acme.io",
+      metadata: { role: "member" },
+    });
+  });
+
+  it("lists the newest administrative events for an admin", async () => {
+    const createdAt = new Date("2026-08-09T02:03:04.000Z");
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("admin"))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          leftJoin: vi.fn(() => ({
+            where: vi.fn(() => ({
+              orderBy: vi.fn(() => ({
+                limit: vi.fn(async () => [
+                  {
+                    id: "00000000-0000-4000-8000-0000000000a1",
+                    action: "member_role_changed",
+                    actorUserId: userId,
+                    actorName: "Antony",
+                    actorEmail: "user@example.com",
+                    targetType: "member",
+                    targetId: "00000000-0000-4000-8000-0000000000bb",
+                    targetLabel: "teammate@example.com",
+                    metadata: { fromRole: "member", toRole: "admin" },
+                    createdAt,
+                  },
+                ]),
+              })),
+            })),
+          })),
+        })),
+      }));
+    const server = await startTeams({ select });
+
+    const res = await server.inject({
+      method: "GET",
+      url: `/api/me/teams/${TEAM_ID}/audit-events?limit=10`,
+      headers: authed,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      events: [
+        expect.objectContaining({
+          action: "member_role_changed",
+          actorName: "Antony",
+          targetLabel: "teammate@example.com",
+          createdAt: createdAt.toISOString(),
+        }),
+      ],
+    });
+  });
+
+  it("blocks a member from reading administrative events", async () => {
+    const select = vi.fn().mockImplementationOnce(membershipSelect("member"));
+    const server = await startTeams({ select });
+
+    const res = await server.inject({
+      method: "GET",
+      url: `/api/me/teams/${TEAM_ID}/audit-events`,
+      headers: authed,
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: "insufficient_role" });
+    expect(select).toHaveBeenCalledOnce();
   });
 
   it("blocks a member from revoking an invite", async () => {
