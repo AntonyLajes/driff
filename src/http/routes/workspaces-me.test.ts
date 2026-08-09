@@ -730,6 +730,12 @@ describe("http/routes/workspaces-me", () => {
   });
   /** select().from().where().limit() — detail row lookup. */
   const detailSelect = lookupSelect;
+  /** select().from().where().orderBy() — evidence linked to a summary. */
+  const evidenceSelect = (rows: unknown[]) => () => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({ orderBy: vi.fn(async () => rows) })),
+    })),
+  });
 
   /** A shared (non-personal) team the user belongs to with a given role. */
   const SHARED_TEAM_ID = "00000000-0000-4000-8000-0000000000ee";
@@ -1212,7 +1218,20 @@ describe("http/routes/workspaces-me", () => {
     const select = vi
       .fn()
       .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
-      .mockImplementationOnce(detailSelect([prRow]));
+      .mockImplementationOnce(detailSelect([prRow]))
+      .mockImplementationOnce(
+        evidenceSelect([
+          {
+            id: "00000000-0000-4000-8000-000000000b22",
+            kind: "pull_request",
+            externalId: "14",
+            url: "https://github.com/AntonyLajes/ride-pack/pull/14",
+            sha: "abc1234",
+            path: null,
+            occurredAt: new Date("2026-06-03T12:00:00.000Z"),
+          },
+        ]),
+      );
     const db = { select } as never;
 
     const server = fastify({ logger: false });
@@ -1247,6 +1266,14 @@ describe("http/routes/workspaces-me", () => {
         delivered: true,
         commitCount: null,
         shortVersion: null,
+        evidence: [
+          {
+            kind: "pull_request",
+            externalId: "14",
+            url: "https://github.com/AntonyLajes/ride-pack/pull/14",
+            occurredAt: "2026-06-03T12:00:00.000Z",
+          },
+        ],
       },
     });
   });
@@ -1286,8 +1313,10 @@ describe("http/routes/workspaces-me", () => {
       .fn()
       .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
       .mockImplementationOnce(detailSelect([pushRow]))
+      .mockImplementationOnce(evidenceSelect([]))
       .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
-      .mockImplementationOnce(detailSelect([releaseRow]));
+      .mockImplementationOnce(detailSelect([releaseRow]))
+      .mockImplementationOnce(evidenceSelect([]));
     const server = fastify({ logger: false });
     servers.push(server);
     await handler(server, { db: { select } as never, jwtSecret });

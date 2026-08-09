@@ -13,6 +13,7 @@ import {
 } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import {
+  changeEvidenceTable,
   jobsTable,
   changeAreasTable,
   productAreasTable,
@@ -796,6 +797,25 @@ export const handler = async (
         prNumbers: null as number[] | null,
         sections: null as Record<string, unknown> | null,
       };
+      const loadEvidence = async (sourceRecordType: string) =>
+        input.db
+          .select({
+            id: changeEvidenceTable.id,
+            kind: changeEvidenceTable.kind,
+            externalId: changeEvidenceTable.externalId,
+            url: changeEvidenceTable.url,
+            sha: changeEvidenceTable.sha,
+            path: changeEvidenceTable.path,
+            occurredAt: changeEvidenceTable.occurredAt,
+          })
+          .from(changeEvidenceTable)
+          .where(
+            and(
+              eq(changeEvidenceTable.sourceRecordType, sourceRecordType),
+              eq(changeEvidenceTable.sourceRecordId, id),
+            ),
+          )
+          .orderBy(desc(changeEvidenceTable.occurredAt), desc(changeEvidenceTable.id));
 
       if (type === "pr") {
         const rows = await input.db
@@ -823,6 +843,7 @@ export const handler = async (
         if (r === undefined) {
           return reply.status(404).send({ error: "summary_not_found" });
         }
+        const evidence = await loadEvidence("pull_requests");
         return reply.send({
           summary: {
             ...base,
@@ -842,6 +863,10 @@ export const handler = async (
             delivered: wasDelivered(r.notionPageId),
             prNumber: r.prNumber,
             headSha: r.headSha,
+            evidence: evidence.map((item) => ({
+              ...item,
+              occurredAt: item.occurredAt.toISOString(),
+            })),
           },
         });
       }
@@ -873,6 +898,7 @@ export const handler = async (
         if (r === undefined) {
           return reply.status(404).send({ error: "summary_not_found" });
         }
+        const evidence = await loadEvidence("pushes");
         return reply.send({
           summary: {
             ...base,
@@ -893,6 +919,10 @@ export const handler = async (
             commitCount: r.commitCount,
             compareUrl: r.compareUrl,
             prNumbers: r.prNumbers,
+            evidence: evidence.map((item) => ({
+              ...item,
+              occurredAt: item.occurredAt.toISOString(),
+            })),
           },
         });
       }
@@ -917,6 +947,7 @@ export const handler = async (
       if (r === undefined) {
         return reply.status(404).send({ error: "summary_not_found" });
       }
+      const evidence = await loadEvidence("releases");
       return reply.send({
         summary: {
           ...base,
@@ -939,6 +970,10 @@ export const handler = async (
           headSha: r.headSha,
           prNumbers: r.prNumbers,
           sections: r.sections ?? null,
+          evidence: evidence.map((item) => ({
+            ...item,
+            occurredAt: item.occurredAt.toISOString(),
+          })),
         },
       });
     },
