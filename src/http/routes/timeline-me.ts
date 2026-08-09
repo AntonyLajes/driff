@@ -8,10 +8,7 @@ import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
 import { workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
-import {
-  readTeamIdHeader,
-  resolveTeamContext,
-} from "@/teams/team-context.js";
+import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 import {
   execute as readTimeline,
   type ExecuteInput as ReadTimelineInput,
@@ -25,6 +22,11 @@ const timelineQuerySchema = z.object({
 const cursorPayloadSchema = z.object({
   releasedAt: z.string().datetime({ offset: true }),
   id: z.string().uuid(),
+});
+
+const versionParamsSchema = z.object({
+  slug: z.string(),
+  versionId: z.string().uuid(),
 });
 
 export interface TimelineMeRegistrationInput {
@@ -62,10 +64,7 @@ const decodeCursor = (
   }
 };
 
-const encodeCursor = (cursor: {
-  releasedAt: Date;
-  id: string;
-}): string =>
+const encodeCursor = (cursor: { releasedAt: Date; id: string }): string =>
   Buffer.from(
     JSON.stringify({
       releasedAt: cursor.releasedAt.toISOString(),
@@ -157,6 +156,76 @@ export const handler = async (
               : encodeCursor(result.pageInfo.nextCursor),
         },
       });
+    },
+  );
+
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/versions/:versionId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const paramsParsed = versionParamsSchema.safeParse(request.params);
+      if (!paramsParsed.success) {
+        return reply.status(400).send({ error: "invalid_version_request" });
+      }
+      const slug = normalizeWorkspaceSlug(paramsParsed.data.slug);
+      if (slug.length === 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+        return reply.status(400).send({ error: "invalid_workspace_slug" });
+      }
+
+      const team = await resolveTeamContext(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+      );
+      if (team.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (team.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+
+      const workspaceRows = await input.db
+        .select({
+          id: workspacesTable.id,
+          name: workspacesTable.name,
+          slug: workspacesTable.slug,
+        })
+        .from(workspacesTable)
+        .where(
+          and(
+            eq(workspacesTable.teamId, team.context.teamId),
+            eq(workspacesTable.slug, slug),
+          ),
+        )
+        .limit(1);
+      const workspace = workspaceRows[0];
+      if (workspace === undefined) {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const result = await (input.timelineReader ?? readTimeline)({
+        db: input.db,
+        workspaceId: workspace.id,
+        versionId: paramsParsed.data.versionId,
+        limit: 1,
+        cursor: null,
+      });
+      const version = result.versions[0];
+      if (version === undefined) {
+        return reply.status(404).send({ error: "version_not_found" });
+      }
+
+      return reply.send({ workspace, version });
     },
   );
 };

@@ -34,6 +34,7 @@ export interface ExecuteInput {
   workspaceId: string;
   limit?: number;
   cursor?: TimelineCursor | null;
+  versionId?: string;
 }
 
 const normalizeLimit = (value: number | undefined): number => {
@@ -42,14 +43,17 @@ const normalizeLimit = (value: number | undefined): number => {
 };
 
 export const execute = async (input: ExecuteInput) => {
-  const limit = normalizeLimit(input.limit);
+  const versionDetail = input.versionId !== undefined;
+  const limit = versionDetail ? 1 : normalizeLimit(input.limit);
   const cursor = input.cursor ?? null;
   const versionConditions: SQL[] = [
     eq(projectVersionsTable.workspaceId, input.workspaceId),
     eq(projectVersionsTable.status, "released"),
     isNotNull(projectVersionsTable.releasedAt),
   ];
-  if (cursor !== null) {
+  if (input.versionId !== undefined) {
+    versionConditions.push(eq(projectVersionsTable.id, input.versionId));
+  } else if (cursor !== null) {
     versionConditions.push(
       or(
         lt(projectVersionsTable.releasedAt, cursor.releasedAt),
@@ -78,10 +82,13 @@ export const execute = async (input: ExecuteInput) => {
     })
     .from(projectVersionsTable)
     .where(and(...versionConditions))
-    .orderBy(desc(projectVersionsTable.releasedAt), desc(projectVersionsTable.id))
-    .limit(limit + 1);
+    .orderBy(
+      desc(projectVersionsTable.releasedAt),
+      desc(projectVersionsTable.id),
+    )
+    .limit(versionDetail ? 1 : limit + 1);
 
-  const hasNextPage = versionRowsWithExtra.length > limit;
+  const hasNextPage = !versionDetail && versionRowsWithExtra.length > limit;
   const versionRows = versionRowsWithExtra.slice(0, limit);
   const versionIds = versionRows.map((row) => row.id);
 
@@ -110,7 +117,7 @@ export const execute = async (input: ExecuteInput) => {
           .orderBy(desc(changesTable.lastOccurredAt), desc(changesTable.id));
 
   const unversionedRowsWithExtra =
-    cursor !== null
+    cursor !== null || versionDetail
       ? []
       : await input.db
           .select({
@@ -191,7 +198,10 @@ export const execute = async (input: ExecuteInput) => {
           })
           .from(changeEvidenceTable)
           .where(inArray(changeEvidenceTable.changeId, changeIds))
-          .orderBy(desc(changeEvidenceTable.occurredAt), desc(changeEvidenceTable.id));
+          .orderBy(
+            desc(changeEvidenceTable.occurredAt),
+            desc(changeEvidenceTable.id),
+          );
 
   const contributorsByChange = new Map<
     string,
@@ -289,7 +299,7 @@ export const execute = async (input: ExecuteInput) => {
       changes: changesByVersion.get(version.id) ?? [],
     })),
     inDevelopment:
-      cursor === null
+      cursor === null && !versionDetail
         ? {
             changes: unversionedChanges.map(serializeChange),
             hasMore: hasMoreInDevelopment,

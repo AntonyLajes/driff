@@ -78,11 +78,7 @@ describe("timeline/read-timeline execute", () => {
       "version-2",
       "2026-08-08T11:00:00.000Z",
     );
-    const openChange = change(
-      "change-open",
-      null,
-      "2026-08-09T11:00:00.000Z",
-    );
+    const openChange = change("change-open", null, "2026-08-09T11:00:00.000Z");
     const db = buildDb([
       versionsPage.query,
       orderedQuery([versionedChange]),
@@ -220,5 +216,42 @@ describe("timeline/read-timeline execute", () => {
       pageInfo: { hasNextPage: false, nextCursor: null },
     });
     expect(db.select).toHaveBeenCalledTimes(2);
+  });
+
+  it("should load one version detail without querying in-development changes", async () => {
+    const versionRow = version("version-2", "2026-08-08T12:00:00.000Z");
+    const releasedChange = change(
+      "change-released",
+      "version-2",
+      "2026-08-08T11:00:00.000Z",
+    );
+    const versionsPage = pagedQuery([versionRow]);
+    const db = buildDb([
+      versionsPage.query,
+      orderedQuery([releasedChange]),
+      whereQuery([]),
+      joinedWhereQuery([]),
+      orderedQuery([]),
+    ]);
+
+    const result = await execute({
+      db: db.db,
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      versionId: "22222222-2222-4222-8222-222222222222",
+    });
+
+    expect(versionsPage.limit).toHaveBeenCalledWith(1);
+    expect(result.versions).toEqual([
+      expect.objectContaining({
+        id: "version-2",
+        changes: [expect.objectContaining({ id: "change-released" })],
+      }),
+    ]);
+    expect(result.inDevelopment).toBeNull();
+    expect(result.pageInfo).toEqual({
+      hasNextPage: false,
+      nextCursor: null,
+    });
+    expect(db.select).toHaveBeenCalledTimes(5);
   });
 });

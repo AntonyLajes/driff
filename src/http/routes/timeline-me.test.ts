@@ -169,4 +169,110 @@ describe("http/routes/timeline-me", () => {
     expect(response.json()).toEqual({ error: "workspace_not_found" });
     expect(timelineReader).not.toHaveBeenCalled();
   });
+
+  it("should return one workspace-scoped canonical version", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+    ]);
+    const version = {
+      id: VERSION_ID,
+      displayVersion: "1.3.4",
+      normalizedVersion: "1.3.4+6",
+      buildVersion: "6",
+      title: "Version 1.3.4 (Build 6)",
+      changelog: "Improves the home experience.",
+      sections: null,
+      sourceUrl: "https://github.com/acme/app/compare/a...b",
+      previousVersionId: null,
+      beforeSha: "a".repeat(40),
+      headSha: "b".repeat(40),
+      releasedAt: "2026-08-08T12:00:00.000Z",
+      changes: [],
+    };
+    const timelineReader = vi.fn(async () => ({
+      versions: [version],
+      inDevelopment: null,
+      pageInfo: { hasNextPage: false, nextCursor: null },
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/versions/${VERSION_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+      version,
+    });
+    expect(timelineReader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        versionId: VERSION_ID,
+        limit: 1,
+        cursor: null,
+      }),
+    );
+  });
+
+  it("should reject malformed version identifiers before querying a workspace", async () => {
+    const workspaceDb = buildWorkspaceDb([]);
+    const timelineReader = vi.fn();
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/versions/not-a-version",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "invalid_version_request" });
+    expect(workspaceDb.select).not.toHaveBeenCalled();
+    expect(timelineReader).not.toHaveBeenCalled();
+  });
+
+  it("should return 404 for a version outside the workspace", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+    ]);
+    const timelineReader = vi.fn(async () => ({
+      versions: [],
+      inDevelopment: null,
+      pageInfo: { hasNextPage: false, nextCursor: null },
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/versions/${VERSION_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "version_not_found" });
+  });
 });
