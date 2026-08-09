@@ -7,20 +7,65 @@ const buildDbMock = (
   returnedRows: Array<{ id: string }> = [
     { id: "11111111-1111-4111-8111-111111111111" },
   ],
+  existingRows: Array<{ id: string }> = [],
 ) => {
+  const limit = vi.fn(async () => existingRows);
+  const where = vi.fn(() => ({ limit }));
+  const from = vi.fn(() => ({ where }));
+  const select = vi.fn(() => ({ from }));
   const returning = vi.fn(async () => returnedRows);
   const onConflictDoUpdate = vi.fn(() => ({ returning }));
   const values = vi.fn(() => ({ onConflictDoUpdate }));
   const insert = vi.fn(() => ({ values }));
 
   const db = {
+    select,
     insert,
   } as unknown as Database;
 
-  return { db, insert, onConflictDoUpdate, returning, values };
+  return {
+    db,
+    from,
+    insert,
+    limit,
+    onConflictDoUpdate,
+    returning,
+    select,
+    values,
+    where,
+  };
 };
 
 describe("jobs/process-pr execute", () => {
+  it("skips a pull request that was already summarized", async () => {
+    const { db, insert } = buildDbMock(undefined, [{ id: "existing-pr" }]);
+    const fetchPullRequest = vi.fn();
+    const summarizePR = vi.fn();
+    const publishPR = vi.fn();
+    const project = vi.fn();
+    const handler = execute({
+      db,
+      promptVersion: 1,
+      source: { fetchPullRequest },
+      summarizer: { summarizePR, prompt: "prompt" },
+      destination: { publishPR, publishRelease: vi.fn(), publishPush: vi.fn() },
+      canonicalProjection: {
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        projector: { project },
+      },
+    });
+
+    await expect(
+      handler.execute({ repo: "acme/mobile-app", prNumber: 100 }),
+    ).resolves.toBeUndefined();
+
+    expect(fetchPullRequest).not.toHaveBeenCalled();
+    expect(summarizePR).not.toHaveBeenCalled();
+    expect(publishPR).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+    expect(project).not.toHaveBeenCalled();
+  });
+
   it("should process pr and upsert pull request", async () => {
     const { db, values, onConflictDoUpdate } = buildDbMock();
     const fetchPullRequest = vi.fn(async () => ({

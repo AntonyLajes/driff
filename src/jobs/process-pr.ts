@@ -1,4 +1,5 @@
 import type { PullRequestProjector } from "@/changes/project-pull-request.js";
+import { and, eq } from "drizzle-orm";
 import type { Destination } from "@/destinations/destination.js";
 import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { Database } from "@/db/client.js";
@@ -42,6 +43,21 @@ export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
       const jobPayload = parsePayload(payload);
+
+      const existing = await input.db
+        .select({ id: pullRequestsTable.id })
+        .from(pullRequestsTable)
+        .where(
+          and(
+            eq(pullRequestsTable.repo, jobPayload.repo),
+            eq(pullRequestsTable.prNumber, jobPayload.prNumber),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0) {
+        return;
+      }
+
       const pullRequest = await input.source.fetchPullRequest(
         jobPayload.repo,
         jobPayload.prNumber,
