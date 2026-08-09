@@ -143,6 +143,49 @@ describe("ask/search-history execute", () => {
     );
   });
 
+  it("should return the most recent cited feature for a natural latest-feature question", async () => {
+    const olderFeature = {
+      ...change("15", "Estimate fuel stops on ride cards"),
+      firstOccurredAt: "2026-06-06T12:00:00.000Z",
+      lastOccurredAt: "2026-06-06T12:00:00.000Z",
+    };
+    const latestFeature = change(
+      "16",
+      "Improve touch feedback on Home quick action buttons",
+    );
+    const newerBugfix = {
+      ...change("17", "Fix a crash when opening offline maps"),
+      category: "bugfix",
+      firstOccurredAt: "2026-08-09T12:00:00.000Z",
+      lastOccurredAt: "2026-08-09T12:00:00.000Z",
+    };
+    const timelineReader = vi.fn(async () =>
+      page([version("1.3.4", [latestFeature])], [olderFeature, newerBugfix]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "Qual a ultima feature feita no app e por quem?",
+      timelineReader,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "answered",
+        mode: "change",
+        confidence: "high",
+        matches: [
+          expect.objectContaining({
+            score: 100,
+            change: expect.objectContaining({ id: "16" }),
+            version: expect.objectContaining({ displayVersion: "1.3.4" }),
+          }),
+        ],
+      }),
+    );
+  });
+
   it("should refuse to answer when matching history has no linked evidence", async () => {
     const timelineReader = vi.fn(async () =>
       page([], [change("17", "Improve checkout button", null)]),

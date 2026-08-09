@@ -169,6 +169,17 @@
       }
     },
     {
+      "id": "latest-feature-natural-pt",
+      "question": "Qual a ultima feature feita no app e por quem?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
       "id": "fuel-stops-pt",
       "question": "Quando adicionamos as paradas de combustível?",
       "expected": {
