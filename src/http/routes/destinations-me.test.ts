@@ -296,6 +296,46 @@ describe("http/routes/destinations-me", () => {
     expect(res.json()).toMatchObject({ error: "invalid_session" });
   });
 
+  const workspaceDestinationRoutes = [
+    ["POST", "/api/me/workspaces/by-slug/ride-pack/destinations/notion/oauth/start"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/destinations"],
+    ["PATCH", "/api/me/workspaces/by-slug/ride-pack/destinations/notion"],
+    ["DELETE", "/api/me/workspaces/by-slug/ride-pack/destinations/notion"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/destinations/notion/databases"],
+  ] as const;
+
+  it.each(workspaceDestinationRoutes)("rejects an invalid team for %s %s", async (method, url) => {
+    const server = await start({ select: vi.fn() });
+    const res = await server.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${token()}`, "x-team-id": "invalid" },
+      payload: method === "PATCH" ? { enabled: true } : undefined,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "invalid_team" });
+  });
+
+  it.each(workspaceDestinationRoutes)("rejects a non-member for %s %s", async (method, url) => {
+    const select = vi.fn(() => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+      })),
+    }));
+    const server = await start({ select });
+    const res = await server.inject({
+      method,
+      url,
+      headers: {
+        authorization: `Bearer ${token()}`,
+        "x-team-id": "00000000-0000-4000-8000-0000000000ee",
+      },
+      payload: method === "PATCH" ? { enabled: true } : undefined,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: "not_a_team_member" });
+  });
+
   it.each([
     ["oauth start", "POST", "/api/me/workspaces/by-slug/---/destinations/notion/oauth/start"],
     ["list", "GET", "/api/me/workspaces/by-slug/---/destinations"],
