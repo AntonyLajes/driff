@@ -8,6 +8,7 @@ import {
   productAreasTable,
 } from "@/db/schema.js";
 import type { PushSummaryResult } from "@/llm/push-summarizer.js";
+import { execute as projectLineageChange } from "@/lineages/project-change.js";
 import type { PushContext } from "@/sources/github/gather-push-context.js";
 
 export interface PushProjectionInput {
@@ -30,6 +31,7 @@ export interface PushProjector {
 
 export interface ExecuteInput {
   db: Database;
+  lineageProjector?: typeof projectLineageChange;
 }
 
 const slugify = (value: string): string =>
@@ -41,7 +43,18 @@ const slugify = (value: string): string =>
     .replace(/[^a-z0-9]+/gu, "-")
     .replace(/^-+|-+$/gu, "");
 
-export const execute = ({ db }: ExecuteInput): PushProjector => ({
+const extractFilePaths = (summary: string): string[] =>
+  summary
+    .split("\n")
+    .map((line) => line.match(/^[^:]+:\s+(.+)$/u)?.[1]?.trim() ?? "")
+    .filter((path, index, all) =>
+      path.length > 0 && !path.startsWith("…") && all.indexOf(path) === index,
+    );
+
+export const execute = ({
+  db,
+  lineageProjector = projectLineageChange,
+}: ExecuteInput): PushProjector => ({
   project: async (input) => {
     const normalizedRepo = input.repo.trim().toLowerCase();
     const pushSourceKey = `github:${normalizedRepo}:push:${input.afterSha}`;
@@ -52,6 +65,20 @@ export const execute = ({ db }: ExecuteInput): PushProjector => ({
       pushSourceKey,
     );
     const now = new Date();
+    const areaName = input.summary.area?.trim() ?? "";
+    const areaSlug = slugify(areaName);
+    const projectedArea =
+      areaSlug.length === 0
+        ? null
+        : {
+            id: buildCanonicalId(
+              "product-area",
+              input.workspaceId,
+              areaSlug,
+            ),
+            slug: areaSlug,
+          };
+    const filePaths = extractFilePaths(input.context.fileChangeSummary);
 
     await db.transaction(async (tx) => {
       await tx
@@ -119,6 +146,19 @@ export const execute = ({ db }: ExecuteInput): PushProjector => ({
               message: commit.message,
             },
           })),
+          ...filePaths.map((path) => ({
+            changeId,
+            kind: "file",
+            sourceKey: `${compareSourceKey}:file:${path}`,
+            externalId: input.afterSha,
+            url: input.context.compareUrl,
+            sha: input.afterSha,
+            path,
+            occurredAt: input.pushedAt,
+            sourceRecordType: "pushes",
+            sourceRecordId: input.sourceRecordId,
+            metadata: { branch: input.branch },
+          })),
         ])
         .onConflictDoUpdate({
           target: [changeEvidenceTable.changeId, changeEvidenceTable.sourceKey],
@@ -129,22 +169,14 @@ export const execute = ({ db }: ExecuteInput): PushProjector => ({
           },
         });
 
-      const areaName = input.summary.area?.trim() ?? "";
-      const areaSlug = slugify(areaName);
-      if (areaSlug.length > 0) {
-        const areaId = buildCanonicalId(
-          "product-area",
-          input.workspaceId,
-          areaSlug,
-        );
-
+      if (projectedArea !== null) {
         await tx
           .insert(productAreasTable)
           .values({
-            id: areaId,
+            id: projectedArea.id,
             workspaceId: input.workspaceId,
             name: areaName,
-            slug: areaSlug,
+            slug: projectedArea.slug,
             updatedAt: now,
           })
           .onConflictDoUpdate({
@@ -154,7 +186,7 @@ export const execute = ({ db }: ExecuteInput): PushProjector => ({
 
         await tx
           .insert(changeAreasTable)
-          .values({ changeId, areaId, source: "ai" })
+          .values({ changeId, areaId: projectedArea.id, source: "ai" })
           .onConflictDoUpdate({
             target: [changeAreasTable.changeId, changeAreasTable.areaId],
             set: { source: "ai" },
@@ -185,5 +217,18 @@ export const execute = ({ db }: ExecuteInput): PushProjector => ({
           });
       }
     });
+
+    if (projectedArea !== null) {
+      await lineageProjector({
+        db,
+        workspaceId: input.workspaceId,
+        changeId,
+        title: input.summary.title,
+        category: input.summary.category,
+        areaId: projectedArea.id,
+        areaSlug: projectedArea.slug,
+        filePaths,
+      });
+    }
   },
 });

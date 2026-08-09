@@ -31,8 +31,23 @@ const buildDbMock = () => {
       callback({ insert }),
   );
   const db = { transaction } as unknown as Database;
+  const lineageProjector = vi.fn(async () => ({
+    kind: "projected" as const,
+    lineageId: "lineage-id",
+    lineageKey: "checkout",
+    relationType: "fixed" as const,
+    matchedExisting: true,
+    matchScore: 100,
+  }));
 
-  return { db, insert, onConflictDoUpdate, records, transaction };
+  return {
+    db,
+    insert,
+    lineageProjector,
+    onConflictDoUpdate,
+    records,
+    transaction,
+  };
 };
 
 const context: PushContext = {
@@ -95,9 +110,15 @@ const idFrom = (record: InsertRecord): string => {
 
 describe("changes/project-push execute", () => {
   it("should project a direct push into one atomic canonical graph transaction", async () => {
-    const { db, onConflictDoUpdate, records, transaction } = buildDbMock();
+    const {
+      db,
+      lineageProjector,
+      onConflictDoUpdate,
+      records,
+      transaction,
+    } = buildDbMock();
 
-    await execute({ db }).project(projectionInput);
+    await execute({ db, lineageProjector }).project(projectionInput);
 
     expect(transaction).toHaveBeenCalledOnce();
     expect(records).toHaveLength(5);
@@ -146,6 +167,11 @@ describe("changes/project-push execute", () => {
         sourceKey: `github:acme/mobile-app:commit:${"c".repeat(40)}`,
         externalId: "c".repeat(40),
       }),
+      expect.objectContaining({
+        kind: "file",
+        path: "src/checkout.ts",
+        sourceKey: `github:acme/mobile-app:compare:${projectionInput.beforeSha}...${projectionInput.afterSha}:file:src/checkout.ts`,
+      }),
     ]);
 
     expect(recordFor(records, productAreasTable).values).toEqual(
@@ -166,14 +192,29 @@ describe("changes/project-push execute", () => {
         sourceUrl: "https://github.com/Octo%20Cat",
       }),
     );
+    expect(lineageProjector).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: projectionInput.workspaceId,
+        title: summary.title,
+        category: "bugfix",
+        areaSlug: "pagamentos-checkout",
+        filePaths: ["src/checkout.ts"],
+      }),
+    );
   });
 
   it("should derive the same change id when the same push is projected again", async () => {
     const first = buildDbMock();
     const second = buildDbMock();
 
-    await execute({ db: first.db }).project(projectionInput);
-    await execute({ db: second.db }).project(projectionInput);
+    await execute({
+      db: first.db,
+      lineageProjector: first.lineageProjector,
+    }).project(projectionInput);
+    await execute({
+      db: second.db,
+      lineageProjector: second.lineageProjector,
+    }).project(projectionInput);
 
     expect(idFrom(recordFor(first.records, changesTable))).toBe(
       idFrom(recordFor(second.records, changesTable)),
@@ -181,9 +222,9 @@ describe("changes/project-push execute", () => {
   });
 
   it("should omit area and contributor records when neither is known", async () => {
-    const { db, insert, records } = buildDbMock();
+    const { db, insert, lineageProjector, records } = buildDbMock();
 
-    await execute({ db }).project({
+    await execute({ db, lineageProjector }).project({
       ...projectionInput,
       pusher: null,
       summary: { ...summary, area: null },
@@ -193,12 +234,16 @@ describe("changes/project-push execute", () => {
     expect(insert).not.toHaveBeenCalledWith(productAreasTable);
     expect(insert).not.toHaveBeenCalledWith(changeAreasTable);
     expect(insert).not.toHaveBeenCalledWith(changeContributorsTable);
+    expect(lineageProjector).not.toHaveBeenCalled();
   });
 
   it("should preserve a missing legacy prompt version", async () => {
-    const { db, records } = buildDbMock();
+    const { db, lineageProjector, records } = buildDbMock();
 
-    await execute({ db }).project({ ...projectionInput, promptVersion: null });
+    await execute({ db, lineageProjector }).project({
+      ...projectionInput,
+      promptVersion: null,
+    });
 
     expect(recordFor(records, changesTable).values).toEqual(
       expect.objectContaining({ promptVersion: null }),
@@ -211,6 +256,8 @@ describe("changes/project-push execute", () => {
       transaction: vi.fn(async () => Promise.reject(cause)),
     } as unknown as Database;
 
-    await expect(execute({ db }).project(projectionInput)).rejects.toBe(cause);
+    await expect(
+      execute({ db, lineageProjector: vi.fn() }).project(projectionInput),
+    ).rejects.toBe(cause);
   });
 });
