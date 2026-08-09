@@ -8,6 +8,10 @@ import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
 import { workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
+import {
+  execute as readWorkspaceLineages,
+  type ExecuteInput as ReadWorkspaceLineagesInput,
+} from "@/lineages/read-workspace-lineages.js";
 import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 import {
   execute as readTimeline,
@@ -41,6 +45,9 @@ export interface TimelineMeRegistrationInput {
   timelineReader?: (
     input: ReadTimelineInput,
   ) => Promise<Awaited<ReturnType<typeof readTimeline>>>;
+  lineageReader?: (
+    input: ReadWorkspaceLineagesInput,
+  ) => Promise<Awaited<ReturnType<typeof readWorkspaceLineages>>>;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -162,6 +169,65 @@ export const handler = async (
               : encodeCursor(result.pageInfo.nextCursor),
         },
       });
+    },
+  );
+
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/lineages",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string };
+      const slug = normalizeWorkspaceSlug(params.slug ?? "");
+      if (slug.length === 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+        return reply.status(400).send({ error: "invalid_workspace_slug" });
+      }
+
+      const team = await resolveTeamContext(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+      );
+      if (team.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (team.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+
+      const workspaceRows = await input.db
+        .select({
+          id: workspacesTable.id,
+          name: workspacesTable.name,
+          slug: workspacesTable.slug,
+        })
+        .from(workspacesTable)
+        .where(
+          and(
+            eq(workspacesTable.teamId, team.context.teamId),
+            eq(workspacesTable.slug, slug),
+          ),
+        )
+        .limit(1);
+      const workspace = workspaceRows[0];
+      if (workspace === undefined) {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const result = await (input.lineageReader ?? readWorkspaceLineages)({
+        db: input.db,
+        workspaceId: workspace.id,
+      });
+      return reply.send({ workspace, lineages: result.lineages });
     },
   );
 

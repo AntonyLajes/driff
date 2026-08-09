@@ -259,6 +259,52 @@ describe("http/routes/timeline-me", () => {
     );
   });
 
+  it("should return workspace-scoped feature histories", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+    ]);
+    const lineages = [
+      {
+        id: "00000000-0000-4000-8000-0000000000dd",
+        key: "home-quick-actions",
+        title: "Home quick actions",
+        description: null,
+        status: "active",
+        source: "rule",
+        confidence: 100,
+        mergedIntoLineageId: null,
+        createdAt: "2026-08-08T10:00:00.000Z",
+        updatedAt: "2026-08-08T11:00:00.000Z",
+        entries: [],
+      },
+    ];
+    const lineageReader = vi.fn(async () => ({ lineages }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      lineageReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/lineages",
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+      lineages,
+    });
+    expect(lineageReader).toHaveBeenCalledWith({
+      db: workspaceDb.db,
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
   it("should reject malformed version identifiers before querying a workspace", async () => {
     const workspaceDb = buildWorkspaceDb([]);
     const timelineReader = vi.fn();
