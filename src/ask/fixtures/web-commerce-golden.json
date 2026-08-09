@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "id": "web-commerce-cited-history",
+  "name": "Web commerce cited history",
+  "workspaceId": "00000000-0000-4000-8000-000000000002",
+  "history": {
+    "versions": [
+      {
+        "id": "web-version-2-4-0",
+        "displayVersion": "2.4.0",
+        "normalizedVersion": "2.4.0",
+        "buildVersion": null,
+        "title": "Web 2.4.0",
+        "changelog": "Adds saved filters to the Orders table.",
+        "sections": [],
+        "sourceUrl": "https://github.com/acme/storefront/releases/tag/v2.4.0",
+        "previousVersionId": "web-version-2-3-1",
+        "beforeSha": "1111111111111111111111111111111111111111",
+        "headSha": "2222222222222222222222222222222222222222",
+        "releasedAt": "2026-08-07T15:00:00.000Z",
+        "changes": [
+          {
+            "id": "web-change-order-filters",
+            "title": "Add saved filters to the Orders table",
+            "summaryExecutive": "Operators can save and quickly reapply frequently used order filters.",
+            "summaryTechnical": "Persists named filter presets and restores them in the Orders data grid.",
+            "category": "feature",
+            "confidence": 96,
+            "firstOccurredAt": "2026-08-07T13:00:00.000Z",
+            "lastOccurredAt": "2026-08-07T13:00:00.000Z",
+            "areas": [
+              {
+                "id": "web-area-orders",
+                "name": "Orders",
+                "slug": "orders",
+                "confidence": 97,
+                "source": "ai"
+              }
+            ],
+            "contributors": [
+              {
+                "externalIdentity": "github:marina-dev",
+                "displayName": "Marina Costa",
+                "role": "pr_author",
+                "sourceUrl": "https://github.com/marina-dev"
+              }
+            ],
+            "evidence": [
+              {
+                "id": "web-evidence-pr-87",
+                "kind": "pull_request",
+                "sourceKey": "github:acme/storefront:pull_request:87",
+                "externalId": "87",
+                "url": "https://github.com/acme/storefront/pull/87",
+                "sha": "2222222222222222222222222222222222222222",
+                "path": null,
+                "occurredAt": "2026-08-07T13:00:00.000Z",
+                "metadata": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "web-version-2-3-1",
+        "displayVersion": "2.3.1",
+        "normalizedVersion": "2.3.1",
+        "buildVersion": null,
+        "title": "Web 2.3.1",
+        "changelog": "Fixes stale totals in the Analytics dashboard.",
+        "sections": [],
+        "sourceUrl": "https://github.com/acme/storefront/releases/tag/v2.3.1",
+        "previousVersionId": null,
+        "beforeSha": "3333333333333333333333333333333333333333",
+        "headSha": "1111111111111111111111111111111111111111",
+        "releasedAt": "2026-07-30T16:00:00.000Z",
+        "changes": [
+          {
+            "id": "web-change-analytics-totals",
+            "title": "Fix stale totals in the Analytics dashboard",
+            "summaryExecutive": "Dashboard totals now refresh immediately after the date range changes.",
+            "summaryTechnical": "Invalidates the analytics query cache when users select a new reporting period.",
+            "category": "bugfix",
+            "confidence": 94,
+            "firstOccurredAt": "2026-07-30T14:00:00.000Z",
+            "lastOccurredAt": "2026-07-30T14:00:00.000Z",
+            "areas": [
+              {
+                "id": "web-area-analytics",
+                "name": "Analytics",
+                "slug": "analytics",
+                "confidence": 95,
+                "source": "ai"
+              }
+            ],
+            "contributors": [
+              {
+                "externalIdentity": "github:joao-silva",
+                "displayName": "Joao Silva",
+                "role": "pr_author",
+                "sourceUrl": "https://github.com/joao-silva"
+              }
+            ],
+            "evidence": [
+              {
+                "id": "web-evidence-pr-81",
+                "kind": "pull_request",
+                "sourceKey": "github:acme/storefront:pull_request:81",
+                "externalId": "81",
+                "url": "https://github.com/acme/storefront/pull/81",
+                "sha": "1111111111111111111111111111111111111111",
+                "path": null,
+                "occurredAt": "2026-07-30T14:00:00.000Z",
+                "metadata": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "inDevelopment": [
+      {
+        "id": "web-change-checkout-validation",
+        "title": "Migrate checkout form validation to Zod",
+        "summaryExecutive": "Checkout validation now provides consistent feedback before an order is submitted.",
+        "summaryTechnical": "Replaces custom validators with a shared Zod schema in the checkout form.",
+        "category": "refactor",
+        "confidence": 93,
+        "firstOccurredAt": "2026-08-08T17:00:00.000Z",
+        "lastOccurredAt": "2026-08-08T17:00:00.000Z",
+        "areas": [
+          {
+            "id": "web-area-checkout",
+            "name": "Checkout",
+            "slug": "checkout",
+            "confidence": 96,
+            "source": "ai"
+          }
+        ],
+        "contributors": [
+          {
+            "externalIdentity": "github:diego-web",
+            "displayName": "Diego Alves",
+            "role": "pr_author",
+            "sourceUrl": "https://github.com/diego-web"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "web-evidence-pr-92",
+            "kind": "pull_request",
+            "sourceKey": "github:acme/storefront:pull_request:92",
+            "externalId": "92",
+            "url": "https://github.com/acme/storefront/pull/92",
+            "sha": "4444444444444444444444444444444444444444",
+            "path": null,
+            "occurredAt": "2026-08-08T17:00:00.000Z",
+            "metadata": null
+          }
+        ]
+      }
+    ]
+  },
+  "questions": [
+    {
+      "id": "web-version-240",
+      "question": "What changed in version 2.4.0?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "2.4.0",
+        "changeIds": ["web-change-order-filters"],
+        "evidenceUrls": ["https://github.com/acme/storefront/pull/87"],
+        "contributors": ["Marina Costa"]
+      }
+    },
+    {
+      "id": "web-order-filters",
+      "question": "Who added the saved filters to the Orders table?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["web-change-order-filters"],
+        "evidenceUrls": ["https://github.com/acme/storefront/pull/87"],
+        "contributors": ["Marina Costa"]
+      }
+    },
+    {
+      "id": "web-analytics-fix",
+      "question": "Who fixed stale totals in Analytics?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["web-change-analytics-totals"],
+        "evidenceUrls": ["https://github.com/acme/storefront/pull/81"],
+        "contributors": ["Joao Silva"]
+      }
+    },
+    {
+      "id": "web-latest-refactor-pt",
+      "question": "Qual foi a última refatoração?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["web-change-checkout-validation"],
+        "evidenceUrls": ["https://github.com/acme/storefront/pull/92"],
+        "contributors": ["Diego Alves"]
+      }
+    },
+    {
+      "id": "web-checkout-contributor-pt",
+      "question": "Quem trabalhou no checkout form validation?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["web-change-checkout-validation"],
+        "contributors": ["Diego Alves"]
+      }
+    },
+    {
+      "id": "web-latest-fix-pt",
+      "question": "Qual foi a correção mais recente?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["web-change-analytics-totals"],
+        "contributors": ["Joao Silva"]
+      }
+    },
+    {
+      "id": "web-unknown-offline-map",
+      "question": "Who added offline map downloads?",
+      "expected": { "status": "no_evidence", "mode": "change" }
+    }
+  ],
+  "thresholds": {
+    "passRate": 1,
+    "citationPrecision": 1,
+    "refusalAccuracy": 1
+  }
+}

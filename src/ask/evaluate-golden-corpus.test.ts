@@ -1,15 +1,17 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { execute } from "@/ask/evaluate-golden-corpus.js";
+import { execute as evaluateSuite } from "@/ask/evaluate-golden-suite.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/ride-pack-golden.json", import.meta.url),
 );
+const fixtureDirectory = dirname(fixturePath);
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -77,5 +79,27 @@ describe("ask/evaluate-golden-corpus execute", () => {
     await writeFile(invalidPath, JSON.stringify({ schemaVersion: 2 }), "utf8");
 
     await expect(execute({ filePath: invalidPath })).rejects.toThrow();
+  });
+});
+
+describe("ask/evaluate-golden-suite execute", () => {
+  it("should pass the mobile, web and backend cited-history corpora", async () => {
+    const evaluation = await evaluateSuite({
+      directoryPath: fixtureDirectory,
+    });
+
+    expect(evaluation).toEqual(
+      expect.objectContaining({
+        totalCorpora: 3,
+        totalCases: 23,
+        passedCases: 23,
+        thresholdPassed: true,
+      }),
+    );
+    expect(evaluation.corpora.map((corpus) => corpus.corpusId)).toEqual([
+      "backend-api-cited-history",
+      "ride-pack-cited-history",
+      "web-commerce-cited-history",
+    ]);
   });
 });
