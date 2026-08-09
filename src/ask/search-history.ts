@@ -107,6 +107,8 @@ const SYNONYMS: Record<string, string[]> = {
   botao: ["button"],
   botoes: ["buttons"],
   combustivel: ["fuel"],
+  correcao: ["bugfix", "fix"],
+  correcoes: ["bugfix", "fix"],
   inicio: ["home"],
   inicial: ["home"],
   parada: ["stop"],
@@ -115,6 +117,7 @@ const SYNONYMS: Record<string, string[]> = {
   rapida: ["quick"],
   rapidas: ["quick"],
   tela: ["screen"],
+  zero: ["0"],
 };
 
 type TimelineResult = Awaited<ReturnType<typeof readTimeline>>;

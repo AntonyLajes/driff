@@ -290,6 +290,9 @@ describe("ask/search-history execute", () => {
     expect(result.matches).toEqual([
       expect.objectContaining({ change: expect.objectContaining({ id: "17" }) }),
     ]);
+    expect(result.queryTerms).toEqual(
+      expect.arrayContaining(["correcao", "bugfix", "fix", "eta", "zero", "0"]),
+    );
   });
 
   it("should keep tied matches for a broad area query", async () => {
