@@ -24,6 +24,9 @@ export interface ProcessReleaseJobInput {
   beforeSha: string;
   afterSha: string;
   branch: string;
+  tagName?: string;
+  sourceUrl?: string;
+  releasedAt?: string;
   deliveryId?: string;
 }
 
@@ -70,7 +73,16 @@ export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
         status: "pending",
       });
     },
-    enqueueProcessReleaseJob: async ({ repo, beforeSha, afterSha, branch, deliveryId }) => {
+    enqueueProcessReleaseJob: async ({
+      repo,
+      beforeSha,
+      afterSha,
+      branch,
+      tagName,
+      sourceUrl,
+      releasedAt,
+      deliveryId,
+    }) => {
       await db.insert(jobsTable).values({
         type: "process_release",
         payload: {
@@ -78,6 +90,9 @@ export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
           beforeSha,
           afterSha,
           branch,
+          ...(tagName ? { tagName } : {}),
+          ...(sourceUrl ? { sourceUrl } : {}),
+          ...(releasedAt ? { releasedAt } : {}),
           ...(deliveryId ? { deliveryId } : {}),
         },
         status: "pending",

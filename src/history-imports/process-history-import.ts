@@ -22,6 +22,7 @@ export interface ExecuteInput {
     repo: string;
     since: Date;
     maxItems: number;
+    versionStrategy?: import("@/config/release-version-strategy.js").ReleaseVersionStrategy;
   }) => Promise<ListRepositoryHistoryResult>;
   processPullRequest: (payload: {
     repo: string;
@@ -33,6 +34,8 @@ export interface ExecuteInput {
     afterSha: string;
     branch: string;
     releasedAt: string;
+    tagName: string;
+    sourceUrl?: string;
   }) => Promise<void>;
   processPush: (payload: {
     repo: string;
@@ -192,6 +195,8 @@ export const execute = (input: ExecuteInput) => ({
             afterSha: release.afterSha,
             branch: repositoryHistory.defaultBranch,
             releasedAt: release.releasedAt.toISOString(),
+            tagName: release.tagName,
+            ...(release.sourceUrl ? { sourceUrl: release.sourceUrl } : {}),
           }),
       });
       if (result === "cancelled") return;

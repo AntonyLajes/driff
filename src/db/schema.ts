@@ -541,6 +541,10 @@ export const workspaceSettingsTable = pgTable(
     releaseInfoPlistPath: text("release_info_plist_path"),
     releaseVersionBranch: text("release_version_branch"),
     releaseMonitoredRepo: text("release_monitored_repo"),
+    /** Canonical version marker: repository file, SemVer Git tag, or published GitHub Release. */
+    releaseVersionStrategy: text("release_version_strategy")
+      .default("version_file")
+      .notNull(),
     /**
      * Tipo de projeto para releases: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`.
      * Usar em conjunto com `release_version_file_path` (um único ficheiro onde a versão muda).
@@ -580,6 +584,10 @@ export const workspaceSettingsTable = pgTable(
     workspaceIdUniqueWhenSet: uniqueIndex("workspace_settings_workspace_id_key")
       .on(table.workspaceId)
       .where(sql`${table.workspaceId} IS NOT NULL`),
+    releaseVersionStrategyCheck: check(
+      "workspace_settings_release_version_strategy_check",
+      sql`${table.releaseVersionStrategy} IN ('version_file', 'git_tag', 'github_release')`,
+    ),
   }),
 );
 

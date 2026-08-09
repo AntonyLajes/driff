@@ -40,6 +40,57 @@ const listerFor = (installation: OctokitLike, pageSize = 100) =>
   });
 
 describe("history-imports/list-repository-history", () => {
+  it("lists published GitHub Releases and preserves their canonical URLs", async () => {
+    const installation = {
+      request: vi.fn(async (route: string, parameters?: Record<string, unknown>) => {
+        if (route === "GET /repos/{owner}/{repo}") {
+          return { data: { default_branch: "main" } };
+        }
+        if (route === "GET /repos/{owner}/{repo}/commits") return { data: [] };
+        if (route === "GET /repos/{owner}/{repo}/releases") {
+          return {
+            data: [
+              {
+                tag_name: "v1.2.0",
+                html_url: "https://github.com/acme/mobile/releases/tag/v1.2.0",
+                draft: false,
+                published_at: "2026-08-03T12:00:00.000Z",
+                created_at: "2026-08-03T11:00:00.000Z",
+              },
+              {
+                tag_name: "latest",
+                html_url: "https://github.com/acme/mobile/releases/tag/latest",
+                draft: false,
+                published_at: "2026-08-04T12:00:00.000Z",
+                created_at: "2026-08-04T11:00:00.000Z",
+              },
+            ],
+          };
+        }
+        expect(parameters?.ref).toBe("v1.2.0");
+        return { data: commit("c2", "2026-08-03T10:00:00.000Z", "c1") };
+      }) as OctokitLike["request"],
+      pulls: { get: vi.fn(), listFiles: vi.fn() },
+    } satisfies OctokitLike;
+
+    const result = await listerFor(installation).list({
+      repo: "acme/mobile",
+      since: new Date("2026-08-01T00:00:00.000Z"),
+      maxItems: 10,
+      versionStrategy: "github_release",
+    });
+
+    expect(result.releases).toEqual([
+      expect.objectContaining({
+        tagName: "v1.2.0",
+        beforeSha: "c1",
+        afterSha: "c2",
+        sourceUrl: "https://github.com/acme/mobile/releases/tag/v1.2.0",
+        releasedAt: new Date("2026-08-03T12:00:00.000Z"),
+      }),
+    ]);
+  });
+
   it("should list chronological commits and version tags with compare anchors", async () => {
     const installation = {
       request: vi.fn(

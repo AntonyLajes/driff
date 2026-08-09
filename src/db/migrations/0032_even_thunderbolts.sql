@@ -1,0 +1,2 @@
+ALTER TABLE "workspace_settings" ADD COLUMN "release_version_strategy" text DEFAULT 'version_file' NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace_settings" ADD CONSTRAINT "workspace_settings_release_version_strategy_check" CHECK ("workspace_settings"."release_version_strategy" IN ('version_file', 'git_tag', 'github_release'));

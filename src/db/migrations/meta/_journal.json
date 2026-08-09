@@ -225,6 +225,13 @@
       "when": 1786308466801,
       "tag": "0031_productive_azazel",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786311043491,
+      "tag": "0032_even_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

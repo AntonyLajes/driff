@@ -100,14 +100,19 @@ const buildReleaseConfig = (
 ): import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null => {
   // Release notes run when a version source + branch are configured (input config),
   // regardless of which output destination publishes them.
-  if (
-    !hasReleaseVersionSource(workspace) ||
-    !workspace.releaseVersionBranch?.trim()
-  ) {
+  if (!hasReleaseVersionSource(workspace)) {
+    return null;
+  }
+  const branch =
+    workspace.releaseVersionBranch?.trim() ||
+    workspace.repoDefaultBranch?.trim() ||
+    "main";
+  if (workspace.releaseVersionStrategy === "version_file" && !workspace.releaseVersionBranch?.trim()) {
     return null;
   }
   return {
-    branch: workspace.releaseVersionBranch,
+    branch,
+    strategy: workspace.releaseVersionStrategy,
     versionWatchPaths: collectVersionWatchPaths(
       workspace.releaseInfoPlistPath,
       workspace.releaseProjectPbxprojPath,
@@ -385,6 +390,7 @@ const buildRuntimeDependencies = async (
           expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
           releaseProjectKind: workspace.releaseProjectKind,
           releaseVersionFilePath: workspace.releaseVersionFilePath,
+          releaseVersionStrategy: workspace.releaseVersionStrategy,
           releaseCompareRootSha: workspace.releaseCompareRootSha,
           releaseSummarizer,
           destination,
@@ -442,10 +448,16 @@ const buildRuntimeDependencies = async (
           appId: env.GITHUB_APP_ID,
           privateKey: env.GITHUB_APP_PRIVATE_KEY,
         }).list,
-        listRepositoryHistory: createRepositoryHistoryLister({
-          appId: env.GITHUB_APP_ID,
-          privateKey: env.GITHUB_APP_PRIVATE_KEY,
-        }).list,
+        listRepositoryHistory: async (request) => {
+          const workspace = await resolveWorkspaceOrThrow(request.repo);
+          return createRepositoryHistoryLister({
+            appId: env.GITHUB_APP_ID,
+            privateKey: env.GITHUB_APP_PRIVATE_KEY,
+          }).list({
+            ...request,
+            versionStrategy: workspace.releaseVersionStrategy,
+          });
+        },
         processPullRequest: async (payload) => {
           await processPrHandler.execute(payload);
         },

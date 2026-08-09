@@ -136,6 +136,11 @@ export interface ExecuteInput {
   releaseProjectKind?: string | null;
   /** Repo-relative version file paired with releaseProjectKind. */
   releaseVersionFilePath?: string | null;
+  /** Explicit versions supplied by tag/release strategies; skips repository version-file reads. */
+  versionOverride?: {
+    beforeVersion: IosPlistVersion | null;
+    afterVersion: IosPlistVersion;
+  };
   octokitFactory?: (auth: string) => OctokitLike;
 }
 
@@ -252,7 +257,10 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
   const unifiedKind = input.releaseProjectKind?.trim() ?? "";
   const unifiedPath = input.releaseVersionFilePath?.trim() ?? "";
   const expoPath = input.expoAppConfigPath?.trim() ?? "";
-  if (unifiedKind === "node_package") {
+  if (input.versionOverride !== undefined) {
+    beforeVersion = input.versionOverride.beforeVersion;
+    afterVersion = input.versionOverride.afterVersion;
+  } else if (unifiedKind === "node_package") {
     if (unifiedPath.length === 0) {
       throw new Error(
         "package.json path is required for node_package releases.",

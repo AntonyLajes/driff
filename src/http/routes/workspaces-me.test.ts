@@ -1661,6 +1661,7 @@ describe("http/routes/workspaces-me", () => {
 
   it("returns the workspace shell and its normalized settings", async () => {
     const settingsRow = {
+      releaseVersionStrategy: "version_file",
       pushSummaryBranches: ["main"],
       prSummaryBaseBranches: ["main", "develop"],
       releaseProjectKind: "react_native_expo",
@@ -1721,6 +1722,7 @@ describe("http/routes/workspaces-me", () => {
       settings: {
         pushSummaryBranches: null,
         prSummaryBaseBranches: null,
+        releaseVersionStrategy: "version_file",
         releaseProjectKind: null,
         releaseVersionFilePath: null,
         releaseVersionBranch: null,
@@ -1896,6 +1898,7 @@ describe("http/routes/workspaces-me", () => {
 
   it("updates an existing release strategy and branch filters", async () => {
     const resultRow = {
+      releaseVersionStrategy: "version_file",
       pushSummaryBranches: ["main", "develop"],
       prSummaryBaseBranches: [],
       historyExcludedPaths: ["dist/", "*.generated.*"],
@@ -2041,6 +2044,7 @@ describe("http/routes/workspaces-me", () => {
       settings: {
         pushSummaryBranches: null,
         prSummaryBaseBranches: null,
+        releaseVersionStrategy: "version_file",
         releaseProjectKind: null,
         releaseVersionFilePath: null,
         releaseVersionBranch: null,

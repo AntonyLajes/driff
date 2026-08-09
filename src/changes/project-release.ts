@@ -8,6 +8,7 @@ import {
   projectVersionsTable,
 } from "@/db/schema.js";
 import type { ReleaseChangelogNotes } from "@/llm/release-summarizer.js";
+import type { ReleaseVersionStrategy } from "@/config/release-version-strategy.js";
 
 export interface ReleaseProjectionInput {
   workspaceId: string;
@@ -27,6 +28,10 @@ export interface ReleaseProjectionInput {
   prNumbers: number[];
   commitShas: string[];
   releasedAt: Date;
+  strategy?: ReleaseVersionStrategy;
+  sourceRef?: string;
+  previousSourceRef?: string | null;
+  sourceUrl?: string | null;
 }
 
 export interface ReleaseProjectionResult {
@@ -42,21 +47,26 @@ export interface ExecuteInput {
   db: Database;
 }
 
-const VERSION_STRATEGY = "version_file";
-
 export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
   project: async (input) =>
     db.transaction(async (tx) => {
+      const strategy = input.strategy ?? "version_file";
+      const sourceRef = input.sourceRef?.trim() || input.versionKey;
+      const sourceUrl = input.sourceUrl === undefined ? input.compareUrl : input.sourceUrl;
       let previousVersionId: string | null = null;
-      if (input.previousVersionKey !== null) {
+      const previousSourceRef =
+        input.previousSourceRef === undefined
+          ? input.previousVersionKey
+          : input.previousSourceRef;
+      if (previousSourceRef !== null) {
         const previousRows = await tx
           .select({ id: projectVersionsTable.id })
           .from(projectVersionsTable)
           .where(
             and(
               eq(projectVersionsTable.workspaceId, input.workspaceId),
-              eq(projectVersionsTable.strategy, VERSION_STRATEGY),
-              eq(projectVersionsTable.sourceRef, input.previousVersionKey),
+              eq(projectVersionsTable.strategy, strategy),
+              eq(projectVersionsTable.sourceRef, previousSourceRef),
             ),
           )
           .limit(1);
@@ -67,8 +77,8 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
       const proposedVersionId = buildCanonicalId(
         "project-version",
         input.workspaceId,
-        VERSION_STRATEGY,
-        input.versionKey,
+        strategy,
+        sourceRef,
       );
       const versionRows = await tx
         .insert(projectVersionsTable)
@@ -83,9 +93,9 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
           sections: input.sections,
           promptVersion: input.promptVersion,
           status: "released",
-          strategy: VERSION_STRATEGY,
-          sourceRef: input.versionKey,
-          sourceUrl: input.compareUrl,
+          strategy,
+          sourceRef,
+          sourceUrl,
           sourceReleaseId: input.sourceReleaseId,
           previousVersionId,
           beforeSha: input.beforeSha,
@@ -108,7 +118,7 @@ export const execute = ({ db }: ExecuteInput): ReleaseProjector => ({
             sections: input.sections,
             promptVersion: input.promptVersion,
             status: "released",
-            sourceUrl: input.compareUrl,
+            sourceUrl,
             sourceReleaseId: input.sourceReleaseId,
             previousVersionId,
             beforeSha: input.beforeSha,

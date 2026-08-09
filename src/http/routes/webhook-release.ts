@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import type { ProcessReleaseJobInput } from "@/http/routes/webhooks-dependencies.js";
+import type { ReleaseVersionStrategy } from "@/config/release-version-strategy.js";
+import { parseSemverTag } from "@/lib/semver-tag.js";
 
 const nullSha = (sha: string): boolean => /^0+$/.test(sha);
 
@@ -18,6 +20,19 @@ const pushPayloadSchema = z.object({
       }),
     )
     .optional(),
+});
+
+const releasePayloadSchema = z.object({
+  action: z.string(),
+  repository: z.object({ full_name: z.string() }),
+  release: z.object({
+    tag_name: z.string(),
+    target_commitish: z.string(),
+    html_url: z.string().url(),
+    draft: z.boolean(),
+    published_at: z.string().nullable().optional(),
+    created_at: z.string().optional(),
+  }),
 });
 
 export const refToBranch = (ref: string): string | null => {
@@ -97,6 +112,7 @@ export const pushTouchesReleasePaths = (
 
 export interface ReleaseWebhookConfig {
   branch: string;
+  strategy?: ReleaseVersionStrategy;
   /** Repo-relative paths that should trigger `process_release` when changed on the release branch. */
   versionWatchPaths: string[];
   monitoredRepo: string | null;
@@ -110,16 +126,41 @@ export const buildProcessReleaseJobInput = (
   if (config === null || config === undefined) {
     return null;
   }
-  if (eventType !== "push") {
-    return null;
+
+  const strategy = config.strategy ?? "version_file";
+  if (strategy === "github_release") {
+    if (eventType !== "release") return null;
+    const parsedRelease = releasePayloadSchema.safeParse(payload);
+    if (!parsedRelease.success) return null;
+    const data = parsedRelease.data;
+    if (data.action !== "published" || data.release.draft) return null;
+    if (
+      config.monitoredRepo &&
+      config.monitoredRepo !== data.repository.full_name
+    ) {
+      return null;
+    }
+    if (parseSemverTag(data.release.tag_name) === null) return null;
+    return {
+      repo: data.repository.full_name,
+      beforeSha: data.release.target_commitish || config.branch,
+      afterSha: data.release.tag_name,
+      branch: config.branch,
+      tagName: data.release.tag_name,
+      sourceUrl: data.release.html_url,
+      releasedAt:
+        data.release.published_at ?? data.release.created_at ?? undefined,
+    };
   }
+
+  if (eventType !== "push") return null;
 
   const parsed = pushPayloadSchema.safeParse(payload);
   if (!parsed.success) {
     return null;
   }
   const data = parsed.data;
-  if (nullSha(data.after) || nullSha(data.before)) {
+  if (nullSha(data.after)) {
     return null;
   }
   if (data.before === data.after) {
@@ -131,10 +172,23 @@ export const buildProcessReleaseJobInput = (
     return null;
   }
 
-  const branch = refToBranch(data.ref);
-  if (branch === null || branch !== config.branch) {
-    return null;
+  if (strategy === "git_tag") {
+    const prefix = "refs/tags/";
+    if (!data.ref.startsWith(prefix)) return null;
+    const tagName = data.ref.slice(prefix.length);
+    if (parseSemverTag(tagName) === null) return null;
+    return {
+      repo,
+      beforeSha: data.before,
+      afterSha: data.after,
+      branch: config.branch,
+      tagName,
+      sourceUrl: `https://github.com/${repo}/releases/tag/${encodeURIComponent(tagName)}`,
+    };
   }
+
+  const branch = refToBranch(data.ref);
+  if (branch === null || branch !== config.branch) return null;
 
   if (!pushTouchesReleasePaths(data, config.versionWatchPaths)) {
     return null;

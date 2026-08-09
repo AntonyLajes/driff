@@ -4,6 +4,8 @@ import {
   getInstallationOctokit,
   type OctokitLike,
 } from "@/sources/github/github-installation.js";
+import type { ReleaseVersionStrategy } from "@/config/release-version-strategy.js";
+import { isSemverTag } from "@/lib/semver-tag.js";
 
 const repositorySchema = z.object({ default_branch: z.string().min(1) });
 const commitSchema = z.object({
@@ -27,6 +29,15 @@ const tagsSchema = z.array(
     commit: z.object({ sha: z.string().min(1) }),
   }),
 );
+const releasesSchema = z.array(
+  z.object({
+    tag_name: z.string().min(1),
+    html_url: z.string().url(),
+    draft: z.boolean(),
+    published_at: z.string().nullable(),
+    created_at: z.string(),
+  }),
+);
 
 export interface RepositoryCommitReference {
   sourceKey: string;
@@ -42,6 +53,7 @@ export interface RepositoryReleaseReference {
   beforeSha: string;
   afterSha: string;
   releasedAt: Date;
+  sourceUrl?: string | null;
 }
 
 export interface ListRepositoryHistoryResult {
@@ -62,6 +74,7 @@ export interface ListRepositoryHistoryInput {
   repo: string;
   since: Date;
   maxItems: number;
+  versionStrategy?: ReleaseVersionStrategy;
 }
 
 const commitDate = (commit: z.infer<typeof commitSchema>): Date | null => {
@@ -142,16 +155,55 @@ export const execute = (input: ExecuteInput) => ({
       commitPage += 1;
     }
 
+    const strategy = request.versionStrategy ?? "version_file";
     const tagLimit = Math.min(request.maxItems + 1, 100);
-    const tagsResponse = await octokit.request<unknown>(
-      "GET /repos/{owner}/{repo}/tags",
-      { owner, repo, per_page: tagLimit, page: 1 },
-    );
-    const tags = tagsSchema.safeParse(tagsResponse.data);
-    if (!tags.success) {
-      throw new Error("GitHub returned an invalid tag history response.", {
-        cause: tags.error,
-      });
+    let releaseCandidates: Array<{
+      name: string;
+      sourceUrl: string | null;
+      releasedAt: Date | null;
+    }>;
+    let rawCandidateCount: number;
+    if (strategy === "github_release") {
+      const response = await octokit.request<unknown>(
+        "GET /repos/{owner}/{repo}/releases",
+        { owner, repo, per_page: tagLimit, page: 1 },
+      );
+      const parsed = releasesSchema.safeParse(response.data);
+      if (!parsed.success) {
+        throw new Error("GitHub returned an invalid release history response.", {
+          cause: parsed.error,
+        });
+      }
+      rawCandidateCount = parsed.data.length;
+      releaseCandidates = parsed.data
+        .filter((release) => !release.draft && isSemverTag(release.tag_name))
+        .map((release) => {
+          const date = new Date(release.published_at ?? release.created_at);
+          return {
+            name: release.tag_name,
+            sourceUrl: release.html_url,
+            releasedAt: Number.isNaN(date.getTime()) ? null : date,
+          };
+        });
+    } else {
+      const response = await octokit.request<unknown>(
+        "GET /repos/{owner}/{repo}/tags",
+        { owner, repo, per_page: tagLimit, page: 1 },
+      );
+      const parsed = tagsSchema.safeParse(response.data);
+      if (!parsed.success) {
+        throw new Error("GitHub returned an invalid tag history response.", {
+          cause: parsed.error,
+        });
+      }
+      rawCandidateCount = parsed.data.length;
+      releaseCandidates = parsed.data
+        .filter((tag) => strategy === "version_file" || isSemverTag(tag.name))
+        .map((tag) => ({
+          name: tag.name,
+          sourceUrl: null,
+          releasedAt: null,
+        }));
     }
 
     const resolvedTags: Array<{
@@ -159,28 +211,30 @@ export const execute = (input: ExecuteInput) => ({
       sha: string;
       parentSha: string | null;
       committedAt: Date;
+      sourceUrl: string | null;
     }> = [];
-    for (const tag of tags.data) {
+    for (const candidate of releaseCandidates) {
       const response = await octokit.request<unknown>(
         "GET /repos/{owner}/{repo}/commits/{ref}",
-        { owner, repo, ref: tag.name },
+        { owner, repo, ref: candidate.name },
       );
       const parsed = commitSchema.safeParse(response.data);
       if (!parsed.success) {
         throw new Error(
-          `GitHub returned invalid metadata for tag "${tag.name}".`,
+          `GitHub returned invalid metadata for tag "${candidate.name}".`,
           {
             cause: parsed.error,
           },
         );
       }
-      const committedAt = commitDate(parsed.data);
+      const committedAt = candidate.releasedAt ?? commitDate(parsed.data);
       if (committedAt === null) continue;
       resolvedTags.push({
-        name: tag.name,
+        name: candidate.name,
         sha: parsed.data.sha,
         parentSha: parsed.data.parents[0]?.sha ?? null,
         committedAt,
+        sourceUrl: candidate.sourceUrl,
       });
     }
     resolvedTags.sort(
@@ -202,10 +256,11 @@ export const execute = (input: ExecuteInput) => ({
         beforeSha,
         afterSha: tag.sha,
         releasedAt: tag.committedAt,
+        sourceUrl: tag.sourceUrl,
       });
     }
 
-    if (tags.data.length === tagLimit) truncated = true;
+    if (rawCandidateCount === tagLimit) truncated = true;
     return {
       defaultBranch: repository.data.default_branch,
       commits: commits.sort(

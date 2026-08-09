@@ -7,6 +7,7 @@ import { z } from "zod";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { DEFAULT_HISTORY_EXCLUDED_PATHS } from "@/config/history-content-filter.js";
 import { summaryLanguageSchema } from "@/config/summary-language.js";
+import { releaseVersionStrategySchema } from "@/config/release-version-strategy.js";
 import {
   applyReleaseKindAndFilePath,
   isSupportedReleaseProjectKind,
@@ -113,6 +114,7 @@ const patchWorkspaceSettingsBodySchema = z
       .union([z.array(z.string().min(1).max(255)).max(50), z.null()])
       .optional(),
     releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
+    releaseVersionStrategy: releaseVersionStrategySchema.optional(),
     releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
     releaseVersionBranch: z.union([z.string().max(255), z.null()]).optional(),
     historyExcludedPaths: z
@@ -234,6 +236,7 @@ const buildWorkspaceDiagnostics = (input: {
     | {
         pushSummaryBranches?: string[] | null;
         releaseProjectKind: string | null;
+        releaseVersionStrategy: string | null;
         releaseVersionFilePath: string | null;
         releaseVersionBranch: string | null;
       }
@@ -244,13 +247,16 @@ const buildWorkspaceDiagnostics = (input: {
   const settings = input.settings;
   const destinationConnected = input.hasEnabledDestination;
 
+  const releaseStrategy = settings?.releaseVersionStrategy ?? "version_file";
   const releaseKind = settings?.releaseProjectKind?.trim() ?? "";
   const releasePath = settings?.releaseVersionFilePath?.trim() ?? "";
   const releaseBranch = settings?.releaseVersionBranch?.trim() ?? "";
   const pushBranches = (settings?.pushSummaryBranches ?? [])
     .map((b) => b.trim())
     .filter((b) => b.length > 0);
-  const releaseSourceConfigured = releaseKind.length > 0 && releasePath.length > 0;
+  const releaseSourceConfigured =
+    releaseStrategy !== "version_file" ||
+    (releaseKind.length > 0 && releasePath.length > 0);
 
   const issues: WorkspaceDiagnosticsIssue[] = [];
 
@@ -268,7 +274,7 @@ const buildWorkspaceDiagnostics = (input: {
       message: "Connect an output destination (e.g. Notion) to publish summaries.",
     });
   }
-  if (releaseSourceConfigured && !releaseBranch) {
+  if (releaseStrategy === "version_file" && releaseSourceConfigured && !releaseBranch) {
     issues.push({
       code: "release_branch_missing",
       severity: "error",
@@ -279,13 +285,15 @@ const buildWorkspaceDiagnostics = (input: {
     issues.push({
       code: "release_version_source_missing",
       severity: "warning",
-      message: "Set a release version source (project kind + file) to enable version summaries.",
+      message: "Set a release version source to enable version summaries.",
     });
   }
 
   const prSummaryReady = repo.length > 0 && destinationConnected;
   const releaseSummaryReady =
-    prSummaryReady && releaseSourceConfigured && releaseBranch.length > 0;
+    prSummaryReady &&
+    releaseSourceConfigured &&
+    (releaseStrategy !== "version_file" || releaseBranch.length > 0);
   const pushSummaryReady = repo.length > 0 && destinationConnected && pushBranches.length > 0;
 
   return {
@@ -1424,6 +1432,7 @@ export const handler = async (
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
+        releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -1439,6 +1448,7 @@ export const handler = async (
       settings: {
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
         prSummaryBaseBranches: row?.prSummaryBaseBranches ?? null,
+        releaseVersionStrategy: row?.releaseVersionStrategy ?? "version_file",
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
@@ -1608,6 +1618,7 @@ export const handler = async (
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
+        releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -1691,6 +1702,7 @@ export const handler = async (
       const settingsRows = await input.db
         .select({
           pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
+          releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
           releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
           releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
           releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -1949,6 +1961,7 @@ export const handler = async (
     };
 
     let releasePatch: {
+      releaseVersionStrategy?: "version_file" | "git_tag" | "github_release";
       releaseProjectKind?: string | null;
       releaseVersionFilePath?: string | null;
       releaseInfoPlistPath?: string | null;
@@ -1957,9 +1970,24 @@ export const handler = async (
       releaseVersionBranch?: string | null;
     } = {};
 
+    if (patch.releaseVersionStrategy !== undefined) {
+      releasePatch.releaseVersionStrategy = patch.releaseVersionStrategy;
+      if (patch.releaseVersionStrategy !== "version_file") {
+        releasePatch = {
+          ...releasePatch,
+          releaseProjectKind: null,
+          releaseVersionFilePath: null,
+          releaseInfoPlistPath: null,
+          releaseProjectPbxprojPath: null,
+          releaseExpoAppConfigPath: null,
+        };
+      }
+    }
+
     if (patch.releaseProjectKind !== undefined && patch.releaseVersionFilePath !== undefined) {
       if (patch.releaseProjectKind === null && patch.releaseVersionFilePath === null) {
         releasePatch = {
+          ...releasePatch,
           releaseProjectKind: null,
           releaseVersionFilePath: null,
           releaseInfoPlistPath: null,
@@ -1972,6 +2000,7 @@ export const handler = async (
           patch.releaseVersionFilePath,
         );
         releasePatch = {
+          ...releasePatch,
           releaseProjectKind: patch.releaseProjectKind,
           releaseVersionFilePath: patch.releaseVersionFilePath.trim(),
           releaseInfoPlistPath: nonBlankOrNull(applied.releaseInfoPlistPath),
@@ -2024,6 +2053,8 @@ export const handler = async (
         historyExcludedActors:
           nextHistoryExcludedActors === undefined ? [] : nextHistoryExcludedActors,
         summaryLanguage: patch.summaryLanguage ?? "auto",
+        releaseVersionStrategy:
+          releasePatch.releaseVersionStrategy ?? "version_file",
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
         releaseVersionFilePath:
@@ -2051,6 +2082,7 @@ export const handler = async (
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
+        releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -2066,6 +2098,7 @@ export const handler = async (
       settings: {
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
         prSummaryBaseBranches: row?.prSummaryBaseBranches ?? null,
+        releaseVersionStrategy: row?.releaseVersionStrategy ?? "version_file",
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
