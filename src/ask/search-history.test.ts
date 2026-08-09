@@ -249,6 +249,78 @@ describe("ask/search-history execute", () => {
     expect(result.matches[0]?.change.id).toBe("16");
   });
 
+  it("should remove weak same-area matches from a focused question", async () => {
+    const etaFix = {
+      ...change("17", "Fix NaN ETA display for routes with no legs"),
+      summaryExecutive:
+        "Routes with no legs now show zero minutes instead of an invalid ETA.",
+      summaryTechnical: "Returns 0 when the route legs collection is empty.",
+      category: "bugfix",
+      areas: [
+        {
+          id: "area-rides",
+          name: "Rides",
+          slug: "rides",
+          confidence: 98,
+          source: "ai",
+        },
+      ],
+    };
+    const paceFeature = {
+      ...change("14", "Add ride pace classification"),
+      areas: etaFix.areas,
+    };
+    const fuelFeature = {
+      ...change("15", "Estimate fuel stops on ride cards"),
+      areas: etaFix.areas,
+    };
+    const timelineReader = vi.fn(async () =>
+      page([], [paceFeature, fuelFeature, etaFix]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "Qual correção foi feita sobre o ETA zero e quem fez?",
+      timelineReader,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.totalMatches).toBe(1);
+    expect(result.matches).toEqual([
+      expect.objectContaining({ change: expect.objectContaining({ id: "17" }) }),
+    ]);
+  });
+
+  it("should keep tied matches for a broad area query", async () => {
+    const ridesArea = [
+      {
+        id: "area-rides",
+        name: "Rides",
+        slug: "rides",
+        confidence: 98,
+        source: "ai",
+      },
+    ];
+    const timelineReader = vi.fn(async () =>
+      page([], [
+        { ...change("14", "Add ride pace classification"), areas: ridesArea },
+        { ...change("15", "Estimate fuel stops"), areas: ridesArea },
+      ]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "O que mudou em rides?",
+      timelineReader,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.totalMatches).toBe(2);
+    expect(result.matches).toHaveLength(2);
+  });
+
   it("should refuse to answer when matching history has no linked evidence", async () => {
     const timelineReader = vi.fn(async () =>
       page([], [change("17", "Improve checkout button", null)]),

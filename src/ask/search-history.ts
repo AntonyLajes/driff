@@ -352,6 +352,18 @@ const confidenceForScore = (score: number) =>
       ? ("medium" as const)
       : ("low" as const);
 
+/**
+ * Focused questions should not turn one strong answer into a wall of weak
+ * same-area matches. Keep ties and genuinely close results, while dropping
+ * candidates whose score is less than half of the best cited change.
+ */
+const keepFocusedMatches = <T extends { score: number }>(matches: T[]): T[] => {
+  const topScore = matches[0]?.score;
+  if (topScore === undefined) return [];
+  const scoreFloor = topScore >= 6 ? Math.max(4, topScore * 0.5) : topScore * 0.6;
+  return matches.filter(({ score }) => score >= scoreFloor);
+};
+
 const removeScopeTerms = (
   terms: string[],
   versionQuery: string | null,
@@ -414,7 +426,11 @@ export const execute = async (input: ExecuteInput) => {
     if (queryTerms.length > 0 && !teamOverview && rankedChanges.length === 0) {
       return noEvidence([versionQuery, ...queryTerms], period);
     }
-    const topScore = rankedChanges[0]?.score ?? 100;
+    const focusedChanges =
+      queryTerms.length === 0 || teamOverview
+        ? rankedChanges
+        : keepFocusedMatches(rankedChanges);
+    const topScore = focusedChanges[0]?.score ?? 100;
     return {
       status: "answered" as const,
       mode: "version" as const,
@@ -424,10 +440,10 @@ export const execute = async (input: ExecuteInput) => {
           : confidenceForScore(topScore),
       queryTerms: [versionQuery, ...queryTerms],
       period,
-      totalMatches: rankedChanges.length,
-      hasMore: rankedChanges.length > MAX_MATCHES,
+      totalMatches: focusedChanges.length,
+      hasMore: focusedChanges.length > MAX_MATCHES,
       version: versionSummary(version),
-      matches: rankedChanges.slice(0, MAX_MATCHES).map(({ change, score }) => ({
+      matches: focusedChanges.slice(0, MAX_MATCHES).map(({ change, score }) => ({
         score,
         change,
         version: versionSummary(version),
@@ -506,16 +522,17 @@ export const execute = async (input: ExecuteInput) => {
   if (rankedMatches.length === 0) {
     return noEvidence(queryTerms, period);
   }
-  const topScore = rankedMatches[0]?.score ?? 0;
+  const focusedMatches = keepFocusedMatches(rankedMatches);
+  const topScore = focusedMatches[0]?.score ?? 0;
   return {
     status: "answered" as const,
     mode: "change" as const,
     confidence: confidenceForScore(topScore),
     queryTerms,
     period,
-    totalMatches: rankedMatches.length,
-    hasMore: rankedMatches.length > MAX_MATCHES,
+    totalMatches: focusedMatches.length,
+    hasMore: focusedMatches.length > MAX_MATCHES,
     version: null,
-    matches: rankedMatches.slice(0, MAX_MATCHES),
+    matches: focusedMatches.slice(0, MAX_MATCHES),
   };
 };
