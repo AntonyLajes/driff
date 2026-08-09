@@ -279,6 +279,24 @@ describe("http/routes/destinations-me", () => {
   });
 
   it.each([
+    ["POST", "/api/me/workspaces/by-slug/ride-pack/destinations/notion/oauth/start"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/destinations"],
+    ["PATCH", "/api/me/workspaces/by-slug/ride-pack/destinations/notion"],
+    ["DELETE", "/api/me/workspaces/by-slug/ride-pack/destinations/notion"],
+    ["GET", "/api/me/workspaces/by-slug/ride-pack/destinations/notion/databases"],
+  ] as const)("rejects a malformed bearer for %s %s", async (method, url) => {
+    const server = await start({ select: vi.fn() });
+    const res = await server.inject({
+      method,
+      url,
+      headers: { authorization: "Bearer invalid" },
+      payload: method === "PATCH" ? {} : undefined,
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: "invalid_session" });
+  });
+
+  it.each([
     ["oauth start", "POST", "/api/me/workspaces/by-slug/---/destinations/notion/oauth/start"],
     ["list", "GET", "/api/me/workspaces/by-slug/---/destinations"],
     ["patch", "PATCH", "/api/me/workspaces/by-slug/---/destinations/notion"],
