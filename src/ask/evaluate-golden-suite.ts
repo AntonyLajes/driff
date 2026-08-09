@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -16,12 +17,21 @@ export interface GoldenSuiteEvaluation {
   totalCases: number;
   passedCases: number;
   thresholdPassed: boolean;
+  durationMs: number;
+  meanCaseDurationMs: number;
+  p95CaseDurationMs: number;
+  runtimeUsage: {
+    llmCalls: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
   corpora: GoldenEvaluation[];
 }
 
 export const execute = async ({
   directoryPath,
 }: ExecuteInput): Promise<GoldenSuiteEvaluation> => {
+  const suiteStartedAt = performance.now();
   const directory = resolve(directoryPath);
   const fixtureNames = (await readdir(directory))
     .filter((name) => name.endsWith("-golden.json"))
@@ -35,6 +45,11 @@ export const execute = async ({
       evaluateCorpus({ filePath: join(directory, name) }),
     ),
   );
+  const caseDurations = corpora.flatMap((corpus) =>
+    corpus.cases.map((item) => item.durationMs),
+  );
+  const sortedDurations = [...caseDurations].sort((left, right) => left - right);
+  const p95Index = Math.max(0, Math.ceil(sortedDurations.length * 0.95) - 1);
   return {
     totalCorpora: corpora.length,
     totalCases: corpora.reduce((total, corpus) => total + corpus.totalCases, 0),
@@ -43,6 +58,23 @@ export const execute = async ({
       0,
     ),
     thresholdPassed: corpora.every((corpus) => corpus.thresholdPassed),
+    durationMs: Math.round((performance.now() - suiteStartedAt) * 1000) / 1000,
+    meanCaseDurationMs:
+      Math.round(
+        (caseDurations.reduce((total, duration) => total + duration, 0) /
+          Math.max(1, caseDurations.length)) *
+          1000,
+      ) / 1000,
+    p95CaseDurationMs:
+      Math.round((sortedDurations[p95Index] ?? 0) * 1000) / 1000,
+    runtimeUsage: corpora.reduce(
+      (usage, corpus) => ({
+        llmCalls: usage.llmCalls + corpus.runtimeUsage.llmCalls,
+        inputTokens: usage.inputTokens + corpus.runtimeUsage.inputTokens,
+        outputTokens: usage.outputTokens + corpus.runtimeUsage.outputTokens,
+      }),
+      { llmCalls: 0, inputTokens: 0, outputTokens: 0 },
+    ),
     corpora,
   };
 };
@@ -57,11 +89,11 @@ const runCli = async (): Promise<void> => {
     directoryPath: process.argv[2] ?? defaultDirectory,
   });
   process.stdout.write(
-    `Ask suite: ${evaluation.passedCases}/${evaluation.totalCases} cases passed across ${evaluation.totalCorpora} corpora. Threshold: ${evaluation.thresholdPassed ? "PASS" : "FAIL"}.\n`,
+    `Ask suite: ${evaluation.passedCases}/${evaluation.totalCases} cases passed across ${evaluation.totalCorpora} corpora. Threshold: ${evaluation.thresholdPassed ? "PASS" : "FAIL"}. Latency: mean ${evaluation.meanCaseDurationMs.toFixed(3)}ms, p95 ${evaluation.p95CaseDurationMs.toFixed(3)}ms. Runtime LLM usage: ${evaluation.runtimeUsage.llmCalls} calls, ${evaluation.runtimeUsage.inputTokens + evaluation.runtimeUsage.outputTokens} tokens.\n`,
   );
   for (const corpus of evaluation.corpora) {
     process.stdout.write(
-      `- ${corpus.corpusId}: ${corpus.passedCases}/${corpus.totalCases}, citations ${percentage(corpus.citationPrecision)}, refusals ${percentage(corpus.refusalAccuracy)}.\n`,
+      `- ${corpus.corpusId}: ${corpus.passedCases}/${corpus.totalCases}, citations ${percentage(corpus.citationPrecision)}, refusals ${percentage(corpus.refusalAccuracy)}, latency mean ${corpus.meanCaseDurationMs.toFixed(3)}ms / p95 ${corpus.p95CaseDurationMs.toFixed(3)}ms.\n`,
     );
     for (const item of corpus.cases.filter((item) => !item.passed)) {
       process.stderr.write(`  - ${item.id}: ${item.failures.join("; ")}\n`);

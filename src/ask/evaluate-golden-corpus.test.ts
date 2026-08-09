@@ -38,6 +38,17 @@ describe("ask/evaluate-golden-corpus execute", () => {
       }),
     );
     expect(evaluation.cases.every((item) => item.passed)).toBe(true);
+    expect(evaluation.durationMs).toBeGreaterThanOrEqual(0);
+    expect(evaluation.meanCaseDurationMs).toBeGreaterThanOrEqual(0);
+    expect(evaluation.p95CaseDurationMs).toBeGreaterThanOrEqual(0);
+    expect(evaluation.runtimeUsage).toEqual({
+      llmCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    expect(
+      evaluation.cases.every((item) => item.durationMs >= 0),
+    ).toBe(true);
   });
 
   it("should report the precise missing expectation and fail the threshold", async () => {
@@ -120,5 +131,13 @@ describe("ask/evaluate-golden-suite execute", () => {
       "ride-pack-cited-history",
       "web-commerce-cited-history",
     ]);
+    expect(evaluation.durationMs).toBeGreaterThanOrEqual(0);
+    expect(evaluation.meanCaseDurationMs).toBeGreaterThanOrEqual(0);
+    expect(evaluation.p95CaseDurationMs).toBeGreaterThanOrEqual(0);
+    expect(evaluation.runtimeUsage).toEqual({
+      llmCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
   });
 });

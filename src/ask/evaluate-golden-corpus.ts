@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 import type { Database } from "@/db/client.js";
@@ -16,6 +17,7 @@ export interface GoldenCaseResult {
   failures: string[];
   returnedMatches: number;
   citedMatches: number;
+  durationMs: number;
 }
 
 export interface GoldenEvaluation {
@@ -25,6 +27,14 @@ export interface GoldenEvaluation {
   passRate: number;
   citationPrecision: number;
   refusalAccuracy: number;
+  durationMs: number;
+  meanCaseDurationMs: number;
+  p95CaseDurationMs: number;
+  runtimeUsage: {
+    llmCalls: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
   thresholdPassed: boolean;
   cases: GoldenCaseResult[];
 }
@@ -32,11 +42,21 @@ export interface GoldenEvaluation {
 const ratio = (numerator: number, denominator: number): number =>
   denominator === 0 ? 1 : numerator / denominator;
 
+const roundedMs = (value: number): number => Math.round(value * 1000) / 1000;
+
+const percentile = (values: number[], quantile: number): number => {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.max(0, Math.ceil(quantile * sorted.length) - 1);
+  return sorted[index] ?? 0;
+};
+
 export const execute = async ({
   filePath,
 }: ExecuteInput): Promise<GoldenEvaluation> => {
   const raw = await readFile(resolve(filePath), "utf8");
   const corpus = parseCorpus(JSON.parse(raw) as unknown);
+  const evaluationStartedAt = performance.now();
   const timeline = {
     versions: corpus.history.versions,
     inDevelopment: {
@@ -53,6 +73,7 @@ export const execute = async ({
   let correctRefusals = 0;
 
   for (const goldenCase of corpus.questions) {
+    const caseStartedAt = performance.now();
     const result = await searchHistory({
       db: {} as Database,
       workspaceId: corpus.workspaceId,
@@ -137,6 +158,7 @@ export const execute = async ({
       failures,
       returnedMatches: result.matches.length,
       citedMatches: caseCitedMatches,
+      durationMs: roundedMs(performance.now() - caseStartedAt),
     });
   }
 
@@ -144,6 +166,7 @@ export const execute = async ({
   const passRate = ratio(passedCases, cases.length);
   const citationPrecision = ratio(citedMatches, returnedMatches);
   const refusalAccuracy = ratio(correctRefusals, expectedRefusals);
+  const caseDurations = cases.map((item) => item.durationMs);
   const thresholdPassed =
     passRate >= corpus.thresholds.passRate &&
     citationPrecision >= corpus.thresholds.citationPrecision &&
@@ -156,6 +179,15 @@ export const execute = async ({
     passRate,
     citationPrecision,
     refusalAccuracy,
+    durationMs: roundedMs(performance.now() - evaluationStartedAt),
+    meanCaseDurationMs: roundedMs(
+      caseDurations.reduce((total, duration) => total + duration, 0) /
+        Math.max(1, caseDurations.length),
+    ),
+    p95CaseDurationMs: roundedMs(percentile(caseDurations, 0.95)),
+    // Ask V1 performs deterministic retrieval over already-generated history.
+    // Keep this explicit so a future LLM-backed query path changes the report contract.
+    runtimeUsage: { llmCalls: 0, inputTokens: 0, outputTokens: 0 },
     thresholdPassed,
     cases,
   };
@@ -175,6 +207,8 @@ const runCli = async (): Promise<void> => {
       `Pass rate: ${percentage(evaluation.passRate)}.`,
       `Citation precision: ${percentage(evaluation.citationPrecision)}.`,
       `Refusal accuracy: ${percentage(evaluation.refusalAccuracy)}.`,
+      `Latency: mean ${evaluation.meanCaseDurationMs.toFixed(3)}ms, p95 ${evaluation.p95CaseDurationMs.toFixed(3)}ms.`,
+      `Runtime LLM usage: ${evaluation.runtimeUsage.llmCalls} calls, ${evaluation.runtimeUsage.inputTokens + evaluation.runtimeUsage.outputTokens} tokens.`,
       `Threshold: ${evaluation.thresholdPassed ? "PASS" : "FAIL"}.`,
     ].join(" ") + "\n",
   );
