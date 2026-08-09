@@ -69,6 +69,10 @@ const SYNONYMS: Record<string, string[]> = {
 type TimelineResult = Awaited<ReturnType<typeof readTimeline>>;
 type TimelineVersion = TimelineResult["versions"][number];
 type TimelineChange = TimelineVersion["changes"][number];
+type ChangeCandidate = {
+  change: TimelineChange;
+  version: ReturnType<typeof versionSummary> | null;
+};
 
 export interface ExecuteInput {
   db: Database;
@@ -93,6 +97,41 @@ const extractVersion = (question: string): string | null => {
   return match?.[0] === undefined
     ? null
     : normalize(match[0]).replace(/^v/, "");
+};
+
+const extractLatestIntent = (
+  question: string,
+): { latest: boolean; category: string | null } => {
+  const normalized = normalize(question);
+  const latest =
+    /\b(?:ultima|ultimo|latest|newest)\b/u.test(normalized) ||
+    /\b(?:mais|most)\s+recente\b/u.test(normalized);
+  if (!latest) return { latest: false, category: null };
+
+  const categories: Array<{ category: string; pattern: RegExp }> = [
+    {
+      category: "feature",
+      pattern: /\b(?:feature|features|funcionalidade|funcionalidades)\b/u,
+    },
+    {
+      category: "bugfix",
+      pattern: /\b(?:bug|bugfix|correcao|correcoes|fix)\b/u,
+    },
+    {
+      category: "refactor",
+      pattern: /\b(?:refactor|refatoracao|refatoracoes)\b/u,
+    },
+    {
+      category: "chore",
+      pattern: /\b(?:chore|maintenance|manutencao)\b/u,
+    },
+  ];
+  return {
+    latest: true,
+    category:
+      categories.find(({ pattern }) => pattern.test(normalized))?.category ??
+      null,
+  };
 };
 
 const tokenize = (question: string): string[] => {
@@ -188,6 +227,17 @@ const noEvidence = (terms: string[]) => ({
   matches: [],
 });
 
+const latestMatch = (candidates: ChangeCandidate[], category: string | null) =>
+  candidates
+    .filter(
+      ({ change }) =>
+        hasCitedEvidence(change) &&
+        (category === null || change.category === category),
+    )
+    .sort((left, right) =>
+      right.change.lastOccurredAt.localeCompare(left.change.lastOccurredAt),
+    )[0];
+
 export const execute = async (input: ExecuteInput) => {
   const history = await loadHistory(input);
   const versionQuery = extractVersion(input.question);
@@ -228,11 +278,7 @@ export const execute = async (input: ExecuteInput) => {
   }
 
   const terms = tokenize(input.question);
-  if (terms.length === 0) {
-    return noEvidence(terms);
-  }
-
-  const candidates = [
+  const candidates: ChangeCandidate[] = [
     ...history.inDevelopment.map((change) => ({ change, version: null })),
     ...history.versions.flatMap((version) =>
       version.changes.map((change) => ({
@@ -241,6 +287,24 @@ export const execute = async (input: ExecuteInput) => {
       })),
     ),
   ];
+  const latestIntent = extractLatestIntent(input.question);
+  if (latestIntent.latest) {
+    const match = latestMatch(candidates, latestIntent.category);
+    if (match === undefined) return noEvidence(terms);
+    return {
+      status: "answered" as const,
+      mode: "change" as const,
+      confidence: "high" as const,
+      queryTerms: terms,
+      version: null,
+      matches: [{ ...match, score: 100 }],
+    };
+  }
+
+  if (terms.length === 0) {
+    return noEvidence(terms);
+  }
+
   const matches = candidates
     .filter(({ change }) => hasCitedEvidence(change))
     .map((candidate) => ({
