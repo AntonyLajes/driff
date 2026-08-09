@@ -419,6 +419,36 @@ export const summaryCorrectionsTable = pgTable(
   }),
 );
 
+/**
+ * Privacy-preserving Ask Driff product analytics. Deliberately stores no
+ * question, answer, source text, code, contributor or user identity.
+ */
+export const askInteractionsTable = pgTable(
+  "ask_interactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    hadEvidence: boolean("had_evidence").notNull(),
+    feedback: text("feedback"),
+    feedbackAt: timestamp("feedback_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceCreatedAtIdx: index("ask_interactions_workspace_created_at_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    feedbackCheck: check(
+      "ask_interactions_feedback_check",
+      sql`${table.feedback} IS NULL OR ${table.feedback} IN ('helpful', 'unhelpful')`,
+    ),
+  }),
+);
+
 export interface HistoryImportFailure {
   sourceKind: "pull_request" | "release" | "commit";
   sourceKey: string;

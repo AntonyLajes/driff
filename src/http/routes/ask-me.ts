@@ -8,12 +8,16 @@ import {
 } from "@/ask/search-history.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
-import { workspacesTable } from "@/db/schema.js";
+import { askInteractionsTable, workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
 import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 
 const askBodySchema = z.object({
   question: z.string().trim().min(3).max(500),
+});
+
+const feedbackBodySchema = z.object({
+  value: z.enum(["helpful", "unhelpful"]),
 });
 
 export interface AskMeRegistrationInput {
@@ -22,6 +26,10 @@ export interface AskMeRegistrationInput {
   historySearcher?: (
     input: SearchHistoryInput,
   ) => Promise<Awaited<ReturnType<typeof searchHistory>>>;
+  interactionRecorder?: (input: {
+    workspaceId: string;
+    hadEvidence: boolean;
+  }) => Promise<string | null>;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -36,6 +44,19 @@ export const handler = async (
   instance: FastifyInstance,
   input: AskMeRegistrationInput,
 ): Promise<void> => {
+  const recordInteraction =
+    input.interactionRecorder ??
+    (async (interaction: {
+      workspaceId: string;
+      hadEvidence: boolean;
+    }): Promise<string | null> => {
+      const rows = await input.db
+        .insert(askInteractionsTable)
+        .values(interaction)
+        .returning({ id: askInteractionsTable.id });
+      return rows[0]?.id ?? null;
+    });
+
   instance.post(
     "/api/me/workspaces/by-slug/:slug/ask",
     async (request, reply) => {
@@ -98,7 +119,99 @@ export const handler = async (
         question: bodyParsed.data.question,
       });
 
-      return reply.send({ workspace, question: bodyParsed.data.question, ...result });
+      let interactionId: string | null = null;
+      try {
+        interactionId = await recordInteraction({
+          workspaceId: workspace.id,
+          hadEvidence: result.status === "answered" && result.matches.length > 0,
+        });
+      } catch (error) {
+        // Product analytics must never make the evidence search unavailable.
+        request.log.warn({ error, workspaceId: workspace.id }, "ask_interaction_record_failed");
+      }
+
+      return reply.send({
+        workspace,
+        question: bodyParsed.data.question,
+        interactionId,
+        ...result,
+      });
+    },
+  );
+
+  instance.patch(
+    "/api/me/workspaces/by-slug/:slug/ask/:interactionId/feedback",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const bodyParsed = feedbackBodySchema.safeParse(request.body);
+      if (!bodyParsed.success) {
+        return reply.status(400).send({ error: "invalid_ask_feedback" });
+      }
+      const params = request.params as {
+        slug?: string;
+        interactionId?: string;
+      };
+      const interactionId = z.string().uuid().safeParse(params.interactionId);
+      const slug = normalizeWorkspaceSlug(params.slug ?? "");
+      if (
+        !interactionId.success ||
+        slug.length === 0 ||
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
+      ) {
+        return reply.status(400).send({ error: "invalid_ask_feedback_target" });
+      }
+
+      const team = await resolveTeamContext(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+      );
+      if (team.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (team.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      const workspaceRows = await input.db
+        .select({ id: workspacesTable.id })
+        .from(workspacesTable)
+        .where(
+          and(
+            eq(workspacesTable.teamId, team.context.teamId),
+            eq(workspacesTable.slug, slug),
+          ),
+        )
+        .limit(1);
+      const workspace = workspaceRows[0];
+      if (workspace === undefined) {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const updated = await input.db
+        .update(askInteractionsTable)
+        .set({
+          feedback: bodyParsed.data.value,
+          feedbackAt: new Date(),
+        })
+        .where(
+          and(
+            eq(askInteractionsTable.id, interactionId.data),
+            eq(askInteractionsTable.workspaceId, workspace.id),
+          ),
+        )
+        .returning({ id: askInteractionsTable.id });
+      if (updated[0] === undefined) {
+        return reply.status(404).send({ error: "ask_interaction_not_found" });
+      }
+      return reply.send({ feedback: bodyParsed.data.value });
     },
   );
 };

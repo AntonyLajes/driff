@@ -37,6 +37,10 @@ import {
   type MeStatsRegistrationInput,
 } from "@/http/routes/me-stats.js";
 import {
+  handler as registerProductFunnelMeRoute,
+  type ProductFunnelMeRegistrationInput,
+} from "@/http/routes/product-funnel-me.js";
+import {
   handler as registerTeamsMeRoute,
   type TeamsMeRegistrationInput,
 } from "@/http/routes/teams-me.js";
@@ -71,6 +75,8 @@ export interface ExecuteInput {
   workspacesMe?: WorkspacesMeRegistrationInput;
   /** When set, registers `/api/me/stats` and `/api/me/activity` (Bearer session JWT). */
   meStats?: MeStatsRegistrationInput;
+  /** When set, registers privacy-preserving first-value funnel aggregates. */
+  productFunnelMe?: ProductFunnelMeRegistrationInput;
   /** When set, registers `/api/me/teams` (Bearer session JWT). */
   teamsMe?: TeamsMeRegistrationInput;
   /** When set, registers the canonical workspace timeline (Bearer session JWT). */
@@ -112,6 +118,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.meStats !== undefined) {
       await registerMeStatsRoute(instance, input.meStats);
+    }
+    if (input.productFunnelMe !== undefined) {
+      await registerProductFunnelMeRoute(instance, input.productFunnelMe);
     }
     if (input.teamsMe !== undefined) {
       await registerTeamsMeRoute(instance, input.teamsMe);

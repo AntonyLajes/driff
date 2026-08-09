@@ -7,6 +7,7 @@ import { handler } from "@/http/routes/ask-me.js";
 const JWT_SECRET = "a".repeat(32);
 const USER_ID = "00000000-0000-4000-8000-000000000099";
 const WORKSPACE_ID = "00000000-0000-4000-8000-0000000000aa";
+const INTERACTION_ID = "00000000-0000-4000-8000-0000000000ab";
 
 const token = () =>
   signSessionJwt({
@@ -62,12 +63,14 @@ describe("http/routes/ask-me", () => {
       version: null,
       matches: [],
     }));
+    const interactionRecorder = vi.fn(async () => INTERACTION_ID);
     const server = fastify({ logger: false });
     servers.push(server);
     await handler(server, {
       db: workspaceDb.db,
       jwtSecret: JWT_SECRET,
       historySearcher,
+      interactionRecorder,
     });
     await server.ready();
 
@@ -83,6 +86,7 @@ describe("http/routes/ask-me", () => {
       expect.objectContaining({
         workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
         question: "checkout button",
+        interactionId: INTERACTION_ID,
         status: "no_evidence",
       }),
     );
@@ -90,6 +94,40 @@ describe("http/routes/ask-me", () => {
       expect.objectContaining({
         workspaceId: WORKSPACE_ID,
         question: "checkout button",
+      }),
+    );
+    expect(interactionRecorder).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      hadEvidence: false,
+    });
+  });
+
+  it("should update feedback only for an interaction in the acting workspace", async () => {
+    const { db: workspaceDb } = buildWorkspaceDb([{ id: WORKSPACE_ID }]);
+    const returning = vi.fn(async () => [{ id: INTERACTION_ID }]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    const update = vi.fn(() => ({ set }));
+    const db = { ...(workspaceDb as object), update } as never;
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db, jwtSecret: JWT_SECRET });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/workspaces/by-slug/ride-pack/ask/${INTERACTION_ID}/feedback`,
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { value: "helpful" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ feedback: "helpful" });
+    expect(update).toHaveBeenCalledOnce();
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedback: "helpful",
+        feedbackAt: expect.any(Date),
       }),
     );
   });

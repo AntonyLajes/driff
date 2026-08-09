@@ -3,6 +3,7 @@ import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import {
+  askInteractionsTable,
   changeAreasTable,
   changeContributorsTable,
   changeEvidenceTable,
@@ -113,6 +114,22 @@ describe("db/schema tables", () => {
         "summary_corrections_workspace_created_at_idx",
       ]),
     );
+  });
+
+  it("should store Ask feedback without question, answer or user identity", () => {
+    const columns = getTableColumns(askInteractionsTable);
+    const config = getTableConfig(askInteractionsTable);
+
+    expect(columns.workspaceId).toBeDefined();
+    expect(columns.hadEvidence).toBeDefined();
+    expect(columns.feedback).toBeDefined();
+    expect(columns.feedbackAt).toBeDefined();
+    expect(Object.keys(columns)).not.toEqual(
+      expect.arrayContaining(["question", "answer", "userId"]),
+    );
+    expect(config.foreignKeys.length).toBe(1);
+    expect(config.indexes.length).toBe(1);
+    expect(config.checks.length).toBe(1);
   });
 
   it("should store the generated-summary language per workspace", () => {
