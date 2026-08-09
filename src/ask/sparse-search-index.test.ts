@@ -52,6 +52,20 @@ describe("ask/sparse-search-index", () => {
     expect(scoreSearchChunks(chunks, ["checkout"])).toBe(0);
   });
 
+  it("does not promote weak trigram overlap from a highly weighted field", () => {
+    const fuelDocument = buildSearchChunks({
+      title: "Estimate fuel stops on ride cards",
+      summaryExecutive: "Helps riders plan longer routes.",
+      summaryTechnical: "Adds route logistics metadata.",
+      category: "feature",
+      areas: ["rides"],
+      contributors: ["AntonyLajes"],
+      evidence: ["pull request 15"],
+    });
+
+    expect(scoreSearchChunks(fuelDocument, ["buton"])).toBe(0);
+  });
+
   it("omits empty optional chunks", () => {
     const chunks = buildSearchChunks({
       title: "Release",

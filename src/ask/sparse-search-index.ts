@@ -14,6 +14,7 @@ export type SearchChunk = {
   text: string;
   weight: number;
   embedding: SparseEmbedding;
+  termEmbeddings: SparseEmbedding[];
 };
 
 export type SearchDocumentInput = {
@@ -113,7 +114,14 @@ const CHUNK_FIELDS: Array<{
 export const buildSearchChunks = (input: SearchDocumentInput): SearchChunk[] =>
   CHUNK_FIELDS.map(({ kind, weight, read }) => {
     const text = read(input).trim();
-    return { kind, weight, text, embedding: createSparseEmbedding(text) };
+    const terms = normalize(text).match(/[a-z0-9][a-z0-9._+-]*/g) ?? [];
+    return {
+      kind,
+      weight,
+      text,
+      embedding: createSparseEmbedding(text),
+      termEmbeddings: [...new Set(terms)].map(createSparseEmbedding),
+    };
   }).filter((chunk) => chunk.text.length > 0);
 
 const MIN_SEMANTIC_SIMILARITY = 0.52;
@@ -138,8 +146,13 @@ export const scoreSearchChunks = (
 
     const queryEmbedding = createSparseEmbedding(normalizedTerm);
     const semantic = chunks.reduce((best, chunk) => {
-      const similarity = cosineSimilarity(queryEmbedding, chunk.embedding);
+      const similarity = [chunk.embedding, ...chunk.termEmbeddings].reduce(
+        (chunkBest, embedding) =>
+          Math.max(chunkBest, cosineSimilarity(queryEmbedding, embedding)),
+        0,
+      );
+      if (similarity < MIN_SEMANTIC_SIMILARITY) return best;
       return Math.max(best, similarity * chunk.weight);
     }, 0);
-    return total + (semantic >= MIN_SEMANTIC_SIMILARITY ? semantic : 0);
+    return total + semantic;
   }, 0);
