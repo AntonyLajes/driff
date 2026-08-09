@@ -43,6 +43,7 @@ import {
   type Summarizer,
 } from "@/llm/summarizer.js";
 import { execute as createQueue, type QueueAdapter } from "@/queue/queue.js";
+import { execute as createTeamAuditRecorder } from "@/teams/record-audit-event.js";
 import { execute as createWorker, type WorkerAdapter } from "@/queue/worker.js";
 import { execute as createGithubSource } from "@/sources/github/github-source.js";
 import type { Source } from "@/sources/source.js";
@@ -107,7 +108,10 @@ const buildReleaseConfig = (
     workspace.releaseVersionBranch?.trim() ||
     workspace.repoDefaultBranch?.trim() ||
     "main";
-  if (workspace.releaseVersionStrategy === "version_file" && !workspace.releaseVersionBranch?.trim()) {
+  if (
+    workspace.releaseVersionStrategy === "version_file" &&
+    !workspace.releaseVersionBranch?.trim()
+  ) {
     return null;
   }
   return {
@@ -292,6 +296,7 @@ const buildRuntimeDependencies = async (
               resendApiKey: env.RESEND_API_KEY,
               resendFrom: env.RESEND_FROM,
               frontendUrl: env.FRONTEND_URL,
+              auditRecorder: createTeamAuditRecorder({ db }),
             }
           : undefined,
       githubMe,

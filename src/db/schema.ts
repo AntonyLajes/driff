@@ -306,6 +306,45 @@ export const teamInvitesTable = pgTable(
   }),
 );
 
+/** Team administration audit trail. Contains no repository or source-code data. */
+export const teamAuditEventsTable = pgTable(
+  "team_audit_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teamsTable.id, { onDelete: "cascade" }),
+    actorUserId: uuid("actor_user_id").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    action: text("action").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id"),
+    targetLabel: text("target_label"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    teamCreatedAtIdx: index("team_audit_events_team_created_at_idx").on(
+      table.teamId,
+      table.createdAt.desc(),
+    ),
+    actionCheck: check(
+      "team_audit_events_action_check",
+      sql`${table.action} IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left')`,
+    ),
+    targetTypeCheck: check(
+      "team_audit_events_target_type_check",
+      sql`${table.targetType} IN ('team', 'invite', 'member')`,
+    ),
+  }),
+);
+
 /**
  * Per-provider source OAuth (user-to-server) tokens for listing repos and reading metadata.
  * One row per (user, provider). Access tokens are stored sealed with `AUTH_JWT_SECRET`
