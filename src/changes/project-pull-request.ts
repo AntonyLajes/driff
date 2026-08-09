@@ -1,3 +1,5 @@
+import { sql } from "drizzle-orm";
+
 import { execute as buildCanonicalId } from "@/changes/canonical-id.js";
 import { normalizeProductArea } from "@/changes/normalize-product-area.js";
 import type { Database } from "@/db/client.js";
@@ -173,6 +175,7 @@ export const execute = ({
           displayName: pullRequest.author,
           role: "pr_author",
           sourceUrl: `https://github.com/${encodeURIComponent(pullRequest.author)}`,
+          isBot: /\[bot\]$/i.test(pullRequest.author.trim()),
         })
         .onConflictDoUpdate({
           target: [
@@ -185,6 +188,34 @@ export const execute = ({
             sourceUrl: `https://github.com/${encodeURIComponent(pullRequest.author)}`,
           },
         });
+
+      const participants = pullRequest.participants ?? [];
+      if (participants.length > 0) {
+        await tx
+          .insert(changeContributorsTable)
+          .values(
+            participants.map((participant) => ({
+              changeId,
+              externalIdentity: participant.externalIdentity,
+              displayName: participant.displayName,
+              role: participant.role,
+              sourceUrl: participant.sourceUrl,
+              isBot: participant.isBot,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [
+              changeContributorsTable.changeId,
+              changeContributorsTable.externalIdentity,
+              changeContributorsTable.role,
+            ],
+            set: {
+              displayName: sql`excluded.display_name`,
+              sourceUrl: sql`excluded.source_url`,
+              isBot: sql`excluded.is_bot`,
+            },
+          });
+      }
     });
 
     if (projectedArea !== null) {

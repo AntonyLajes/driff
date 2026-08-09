@@ -239,6 +239,13 @@
       "when": 1786312558851,
       "tag": "0033_kind_mephistopheles",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786313193613,
+      "tag": "0034_rare_pixie",
+      "breakpoints": true
     }
   ]
 }

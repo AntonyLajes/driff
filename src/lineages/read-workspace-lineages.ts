@@ -84,7 +84,9 @@ export const execute = async (input: ExecuteInput) => {
       asc(changeLineageEntriesTable.occurredAt),
       asc(changeLineageEntriesTable.changeId),
     );
-  const changeIds = Array.from(new Set(entryRows.map((entry) => entry.changeId)));
+  const changeIds = Array.from(
+    new Set(entryRows.map((entry) => entry.changeId)),
+  );
 
   const contributorRows =
     changeIds.length === 0
@@ -96,6 +98,7 @@ export const execute = async (input: ExecuteInput) => {
             displayName: changeContributorsTable.displayName,
             role: changeContributorsTable.role,
             sourceUrl: changeContributorsTable.sourceUrl,
+            isBot: changeContributorsTable.isBot,
           })
           .from(changeContributorsTable)
           .where(inArray(changeContributorsTable.changeId, changeIds));
@@ -199,14 +202,15 @@ export const execute = async (input: ExecuteInput) => {
             name: area.name,
             slug: area.slug,
           })),
-          contributors: (
-            contributorsByChange.get(entry.changeId) ?? []
-          ).map((contributor) => ({
-            externalIdentity: contributor.externalIdentity,
-            displayName: contributor.displayName,
-            role: contributor.role,
-            sourceUrl: contributor.sourceUrl,
-          })),
+          contributors: (contributorsByChange.get(entry.changeId) ?? []).map(
+            (contributor) => ({
+              externalIdentity: contributor.externalIdentity,
+              displayName: contributor.displayName,
+              role: contributor.role,
+              sourceUrl: contributor.sourceUrl,
+              isBot: contributor.isBot,
+            }),
+          ),
           evidence: (evidenceByChange.get(entry.changeId) ?? []).map(
             (evidence) => ({
               id: evidence.id,

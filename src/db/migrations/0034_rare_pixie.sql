@@ -1,0 +1,3 @@
+ALTER TABLE "change_contributors" DROP CONSTRAINT "change_contributors_role_check";--> statement-breakpoint
+ALTER TABLE "change_contributors" ADD COLUMN "is_bot" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "change_contributors" ADD CONSTRAINT "change_contributors_role_check" CHECK ("change_contributors"."role" IN ('pr_author', 'commit_author', 'pusher', 'reviewer', 'coauthor', 'merger'));

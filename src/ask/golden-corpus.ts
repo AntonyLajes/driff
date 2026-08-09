@@ -36,6 +36,7 @@ const changeSchema = z.object({
       displayName: z.string().nullable(),
       role: z.string().min(1),
       sourceUrl: z.string().url().nullable(),
+      isBot: z.boolean().default(false),
     }),
   ),
   evidence: z.array(evidenceSchema),

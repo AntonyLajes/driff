@@ -313,6 +313,7 @@ describe("db/schema tables", () => {
     expect(columns.displayName).toBeDefined();
     expect(columns.role).toBeDefined();
     expect(columns.sourceUrl).toBeDefined();
+    expect(columns.isBot).toBeDefined();
     expect(columns).not.toHaveProperty("score");
     expect(columns).not.toHaveProperty("productivity");
     expect(config.primaryKeys.length).toBe(1);
@@ -333,6 +334,9 @@ describe("db/schema tables", () => {
     }
     expect(new PgDialect().sqlToQuery(roleCheck.value).sql).toContain(
       "'pusher'",
+    );
+    expect(new PgDialect().sqlToQuery(roleCheck.value).sql).toContain(
+      "'merger'",
     );
   });
 });

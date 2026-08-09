@@ -442,10 +442,9 @@ export const askInteractionsTable = pgTable(
       .notNull(),
   },
   (table) => ({
-    workspaceCreatedAtIdx: index("ask_interactions_workspace_created_at_idx").on(
-      table.workspaceId,
-      table.createdAt,
-    ),
+    workspaceCreatedAtIdx: index(
+      "ask_interactions_workspace_created_at_idx",
+    ).on(table.workspaceId, table.createdAt),
     feedbackCheck: check(
       "ask_interactions_feedback_check",
       sql`${table.feedback} IS NULL OR ${table.feedback} IN ('helpful', 'unhelpful')`,
@@ -926,6 +925,7 @@ export const changeContributorsTable = pgTable(
     displayName: text("display_name"),
     role: text("role").notNull(),
     sourceUrl: text("source_url"),
+    isBot: boolean("is_bot").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -939,7 +939,7 @@ export const changeContributorsTable = pgTable(
     ),
     roleCheck: check(
       "change_contributors_role_check",
-      sql`${table.role} IN ('pr_author', 'commit_author', 'pusher', 'reviewer', 'coauthor')`,
+      sql`${table.role} IN ('pr_author', 'commit_author', 'pusher', 'reviewer', 'coauthor', 'merger')`,
     ),
   }),
 );

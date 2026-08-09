@@ -39,8 +39,9 @@ const extractFilePaths = (summary: string): string[] =>
   summary
     .split("\n")
     .map((line) => line.match(/^[^:]+:\s+(.+)$/u)?.[1]?.trim() ?? "")
-    .filter((path, index, all) =>
-      path.length > 0 && !path.startsWith("…") && all.indexOf(path) === index,
+    .filter(
+      (path, index, all) =>
+        path.length > 0 && !path.startsWith("…") && all.indexOf(path) === index,
     );
 
 export const execute = ({
@@ -194,6 +195,7 @@ export const execute = ({
             displayName: pusher,
             role: "pusher",
             sourceUrl: `https://github.com/${encodeURIComponent(pusher)}`,
+            isBot: /\[bot\]$/i.test(pusher),
           })
           .onConflictDoUpdate({
             target: [

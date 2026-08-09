@@ -49,6 +49,22 @@ const pullRequest: PullRequestEvent = {
     { path: "src/checkout/button.tsx", additions: 12, deletions: 2 },
     { path: "src/checkout/state.ts", additions: 8, deletions: 4 },
   ],
+  participants: [
+    {
+      externalIdentity: "github:reviewer",
+      displayName: "reviewer",
+      role: "reviewer",
+      sourceUrl: "https://github.com/reviewer",
+      isBot: false,
+    },
+    {
+      externalIdentity: "github:release-bot[bot]",
+      displayName: "release-bot[bot]",
+      role: "merger",
+      sourceUrl: "https://github.com/release-bot%5Bbot%5D",
+      isBot: true,
+    },
+  ],
 };
 
 const summary: PRSummary = {
@@ -107,8 +123,8 @@ describe("changes/project-pull-request execute", () => {
     await execute({ db, lineageProjector }).project(projectionInput);
 
     expect(transaction).toHaveBeenCalledOnce();
-    expect(records).toHaveLength(5);
-    expect(onConflictDoUpdate).toHaveBeenCalledTimes(5);
+    expect(records).toHaveLength(6);
+    expect(onConflictDoUpdate).toHaveBeenCalledTimes(6);
 
     const change = recordFor(records, changesTable).values;
     expect(change).toEqual(
@@ -160,14 +176,30 @@ describe("changes/project-pull-request execute", () => {
     expect(recordFor(records, changeAreasTable).values).toEqual(
       expect.objectContaining({ source: "ai" }),
     );
-    expect(recordFor(records, changeContributorsTable).values).toEqual(
+    const contributorRecords = records.filter(
+      (record) => record.table === changeContributorsTable,
+    );
+    expect(contributorRecords[0]?.values).toEqual(
       expect.objectContaining({
         externalIdentity: "github:octo cat",
         displayName: "Octo Cat",
         role: "pr_author",
         sourceUrl: "https://github.com/Octo%20Cat",
+        isBot: false,
       }),
     );
+    expect(contributorRecords[1]?.values).toEqual([
+      expect.objectContaining({
+        externalIdentity: "github:reviewer",
+        role: "reviewer",
+        isBot: false,
+      }),
+      expect.objectContaining({
+        externalIdentity: "github:release-bot[bot]",
+        role: "merger",
+        isBot: true,
+      }),
+    ]);
     expect(lineageProjector).toHaveBeenCalledWith(
       expect.objectContaining({
         db,
@@ -205,7 +237,7 @@ describe("changes/project-pull-request execute", () => {
       summary: { ...summary, area: null },
     });
 
-    expect(records).toHaveLength(3);
+    expect(records).toHaveLength(4);
     expect(insert).not.toHaveBeenCalledWith(productAreasTable);
     expect(insert).not.toHaveBeenCalledWith(changeAreasTable);
   });
