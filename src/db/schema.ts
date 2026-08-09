@@ -191,10 +191,15 @@ export const llmUsageTable = pgTable(
     model: text("model").notNull(),
     inputTokens: integer("input_tokens").notNull(),
     outputTokens: integer("output_tokens").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
-    repoCreatedAtIndex: index("llm_usage_repo_created_at_idx").on(table.repo, table.createdAt),
+    repoCreatedAtIndex: index("llm_usage_repo_created_at_idx").on(
+      table.repo,
+      table.createdAt,
+    ),
   }),
 );
 
@@ -235,8 +240,12 @@ export const teamsTable = pgTable(
     isPersonal: boolean("is_personal").default(false).notNull(),
     /** Member cap enforced on invites; provisional value until billing lands. */
     maxMembers: integer("max_members").default(25).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     slugUnique: unique("teams_slug_unique").on(table.slug),
@@ -254,7 +263,9 @@ export const teamMembersTable = pgTable(
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.teamId, table.userId] }),
@@ -273,12 +284,17 @@ export const teamInvitesTable = pgTable(
     email: text("email").notNull(),
     role: text("role").notNull(),
     token: text("token").notNull(),
-    invitedByUserId: uuid("invited_by_user_id").references(() => usersTable.id, {
-      onDelete: "set null",
-    }),
+    invitedByUserId: uuid("invited_by_user_id").references(
+      () => usersTable.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     tokenUnique: unique("team_invites_token_unique").on(table.token),
@@ -306,8 +322,12 @@ export const userSourceConnectionsTable = pgTable(
     externalAccountId: text("external_account_id"),
     /** Provider-side login/handle (e.g. GitHub login). */
     externalLogin: text("external_login"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.userId, table.provider] }),
@@ -345,11 +365,18 @@ export const workspacesTable = pgTable(
     repoFullName: text("repo_full_name"),
     /** Default branch from the source provider metadata (optional cache). */
     repoDefaultBranch: text("repo_default_branch"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
-    teamSlugUnique: unique("workspaces_team_id_slug_unique").on(table.teamId, table.slug),
+    teamSlugUnique: unique("workspaces_team_id_slug_unique").on(
+      table.teamId,
+      table.slug,
+    ),
     teamIdIdx: index("workspaces_team_id_idx").on(table.teamId),
     userIdIdx: index("workspaces_user_id_idx").on(table.userId),
     // One workspace per linked repo, globally per provider (webhook routing is repo-keyed).
@@ -367,7 +394,9 @@ export const workspaceSettingsTable = pgTable(
   "workspace_settings",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    workspaceId: uuid("workspace_id").references(() => workspacesTable.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => workspacesTable.id, {
+      onDelete: "cascade",
+    }),
     releaseInfoPlistPath: text("release_info_plist_path"),
     releaseVersionBranch: text("release_version_branch"),
     releaseMonitoredRepo: text("release_monitored_repo"),
@@ -393,8 +422,12 @@ export const workspaceSettingsTable = pgTable(
      * default branch (`workspaces.repo_default_branch`).
      */
     pushSummaryBranches: jsonb("push_summary_branches").$type<string[]>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     workspaceIdUniqueWhenSet: uniqueIndex("workspace_settings_workspace_id_key")
@@ -419,21 +452,29 @@ export const projectVersionsTable = pgTable(
     buildVersion: text("build_version"),
     title: text("title"),
     changelog: text("changelog"),
-    sections: jsonb("sections").$type<Array<{ label: string; items: string[] }>>(),
+    sections:
+      jsonb("sections").$type<Array<{ label: string; items: string[] }>>(),
     promptVersion: integer("prompt_version"),
     status: text("status").notNull(),
     strategy: text("strategy").notNull(),
     sourceRef: text("source_ref").notNull(),
     sourceUrl: text("source_url"),
-    sourceReleaseId: uuid("source_release_id").references(() => releasesTable.id, {
-      onDelete: "set null",
-    }),
+    sourceReleaseId: uuid("source_release_id").references(
+      () => releasesTable.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     previousVersionId: uuid("previous_version_id"),
     beforeSha: text("before_sha"),
     headSha: text("head_sha"),
     releasedAt: timestamp("released_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     workspaceSourceUnique: unique(
@@ -491,8 +532,12 @@ export const changesTable = pgTable(
     }).notNull(),
     promptVersion: integer("prompt_version"),
     correctedAt: timestamp("corrected_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     workspaceLastOccurredAtIdx: index(
@@ -515,6 +560,107 @@ export const changesTable = pgTable(
     occurrenceOrderCheck: check(
       "changes_occurrence_order_check",
       sql`${table.lastOccurredAt} >= ${table.firstOccurredAt}`,
+    ),
+  }),
+);
+
+/** Stable, workspace-owned identity for a feature or product-area evolution. */
+export const changeLineagesTable = pgTable(
+  "change_lineages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"),
+    source: text("source").notNull(),
+    confidence: integer("confidence"),
+    mergedIntoLineageId: uuid("merged_into_lineage_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceKeyUnique: unique("change_lineages_workspace_key_unique").on(
+      table.workspaceId,
+      table.key,
+    ),
+    workspaceStatusUpdatedIdx: index(
+      "change_lineages_workspace_status_updated_idx",
+    ).on(table.workspaceId, table.status, table.updatedAt),
+    mergedIntoLineageIdIdx: index(
+      "change_lineages_merged_into_lineage_id_idx",
+    ).on(table.mergedIntoLineageId),
+    mergedIntoLineageFk: foreignKey({
+      columns: [table.mergedIntoLineageId],
+      foreignColumns: [table.id],
+      name: "change_lineages_merged_into_lineage_id_fk",
+    }).onDelete("set null"),
+    statusCheck: check(
+      "change_lineages_status_check",
+      sql`${table.status} IN ('active', 'removed', 'merged')`,
+    ),
+    sourceCheck: check(
+      "change_lineages_source_check",
+      sql`${table.source} IN ('rule', 'ai', 'human')`,
+    ),
+    confidenceCheck: check(
+      "change_lineages_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+    mergedTargetCheck: check(
+      "change_lineages_merged_target_check",
+      sql`(${table.status} = 'merged' AND ${table.mergedIntoLineageId} IS NOT NULL) OR (${table.status} <> 'merged' AND ${table.mergedIntoLineageId} IS NULL)`,
+    ),
+  }),
+);
+
+/** Ordered, evidence-backed membership of canonical changes in a lineage. */
+export const changeLineageEntriesTable = pgTable(
+  "change_lineage_entries",
+  {
+    lineageId: uuid("lineage_id")
+      .notNull()
+      .references(() => changeLineagesTable.id, { onDelete: "cascade" }),
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    relationType: text("relation_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    source: text("source").notNull(),
+    confidence: integer("confidence"),
+    correctedAt: timestamp("corrected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.lineageId, table.changeId] }),
+    lineageTimelineIdx: index("change_lineage_entries_lineage_timeline_idx").on(
+      table.lineageId,
+      table.occurredAt,
+      table.changeId,
+    ),
+    changeIdIdx: index("change_lineage_entries_change_id_idx").on(
+      table.changeId,
+    ),
+    relationTypeCheck: check(
+      "change_lineage_entries_relation_type_check",
+      sql`${table.relationType} IN ('introduced', 'modified', 'fixed', 'removed', 'restored', 'other')`,
+    ),
+    sourceCheck: check(
+      "change_lineage_entries_source_check",
+      sql`${table.source} IN ('rule', 'ai', 'human')`,
+    ),
+    confidenceCheck: check(
+      "change_lineage_entries_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
     ),
   }),
 );
@@ -663,15 +809,20 @@ export const workspaceDestinationsTable = pgTable(
     secretCiphertext: text("secret_ciphertext"),
     /** Provider-side account id (e.g. Notion workspace id). */
     externalAccountId: text("external_account_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
-    workspaceTypeUnique: unique("workspace_destinations_workspace_id_type_unique").on(
+    workspaceTypeUnique: unique(
+      "workspace_destinations_workspace_id_type_unique",
+    ).on(table.workspaceId, table.type),
+    workspaceIdIdx: index("workspace_destinations_workspace_id_idx").on(
       table.workspaceId,
-      table.type,
     ),
-    workspaceIdIdx: index("workspace_destinations_workspace_id_idx").on(table.workspaceId),
   }),
 );
 

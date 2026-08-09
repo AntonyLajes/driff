@@ -6,6 +6,8 @@ import {
   changeAreasTable,
   changeContributorsTable,
   changeEvidenceTable,
+  changeLineageEntriesTable,
+  changeLineagesTable,
   changesTable,
   jobsTable,
   productAreasTable,
@@ -190,6 +192,47 @@ describe("db/schema tables", () => {
     expect(config.checks.length).toBe(1);
   });
 
+  it("should define indexed workspace lineages and ordered change entries", () => {
+    const lineageColumns = getTableColumns(changeLineagesTable);
+    const lineageConfig = getTableConfig(changeLineagesTable);
+    const entryColumns = getTableColumns(changeLineageEntriesTable);
+    const entryConfig = getTableConfig(changeLineageEntriesTable);
+
+    expect(lineageColumns.workspaceId).toBeDefined();
+    expect(lineageColumns.key).toBeDefined();
+    expect(lineageColumns.status).toBeDefined();
+    expect(lineageColumns.source).toBeDefined();
+    expect(lineageColumns.mergedIntoLineageId).toBeDefined();
+    expect(lineageConfig.foreignKeys.length).toBe(2);
+    expect(lineageConfig.uniqueConstraints.length).toBe(1);
+    expect(
+      lineageConfig.indexes.map((candidate) => candidate.config.name),
+    ).toEqual(
+      expect.arrayContaining([
+        "change_lineages_workspace_status_updated_idx",
+        "change_lineages_merged_into_lineage_id_idx",
+      ]),
+    );
+    expect(lineageConfig.checks.length).toBe(4);
+
+    expect(entryColumns.lineageId).toBeDefined();
+    expect(entryColumns.changeId).toBeDefined();
+    expect(entryColumns.relationType).toBeDefined();
+    expect(entryColumns.occurredAt).toBeDefined();
+    expect(entryColumns.source).toBeDefined();
+    expect(entryConfig.primaryKeys.length).toBe(1);
+    expect(entryConfig.foreignKeys.length).toBe(2);
+    expect(
+      entryConfig.indexes.map((candidate) => candidate.config.name),
+    ).toEqual(
+      expect.arrayContaining([
+        "change_lineage_entries_lineage_timeline_idx",
+        "change_lineage_entries_change_id_idx",
+      ]),
+    );
+    expect(entryConfig.checks.length).toBe(3);
+  });
+
   it("should define workspace-owned product areas and change assignments", () => {
     const areaColumns = getTableColumns(productAreasTable);
     const areaConfig = getTableConfig(productAreasTable);
@@ -239,6 +282,8 @@ describe("db/schema tables", () => {
     if (roleCheck === undefined) {
       throw new Error("Expected contributor role check constraint.");
     }
-    expect(new PgDialect().sqlToQuery(roleCheck.value).sql).toContain("'pusher'");
+    expect(new PgDialect().sqlToQuery(roleCheck.value).sql).toContain(
+      "'pusher'",
+    );
   });
 });
