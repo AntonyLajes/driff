@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 
 import type { PushProjector } from "@/changes/project-push.js";
 import type { Database } from "@/db/client.js";
-import { pushesTable } from "@/db/schema.js";
+import { pullRequestsTable, pushesTable } from "@/db/schema.js";
 import type { Destination } from "@/destinations/destination.js";
 import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { PushSummarizer } from "@/llm/push-summarizer.js";
@@ -95,6 +95,27 @@ export const execute = (input: ExecuteInput) => {
         )
         .limit(1);
       if (existing.length > 0) {
+        return;
+      }
+
+      // A commit returned by the repository history endpoint can be exactly the
+      // head commit of an already imported PR without GitHub exposing the PR
+      // number in the compare payload. Catch that case before fetching the diff
+      // or spending LLM tokens on a duplicate standalone-push summary.
+      const existingPullRequest = await input.db
+        .select({ id: pullRequestsTable.id })
+        .from(pullRequestsTable)
+        .where(
+          and(
+            eq(pullRequestsTable.repo, job.repo),
+            eq(pullRequestsTable.headSha, job.afterSha),
+          ),
+        )
+        .limit(1);
+      if (existingPullRequest.length > 0) {
+        console.log(
+          `[process_push] skipped ${job.repo}@${job.afterSha.slice(0, 7)} (stored PR head)`,
+        );
         return;
       }
 

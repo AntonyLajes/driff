@@ -32,12 +32,13 @@ const buildContext = (overrides: Partial<PushContext> = {}): PushContext => ({
 });
 
 const buildDbMock = (
-  existingRows: Array<{ id: string }> = [],
+  selectResults: Array<Array<{ id: string }>> = [[], []],
   returnedRows: Array<{ id: string }> = [
     { id: "11111111-1111-4111-8111-111111111111" },
   ],
 ) => {
-  const limit = vi.fn(async () => existingRows);
+  let selectCall = 0;
+  const limit = vi.fn(async () => selectResults[selectCall++] ?? []);
   const where = vi.fn(() => ({ limit }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn(() => ({ from }));
@@ -159,13 +160,27 @@ describe("jobs/process-push execute", () => {
   });
 
   it("is idempotent: skips when a push row already exists for repo+afterSha", async () => {
-    const dbMock = buildDbMock([{ id: "existing" }]);
+    const dbMock = buildDbMock([[{ id: "existing" }]]);
     const deps = buildDeps(dbMock);
     const handler = execute(deps);
 
     await handler.execute(payload);
 
     expect(mockedGather).not.toHaveBeenCalled();
+    expect(deps.publishPush).not.toHaveBeenCalled();
+    expect(dbMock.insert).not.toHaveBeenCalled();
+    expect(deps.project).not.toHaveBeenCalled();
+  });
+
+  it("skips a commit that is already stored as a pull request head", async () => {
+    const dbMock = buildDbMock([[], [{ id: "existing-pr" }]]);
+    const deps = buildDeps(dbMock);
+    const handler = execute(deps);
+
+    await handler.execute(payload);
+
+    expect(mockedGather).not.toHaveBeenCalled();
+    expect(deps.summarizePush).not.toHaveBeenCalled();
     expect(deps.publishPush).not.toHaveBeenCalled();
     expect(dbMock.insert).not.toHaveBeenCalled();
     expect(deps.project).not.toHaveBeenCalled();
@@ -204,7 +219,7 @@ describe("jobs/process-push execute", () => {
 
   it("fails before projection when the legacy upsert returns no source id", async () => {
     mockedGather.mockResolvedValue(buildContext());
-    const dbMock = buildDbMock([], []);
+    const dbMock = buildDbMock([[], []], []);
     const deps = buildDeps(dbMock);
     const handler = execute(deps);
 
