@@ -1017,6 +1017,42 @@ describe("http/routes/workspaces-me", () => {
     expect(select).toHaveBeenCalledTimes(5);
   });
 
+  it("returns a version-only feed with null previews and missing count rows", async () => {
+    const releaseRow = {
+      id: "00000000-0000-4000-8000-000000000b13",
+      shortVersion: "2.0.0",
+      buildVersion: "20",
+      branch: null,
+      createdAt: new Date("2026-06-04T10:00:00.000Z"),
+      changelog: null,
+      notionPageId: "page-1",
+    };
+    const emptyCount = () => ({
+      from: vi.fn(() => ({ where: vi.fn(async () => []) })),
+    });
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(feedSelect([releaseRow]))
+      .mockImplementationOnce(emptyCount)
+      .mockImplementationOnce(emptyCount)
+      .mockImplementationOnce(emptyCount);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summaries?type=version&limit=invalid&q=%20%20",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      items: [{ type: "version", summaryPreview: null, delivered: true }],
+      counts: { all: 0, pr: 0, push: 0, version: 0 },
+    });
+  });
+
   it("returns an empty feed when the workspace has no linked repo", async () => {
     const select = vi
       .fn()
@@ -1106,6 +1142,29 @@ describe("http/routes/workspaces-me", () => {
     });
   });
 
+  it("defaults missing productivity aggregates to zero", async () => {
+    const aggregateSelect = () => ({
+      from: vi.fn(() => ({ where: vi.fn(async () => []) })),
+    });
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(aggregateSelect)
+      .mockImplementationOnce(aggregateSelect)
+      .mockImplementationOnce(aggregateSelect);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/stats",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().stats).toMatchObject({ summaries: 0, weekDeltas: { summaries: 0 } });
+  });
+
   it("returns zeroed stats when the workspace has no linked repo", async () => {
     const select = vi
       .fn()
@@ -1188,6 +1247,68 @@ describe("http/routes/workspaces-me", () => {
         commitCount: null,
         shortVersion: null,
       },
+    });
+  });
+
+  it("returns push and version summary detail shapes", async () => {
+    const pushRow = {
+      id: "00000000-0000-4000-8000-000000000b31",
+      title: "Push to main",
+      branch: "main",
+      pusher: null,
+      pushedAt: new Date("2026-06-03T12:00:00.000Z"),
+      commitCount: 2,
+      compareUrl: null,
+      prNumbers: null,
+      summaryUserFacing: null,
+      summaryTechnical: null,
+      category: "chore",
+      area: null,
+      additions: null,
+      deletions: null,
+      changedFiles: null,
+      notionPageId: null,
+    };
+    const releaseRow = {
+      id: "00000000-0000-4000-8000-000000000b32",
+      shortVersion: "2.0.0",
+      buildVersion: "20",
+      branch: "main",
+      headSha: null,
+      createdAt: new Date("2026-06-04T12:00:00.000Z"),
+      prNumbers: null,
+      changelog: "Major release",
+      sections: undefined,
+      notionPageId: "page-1",
+    };
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(detailSelect([pushRow]))
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(detailSelect([releaseRow]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const push = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/summaries/push/${pushRow.id}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    const version = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/summaries/version/${releaseRow.id}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    expect(push.statusCode).toBe(200);
+    expect(push.json().summary).toMatchObject({ type: "push", commitCount: 2, delivered: false });
+    expect(version.statusCode).toBe(200);
+    expect(version.json().summary).toMatchObject({
+      type: "version",
+      title: "Version 2.0.0 (20)",
+      sections: null,
+      delivered: true,
     });
   });
 
@@ -1569,6 +1690,47 @@ describe("http/routes/workspaces-me", () => {
     );
   });
 
+  it("creates partial settings with safe defaults for every omitted field", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([]))
+      .mockImplementationOnce(lookupSelect([]));
+    const values = vi.fn(async () => undefined);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: { select, insert: vi.fn(() => ({ values })) } as never,
+      jwtSecret,
+    });
+    await server.ready();
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { pushSummaryBranches: null },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pushSummaryBranches: null,
+        prSummaryBaseBranches: null,
+        releaseProjectKind: null,
+        releaseVersionFilePath: null,
+        releaseVersionBranch: null,
+      }),
+    );
+    expect(response.json()).toEqual({
+      settings: {
+        pushSummaryBranches: null,
+        prSummaryBaseBranches: null,
+        releaseProjectKind: null,
+        releaseVersionFilePath: null,
+        releaseVersionBranch: null,
+      },
+    });
+  });
+
   it("browses the linked repository with directories first", async () => {
     vi.mocked(loadUserGithubAccessToken).mockResolvedValue("github-token");
     reposGetContentMock.mockResolvedValue({
@@ -1789,6 +1951,139 @@ describe("http/routes/workspaces-me", () => {
     const response = await injectProjectRoute({ method: "PATCH", suffix: "/settings", payload });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "invalid_body" });
+  });
+
+  it("rejects an unsupported project kind during creation", async () => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "owner/repo", workspaceKind: "unknown" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_workspace_kind" });
+  });
+
+  it.each([
+    [Object.assign(new Error("conflict"), { code: "23505", constraint_name: "other_unique" }), 409, "workspace_conflict"],
+    [new Error("database down"), 500, "internal_error"],
+  ] as const)("maps workspace insertion failures", async (failure, status, error) => {
+    const returning = vi.fn(async () => Promise.reject(failure));
+    const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { insert } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "owner/repo" },
+    });
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toMatchObject({ error });
+  });
+
+  it("fails safely when an insert returns no workspace", async () => {
+    const returning = vi.fn(async () => []);
+    const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { insert } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "owner/repo", name: " " },
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ error: "insert_failed" });
+  });
+
+  it("stops after exhausting every workspace slug suffix", async () => {
+    const duplicate = Object.assign(new Error("slug collision"), {
+      code: "23505",
+      constraint_name: "workspaces_team_id_slug_unique",
+    });
+    const returning = vi.fn(async () => Promise.reject(duplicate));
+    const insert = vi.fn(() => ({ values: vi.fn(() => ({ returning })) }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { insert } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { repoFullName: "owner/repo" },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "workspace_slug_taken" });
+    expect(returning).toHaveBeenCalledTimes(25);
+  });
+
+  it.each([
+    ["not-a-uuid", { name: "Updated" }, "invalid_workspace_id"],
+    ["00000000-0000-4000-8000-0000000000aa", {}, "invalid_body"],
+  ] as const)("validates project update input", async (workspaceId, payload, error) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/workspaces/${workspaceId}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error });
+  });
+
+  it.each([
+    ["PATCH", { name: "Updated" }],
+    ["DELETE", undefined],
+  ] as const)("rejects an invalid team while mutating a project", async (method, payload) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url: "/api/me/workspaces/00000000-0000-4000-8000-0000000000aa",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": "invalid" },
+      payload,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_team" });
+  });
+
+  it.each([
+    ["PATCH", { name: "Updated" }],
+    ["DELETE", undefined],
+  ] as const)("rejects a non-member while mutating a project", async (method, payload) => {
+    const select = vi.fn(() => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn(async () => []) })) })),
+      })),
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url: "/api/me/workspaces/00000000-0000-4000-8000-0000000000aa",
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+      payload,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "not_a_team_member" });
   });
 
   const protectedWorkspaceRoutes = [
