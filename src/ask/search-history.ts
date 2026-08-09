@@ -1,5 +1,9 @@
 import type { Database } from "@/db/client.js";
 import {
+  buildSearchChunks,
+  scoreSearchChunks,
+} from "@/ask/sparse-search-index.js";
+import {
   execute as readTimeline,
   type ExecuteInput as ReadTimelineInput,
 } from "@/timeline/read-timeline.js";
@@ -286,41 +290,21 @@ const loadHistory = async (input: ExecuteInput) => {
 };
 
 const scoreChange = (change: TimelineChange, terms: string[]): number => {
-  const fields = [
-    { value: change.title, weight: 5 },
-    { value: change.summaryExecutive ?? "", weight: 4 },
-    { value: change.summaryTechnical ?? "", weight: 2 },
-    { value: change.category, weight: 4 },
-    { value: change.areas.map((area) => area.name).join(" "), weight: 4 },
-    {
-      value: change.contributors
-        .map(
-          (contributor) =>
-            contributor.displayName ?? contributor.externalIdentity,
-        )
-        .join(" "),
-      weight: 8,
-    },
-    {
-      value: change.evidence
-        .map(
-          (item) =>
-            `${item.externalId ?? ""} ${item.path ?? ""} ${item.sourceKey}`,
-        )
-        .join(" "),
-      weight: 5,
-    },
-  ];
-  return terms.reduce(
-    (total, term) =>
-      total +
-      fields.reduce(
-        (score, field) =>
-          normalize(field.value).includes(term) ? score + field.weight : score,
-        0,
-      ),
-    0,
-  );
+  const chunks = buildSearchChunks({
+    title: change.title,
+    summaryExecutive: change.summaryExecutive,
+    summaryTechnical: change.summaryTechnical,
+    category: change.category,
+    areas: change.areas.map((area) => area.name),
+    contributors: change.contributors.map(
+      (contributor) =>
+        contributor.displayName ?? contributor.externalIdentity,
+    ),
+    evidence: change.evidence.map(
+      (item) => `${item.externalId ?? ""} ${item.path ?? ""} ${item.sourceKey}`,
+    ),
+  });
+  return scoreSearchChunks(chunks, terms);
 };
 
 const noEvidence = (terms: string[], period: QueryPeriod | null = null) => ({

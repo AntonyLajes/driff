@@ -226,6 +226,26 @@ describe("ask/search-history execute", () => {
     );
   });
 
+  it("should recover a cited change when the query contains a small typo", async () => {
+    const buttonChange = change("16", "Improve button feedback on Home");
+    const unrelated = change("15", "Estimate fuel stops on ride cards");
+    const timelineReader = vi.fn(async () =>
+      page([], [unrelated, buttonChange]),
+    );
+
+    const result = await execute({
+      db: {} as never,
+      workspaceId: WORKSPACE_ID,
+      question: "buton",
+      timelineReader,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.confidence).toBe("low");
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.change.id).toBe("16");
+  });
+
   it("should refuse to answer when matching history has no linked evidence", async () => {
     const timelineReader = vi.fn(async () =>
       page([], [change("17", "Improve checkout button", null)]),
