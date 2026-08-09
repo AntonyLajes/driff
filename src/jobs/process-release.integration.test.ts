@@ -5,7 +5,9 @@ const gatherMock = vi.hoisted(() =>
 );
 
 const resolveCompareMock = vi.hoisted(() =>
-  vi.fn(async (inp: { webhookBeforeSha: string }) => inp.webhookBeforeSha.trim()),
+  vi.fn(async (inp: { webhookBeforeSha: string }) =>
+    inp.webhookBeforeSha.trim(),
+  ),
 );
 
 vi.mock("@/sources/github/gather-release-context.js", () => ({
@@ -58,8 +60,8 @@ describe("jobs/process-release integration", () => {
   beforeEach(() => {
     gatherMock.mockReset();
     resolveCompareMock.mockReset();
-    resolveCompareMock.mockImplementation(async (inp: { webhookBeforeSha: string }) =>
-      inp.webhookBeforeSha.trim(),
+    resolveCompareMock.mockImplementation(
+      async (inp: { webhookBeforeSha: string }) => inp.webhookBeforeSha.trim(),
     );
   });
 
@@ -86,7 +88,11 @@ describe("jobs/process-release integration", () => {
       sections: [],
       usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
-    const project = vi.fn(async () => ({ versionId: "version-1", linkedChangeIds: [] }));
+    const project = vi.fn(async () => ({
+      versionId: "version-1",
+      linkedChangeIds: [],
+    }));
+    const historicalReleaseDate = "2026-07-01T12:00:00.000Z";
     const handler = execute({
       db,
       appId: "1",
@@ -108,6 +114,7 @@ describe("jobs/process-release integration", () => {
       beforeSha: "a".repeat(40),
       afterSha: "b".repeat(40),
       branch: "develop",
+      releasedAt: historicalReleaseDate,
     });
     expect(resolveCompareMock).toHaveBeenCalledOnce();
     expect(select).toHaveBeenCalledTimes(2);
@@ -126,6 +133,7 @@ describe("jobs/process-release integration", () => {
       expect.objectContaining({
         beforeSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         marketingEraStartSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        createdAt: new Date(historicalReleaseDate),
       }),
     );
     expect(project).toHaveBeenCalledWith(
@@ -157,7 +165,10 @@ describe("jobs/process-release integration", () => {
         { sha: "dead", message: "fix typo in label" },
         { sha: "beef", message: "Merge pull request #9 from org/feat" },
       ],
-      commitMessages: ["fix typo in label", "Merge pull request #9 from org/feat"],
+      commitMessages: [
+        "fix typo in label",
+        "Merge pull request #9 from org/feat",
+      ],
       prNumbers: [9],
       totalCommits: 2,
       compareUrl: "https://c",
@@ -222,7 +233,9 @@ describe("jobs/process-release integration", () => {
           title: "Welcome tweaks",
         },
       ],
-      standaloneCommitHints: [{ sha: "dead", messageLine: "fix typo in label" }],
+      standaloneCommitHints: [
+        { sha: "dead", messageLine: "fix typo in label" },
+      ],
     });
   });
 
@@ -232,7 +245,9 @@ describe("jobs/process-release integration", () => {
       afterVersion: { short: "1", build: "2" },
       previousVersionKey: "1+1",
       newVersionKey: "1+2",
-      compareCommits: [{ sha: "s1", message: "Merge pull request #9 from a/x" }],
+      compareCommits: [
+        { sha: "s1", message: "Merge pull request #9 from a/x" },
+      ],
       commitMessages: ["Merge pull request #9 from a/x"],
       prNumbers: [9, 9],
       totalCommits: 1,
@@ -301,7 +316,9 @@ describe("jobs/process-release integration", () => {
       ],
       standaloneCommitHints: [],
     });
-    expect(publishRelease).toHaveBeenCalledWith(expect.objectContaining({ prNumbers: [9] }));
+    expect(publishRelease).toHaveBeenCalledWith(
+      expect.objectContaining({ prNumbers: [9] }),
+    );
   });
 
   it("should skip LLM when release version already stored", async () => {
@@ -374,7 +391,11 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease: vi.fn(), publishPush: vi.fn() },
+      destination: {
+        publishPR: vi.fn(),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
     });
     await handler.execute({
       repo: "o/r",

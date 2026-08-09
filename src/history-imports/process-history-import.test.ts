@@ -17,6 +17,7 @@ const record = {
   processedItems: 0,
   failedItems: 0,
   completedPrNumbers: [1],
+  completedSourceKeys: ["pr:1"],
   failures: [],
   truncated: false,
   cancelRequested: false,
@@ -38,11 +39,23 @@ const repository = () =>
     markFailed: vi.fn(async () => undefined),
   }) as unknown as HistoryImportRepository;
 
+const emptyHistoryDependencies = () => ({
+  listRepositoryHistory: vi.fn(async () => ({
+    defaultBranch: "main",
+    releases: [],
+    commits: [],
+    truncated: false,
+  })),
+  processRelease: vi.fn(async () => undefined),
+  processPush: vi.fn(async () => undefined),
+});
+
 describe("history-imports/process-history-import", () => {
   it("should resume completed PRs and checkpoint each new item", async () => {
     const repo = repository();
     const processPullRequest = vi.fn(async () => undefined);
     const handler = execute({
+      ...emptyHistoryDependencies(),
       repository: repo,
       listMergedPullRequests: vi.fn(async () => ({
         pullRequests: [
@@ -67,7 +80,11 @@ describe("history-imports/process-history-import", () => {
       prNumber: 2,
     });
     expect(repo.updateProgress).toHaveBeenCalledWith(
-      expect.objectContaining({ completedPrNumbers: [1, 2], failures: [] }),
+      expect.objectContaining({
+        completedPrNumbers: [1, 2],
+        completedSourceKeys: ["pr:1", "pr:2"],
+        failures: [],
+      }),
     );
     expect(repo.markTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ status: "completed" }),
@@ -82,6 +99,7 @@ describe("history-imports/process-history-import", () => {
       },
     );
     const handler = execute({
+      ...emptyHistoryDependencies(),
       repository: repo,
       listMergedPullRequests: vi.fn(async () => ({
         pullRequests: [
@@ -102,7 +120,14 @@ describe("history-imports/process-history-import", () => {
     expect(repo.updateProgress).toHaveBeenLastCalledWith(
       expect.objectContaining({
         completedPrNumbers: [1, 3],
-        failures: [{ prNumber: 2, message: "rate limited" }],
+        failures: [
+          {
+            sourceKind: "pull_request",
+            sourceKey: "pr:2",
+            prNumber: 2,
+            message: "rate limited",
+          },
+        ],
       }),
     );
     expect(repo.markTerminal).toHaveBeenCalledWith(
@@ -115,6 +140,7 @@ describe("history-imports/process-history-import", () => {
     vi.mocked(repo.isCancellationRequested).mockResolvedValue(true);
     const processPullRequest = vi.fn(async () => undefined);
     const handler = execute({
+      ...emptyHistoryDependencies(),
       repository: repo,
       listMergedPullRequests: vi.fn(async () => ({
         pullRequests: [{ prNumber: 2, mergedAt: new Date() }],
@@ -138,6 +164,7 @@ describe("history-imports/process-history-import", () => {
   it("should persist discovery failures for a worker retry", async () => {
     const repo = repository();
     const handler = execute({
+      ...emptyHistoryDependencies(),
       repository: repo,
       listMergedPullRequests: vi.fn(async () => {
         throw new Error("GitHub unavailable");
@@ -160,6 +187,7 @@ describe("history-imports/process-history-import", () => {
   it("should reject invalid payloads and mismatched records", async () => {
     const repo = repository();
     const handler = execute({
+      ...emptyHistoryDependencies(),
       repository: repo,
       listMergedPullRequests: vi.fn(),
       processPullRequest: vi.fn(),
@@ -196,6 +224,7 @@ describe("history-imports/process-history-import", () => {
       vi.mocked(repo.findById).mockResolvedValue({ ...record, status });
       const listMergedPullRequests = vi.fn();
       const handler = execute({
+        ...emptyHistoryDependencies(),
         repository: repo,
         listMergedPullRequests,
         processPullRequest: vi.fn(),
@@ -215,6 +244,7 @@ describe("history-imports/process-history-import", () => {
   it("should normalize non-Error item failures", async () => {
     const repo = repository();
     const handler = execute({
+      ...emptyHistoryDependencies(),
       repository: repo,
       listMergedPullRequests: vi.fn(async () => ({
         pullRequests: [{ prNumber: 2, mergedAt: new Date() }],
@@ -233,7 +263,76 @@ describe("history-imports/process-history-import", () => {
 
     expect(repo.updateProgress).toHaveBeenCalledWith(
       expect.objectContaining({
-        failures: [{ prNumber: 2, message: "Unknown history import error." }],
+        failures: [
+          {
+            sourceKind: "pull_request",
+            sourceKey: "pr:2",
+            prNumber: 2,
+            message: "Unknown history import error.",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("should process PRs, version tags and commits in canonical order", async () => {
+    const repo = repository();
+    const processPullRequest = vi.fn(async () => undefined);
+    const processRelease = vi.fn(async () => undefined);
+    const processPush = vi.fn(async () => undefined);
+    const handler = execute({
+      repository: repo,
+      listMergedPullRequests: vi.fn(async () => ({
+        pullRequests: [
+          { prNumber: 9, mergedAt: new Date("2026-08-01T00:00:00.000Z") },
+        ],
+        truncated: false,
+      })),
+      listRepositoryHistory: vi.fn(async () => ({
+        defaultBranch: "main",
+        releases: [
+          {
+            sourceKey: "release:v1.0.0:c9",
+            tagName: "v1.0.0",
+            beforeSha: "c8",
+            afterSha: "c9",
+            releasedAt: new Date("2026-08-02T00:00:00.000Z"),
+          },
+        ],
+        commits: [
+          {
+            sourceKey: "commit:c9",
+            sha: "c9",
+            beforeSha: "c8",
+            committedAt: new Date("2026-08-02T00:00:00.000Z"),
+            pusher: "octocat",
+          },
+        ],
+        truncated: false,
+      })),
+      processPullRequest,
+      processRelease,
+      processPush,
+    });
+
+    await handler.execute({
+      importId: IMPORT_ID,
+      workspaceId: WORKSPACE_ID,
+      repo: "acme/mobile",
+    });
+
+    expect(processPullRequest.mock.invocationCallOrder[0]).toBeLessThan(
+      processRelease.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    expect(processRelease.mock.invocationCallOrder[0]).toBeLessThan(
+      processPush.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    expect(repo.markDiscovered).toHaveBeenCalledWith(
+      expect.objectContaining({ totalItems: 3 }),
+    );
+    expect(repo.updateProgress).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        completedSourceKeys: ["pr:1", "pr:9", "release:v1.0.0:c9", "commit:c9"],
       }),
     );
   });

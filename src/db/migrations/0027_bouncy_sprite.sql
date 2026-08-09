@@ -1,0 +1,1 @@
+ALTER TABLE "history_imports" ADD COLUMN "completed_source_keys" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -21,6 +21,7 @@ const historyImport = {
   processedItems: 0,
   failedItems: 0,
   completedPrNumbers: [],
+  completedSourceKeys: [],
   failures: [],
   truncated: false,
   cancelRequested: false,

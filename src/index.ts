@@ -23,6 +23,7 @@ import { buildEarlyAccessRegistrationInput } from "@/http/routes/early-access.js
 import { execute as createHistoryImportRepository } from "@/history-imports/history-import-repository.js";
 import { execute as createHistoryImportJob } from "@/history-imports/process-history-import.js";
 import { execute as createMergedPullRequestLister } from "@/history-imports/list-merged-pull-requests.js";
+import { execute as createRepositoryHistoryLister } from "@/history-imports/list-repository-history.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -424,8 +425,20 @@ const buildRuntimeDependencies = async (
           appId: env.GITHUB_APP_ID,
           privateKey: env.GITHUB_APP_PRIVATE_KEY,
         }).list,
+        listRepositoryHistory: createRepositoryHistoryLister({
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+        }).list,
         processPullRequest: async (payload) => {
           await processPrHandler.execute(payload);
+        },
+        processRelease: async (payload) => {
+          const workspace = await resolveWorkspaceOrThrow(payload.repo);
+          if (!hasReleaseVersionSource(workspace)) return;
+          await processReleaseHandler.execute(payload);
+        },
+        processPush: async (payload) => {
+          await processPushHandler.execute(payload);
         },
       });
 

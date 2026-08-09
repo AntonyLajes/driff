@@ -17,6 +17,7 @@ const row = {
   processedItems: 0,
   failedItems: 0,
   completedPrNumbers: [],
+  completedSourceKeys: [],
   failures: [],
   truncated: false,
   cancelRequested: false,
@@ -112,7 +113,15 @@ describe("history-imports/history-import-repository", () => {
     await repository.updateProgress({
       id: IMPORT_ID,
       completedPrNumbers: [1],
-      failures: [{ prNumber: 2, message: "failed" }],
+      completedSourceKeys: ["pr:1"],
+      failures: [
+        {
+          sourceKind: "pull_request",
+          sourceKey: "pr:2",
+          prNumber: 2,
+          message: "failed",
+        },
+      ],
       updatedAt: now,
     });
     await repository.markTerminal({

@@ -387,8 +387,11 @@ export const workspacesTable = pgTable(
 );
 
 export interface HistoryImportFailure {
-  prNumber: number;
+  sourceKind: "pull_request" | "release" | "commit";
+  sourceKey: string;
   message: string;
+  /** Kept while old clients still expose PR-specific progress. */
+  prNumber?: number;
 }
 
 /**
@@ -414,6 +417,10 @@ export const historyImportsTable = pgTable(
     failedItems: integer("failed_items").notNull().default(0),
     completedPrNumbers: jsonb("completed_pr_numbers")
       .$type<number[]>()
+      .notNull()
+      .default([]),
+    completedSourceKeys: jsonb("completed_source_keys")
+      .$type<string[]>()
       .notNull()
       .default([]),
     failures: jsonb("failures")

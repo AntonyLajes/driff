@@ -16,6 +16,7 @@ export interface ProcessReleaseJobPayload {
   beforeSha: string;
   afterSha: string;
   branch: string;
+  releasedAt: Date;
 }
 
 export interface ExecuteInput {
@@ -38,24 +39,47 @@ export interface ExecuteInput {
   };
 }
 
-const parsePayload = (payload: Record<string, unknown>): ProcessReleaseJobPayload => {
+const parsePayload = (
+  payload: Record<string, unknown>,
+): ProcessReleaseJobPayload => {
   const repo = payload.repo;
   const beforeSha = payload.beforeSha;
   const afterSha = payload.afterSha;
   const branch = payload.branch;
+  const releasedAt = payload.releasedAt;
   if (typeof repo !== "string" || repo.length === 0) {
-    throw new Error("Invalid process_release payload: repo must be a non-empty string.");
+    throw new Error(
+      "Invalid process_release payload: repo must be a non-empty string.",
+    );
   }
   if (typeof beforeSha !== "string" || beforeSha.length === 0) {
-    throw new Error("Invalid process_release payload: beforeSha must be a non-empty string.");
+    throw new Error(
+      "Invalid process_release payload: beforeSha must be a non-empty string.",
+    );
   }
   if (typeof afterSha !== "string" || afterSha.length === 0) {
-    throw new Error("Invalid process_release payload: afterSha must be a non-empty string.");
+    throw new Error(
+      "Invalid process_release payload: afterSha must be a non-empty string.",
+    );
   }
   if (typeof branch !== "string" || branch.length === 0) {
-    throw new Error("Invalid process_release payload: branch must be a non-empty string.");
+    throw new Error(
+      "Invalid process_release payload: branch must be a non-empty string.",
+    );
   }
-  return { repo, beforeSha, afterSha, branch };
+  let releasedAtValue = new Date();
+  if (typeof releasedAt === "string" && releasedAt.length > 0) {
+    const parsed = new Date(releasedAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      releasedAtValue = parsed;
+    }
+  } else if (
+    releasedAt instanceof Date &&
+    !Number.isNaN(releasedAt.getTime())
+  ) {
+    releasedAtValue = releasedAt;
+  }
+  return { repo, beforeSha, afterSha, branch, releasedAt: releasedAtValue };
 };
 
 const isNullSha = (sha: string): boolean => {
@@ -105,7 +129,10 @@ export const execute = (input: ExecuteInput) => {
       const webhookBeforeTrim = job.beforeSha.trim();
       const afterTrim = job.afterSha.trim();
       let effectiveCompareBefore = compareBeforeResolved.trim();
-      if (isNullSha(effectiveCompareBefore) || effectiveCompareBefore === afterTrim) {
+      if (
+        isNullSha(effectiveCompareBefore) ||
+        effectiveCompareBefore === afterTrim
+      ) {
         effectiveCompareBefore = webhookBeforeTrim;
       }
 
@@ -179,7 +206,9 @@ export const execute = (input: ExecuteInput) => {
         });
       }
 
-      const standaloneCommitHints = buildStandaloneHints(context.compareCommits);
+      const standaloneCommitHints = buildStandaloneHints(
+        context.compareCommits,
+      );
 
       const notes = await input.releaseSummarizer.summarizeRelease({
         context: summarizerContext,
@@ -220,7 +249,9 @@ export const execute = (input: ExecuteInput) => {
 
       const existingEraSha = priorEraRow[0]?.marketingEraStartSha?.trim();
       const marketingEraStartSha =
-        existingEraSha && existingEraSha.length > 0 ? existingEraSha : effectiveCompareBefore;
+        existingEraSha && existingEraSha.length > 0
+          ? existingEraSha
+          : effectiveCompareBefore;
 
       const releaseRows = await input.db
         .insert(releasesTable)
@@ -235,16 +266,20 @@ export const execute = (input: ExecuteInput) => {
           beforeSha: effectiveCompareBefore,
           prNumbers: releasePrNumbers,
           changelog: notes.changelog,
-          sections: { sections: notes.sections, title: notes.title } as unknown as Record<
-            string,
-            unknown
-          >,
+          sections: {
+            sections: notes.sections,
+            title: notes.title,
+          } as unknown as Record<string, unknown>,
           notionPageId: publish.pageId,
           promptVersion: input.promptVersion,
           marketingEraStartSha,
+          createdAt: job.releasedAt,
           updatedAt: new Date(),
         })
-        .returning({ id: releasesTable.id, createdAt: releasesTable.createdAt });
+        .returning({
+          id: releasesTable.id,
+          createdAt: releasesTable.createdAt,
+        });
 
       const releaseRow = releaseRows[0];
       if (releaseRow === undefined) {

@@ -22,6 +22,7 @@ export interface HistoryImportRecord {
   processedItems: number;
   failedItems: number;
   completedPrNumbers: number[];
+  completedSourceKeys: string[];
   failures: HistoryImportFailure[];
   truncated: boolean;
   cancelRequested: boolean;
@@ -43,6 +44,7 @@ const recordSelection = {
   processedItems: historyImportsTable.processedItems,
   failedItems: historyImportsTable.failedItems,
   completedPrNumbers: historyImportsTable.completedPrNumbers,
+  completedSourceKeys: historyImportsTable.completedSourceKeys,
   failures: historyImportsTable.failures,
   truncated: historyImportsTable.truncated,
   cancelRequested: historyImportsTable.cancelRequested,
@@ -146,6 +148,7 @@ export const execute = ({ db }: ExecuteInput) => ({
   updateProgress: async (input: {
     id: string;
     completedPrNumbers: number[];
+    completedSourceKeys: string[];
     failures: HistoryImportFailure[];
     updatedAt: Date;
   }): Promise<void> => {
@@ -153,8 +156,10 @@ export const execute = ({ db }: ExecuteInput) => ({
       .update(historyImportsTable)
       .set({
         completedPrNumbers: input.completedPrNumbers,
+        completedSourceKeys: input.completedSourceKeys,
         failures: input.failures,
-        processedItems: input.completedPrNumbers.length + input.failures.length,
+        processedItems:
+          input.completedSourceKeys.length + input.failures.length,
         failedItems: input.failures.length,
         updatedAt: input.updatedAt,
       })
