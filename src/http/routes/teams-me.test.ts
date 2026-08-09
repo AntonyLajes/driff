@@ -590,9 +590,17 @@ describe("http/routes/teams-me", () => {
     });
   });
 
-  const targetMemberSelect = (role: string) => () => ({
+  const targetMemberSelect = (
+    role: string,
+    name: string | null = "Teammate",
+    email = "teammate@example.com",
+  ) => () => ({
     from: vi.fn(() => ({
-      where: vi.fn(() => ({ limit: vi.fn(async () => [{ role }]) })),
+      innerJoin: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [{ role, name, email }]),
+        })),
+      })),
     })),
   });
 
@@ -1040,7 +1048,9 @@ describe("http/routes/teams-me", () => {
       .mockImplementationOnce(membershipSelect("owner"))
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
-          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          innerJoin: vi.fn(() => ({
+            where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          })),
         })),
       }));
     const server = fastify({ logger: false });
@@ -1390,7 +1400,9 @@ describe("http/routes/teams-me", () => {
       .mockImplementationOnce(membershipSelect("owner"))
       .mockImplementationOnce(() => ({
         from: vi.fn(() => ({
-          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          innerJoin: vi.fn(() => ({
+            where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          })),
         })),
       }));
     const server = await startTeams({ select, update: vi.fn() });

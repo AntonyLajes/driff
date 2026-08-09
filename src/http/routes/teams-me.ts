@@ -668,8 +668,13 @@ export const handler = async (
 
   const loadMembership = async (teamId: string, targetUserId: string) => {
     const rows = await input.db
-      .select({ role: teamMembersTable.role })
+      .select({
+        role: teamMembersTable.role,
+        name: usersTable.name,
+        email: usersTable.email,
+      })
       .from(teamMembersTable)
+      .innerJoin(usersTable, eq(usersTable.id, teamMembersTable.userId))
       .where(
         and(
           eq(teamMembersTable.teamId, teamId),
@@ -729,9 +734,10 @@ export const handler = async (
         teamId,
         actorUserId: session.userId,
         action: "member_role_changed",
-        targetType: "member",
-        targetId,
-        metadata: { fromRole: target.role, toRole: parsed.data.role },
+      targetType: "member",
+      targetId,
+      targetLabel: target.name ?? target.email,
+      metadata: { fromRole: target.role, toRole: parsed.data.role },
       });
       return reply.send({ userId: targetId, role: parsed.data.role });
     },
@@ -782,9 +788,10 @@ export const handler = async (
         teamId,
         actorUserId: session.userId,
         action: "member_removed",
-        targetType: "member",
-        targetId,
-        metadata: { role: target.role },
+      targetType: "member",
+      targetId,
+      targetLabel: target.name ?? target.email,
+      metadata: { role: target.role },
       });
       return reply.status(204).send();
     },
