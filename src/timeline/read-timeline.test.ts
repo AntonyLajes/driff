@@ -240,6 +240,33 @@ describe("timeline/read-timeline execute", () => {
     expect(db.select).toHaveBeenCalledTimes(2);
   });
 
+  it("should bound large in-development histories and report more results", async () => {
+    const openChanges = Array.from({ length: 51 }, (_, index) =>
+      change(
+        `change-${String(index).padStart(2, "0")}`,
+        null,
+        `2026-08-${String((index % 9) + 1).padStart(2, "0")}T11:00:00.000Z`,
+      ),
+    );
+    const db = buildDb([
+      pagedQuery([]).query,
+      pagedQuery(openChanges).query,
+      whereQuery([]),
+      joinedWhereQuery([]),
+      orderedQuery([]),
+      joinedWhereQuery([]),
+    ]);
+
+    const result = await execute({
+      db: db.db,
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+    });
+
+    expect(result.inDevelopment?.changes).toHaveLength(50);
+    expect(result.inDevelopment?.hasMore).toBe(true);
+    expect(db.select).toHaveBeenCalledTimes(6);
+  });
+
   it("should load one version detail without querying in-development changes", async () => {
     const versionRow = version("version-2", "2026-08-08T12:00:00.000Z");
     const releasedChange = change(
