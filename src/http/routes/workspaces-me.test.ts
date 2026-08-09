@@ -362,6 +362,7 @@ describe("http/routes/workspaces-me", () => {
       releaseProjectKind: "react_native_expo",
       releaseVersionFilePath: "app.json",
       releaseVersionBranch: "main",
+      summaryLanguage: "pt-BR",
       pushSummaryBranches: null,
     };
 
@@ -1685,6 +1686,7 @@ describe("http/routes/workspaces-me", () => {
         ...settingsRow,
         historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
         historyExcludedActors: [],
+        summaryLanguage: "auto",
       },
     });
   });
@@ -1714,6 +1716,7 @@ describe("http/routes/workspaces-me", () => {
         releaseVersionBranch: null,
         historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
         historyExcludedActors: [],
+        summaryLanguage: "auto",
       },
     });
   });
@@ -1890,6 +1893,7 @@ describe("http/routes/workspaces-me", () => {
       releaseProjectKind: "react_native_expo",
       releaseVersionFilePath: "app.json",
       releaseVersionBranch: "main",
+      summaryLanguage: "pt-BR",
     };
     const select = vi
       .fn()
@@ -1918,6 +1922,7 @@ describe("http/routes/workspaces-me", () => {
         releaseProjectKind: "react_native_expo",
         releaseVersionFilePath: " app.json ",
         releaseVersionBranch: " main ",
+        summaryLanguage: "pt-BR",
       },
     });
 
@@ -1935,6 +1940,7 @@ describe("http/routes/workspaces-me", () => {
         releaseVersionFilePath: "app.json",
         releaseExpoAppConfigPath: "app.json",
         releaseVersionBranch: "main",
+        summaryLanguage: "pt-BR",
       }),
     );
   });
@@ -1985,6 +1991,7 @@ describe("http/routes/workspaces-me", () => {
         releaseVersionBranch: null,
         historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
         historyExcludedActors: [],
+        summaryLanguage: "auto",
       }),
     );
   });
@@ -2017,6 +2024,7 @@ describe("http/routes/workspaces-me", () => {
         releaseProjectKind: null,
         releaseVersionFilePath: null,
         releaseVersionBranch: null,
+        summaryLanguage: "auto",
       }),
     );
     expect(response.json()).toEqual({
@@ -2028,8 +2036,27 @@ describe("http/routes/workspaces-me", () => {
         releaseVersionBranch: null,
         historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
         historyExcludedActors: [],
+        summaryLanguage: "auto",
       },
     });
+  });
+
+  it("rejects an unsupported summary language", async () => {
+    const select = vi.fn().mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { summaryLanguage: "fr" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_body" });
   });
 
   it("browses the linked repository with directories first", async () => {

@@ -1,4 +1,5 @@
 import type { PullRequestProjector } from "@/changes/project-pull-request.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
 import { and, eq } from "drizzle-orm";
 import type { Destination } from "@/destinations/destination.js";
 import { publishBestEffort } from "@/destinations/optional-destination.js";
@@ -33,6 +34,7 @@ export interface ExecuteInput {
     excludedActors: readonly string[];
   };
   promptVersion: number;
+  summaryLanguage?: SummaryLanguage;
 }
 
 const parsePayload = (payload: Record<string, unknown>): ProcessPrJobPayload => {
@@ -88,7 +90,10 @@ export const execute = (input: ExecuteInput) => {
         files,
         diff: filterHistoryDiff(fetchedPullRequest.diff, excludedPaths),
       };
-      const summary = await input.summarizer.summarizePR({ pullRequest });
+      const summary = await input.summarizer.summarizePR({
+        pullRequest,
+        language: input.summaryLanguage ?? "auto",
+      });
       const publishResult = await publishBestEffort("publishPR", () =>
         input.destination.publishPR({
           repo: pullRequest.repo,

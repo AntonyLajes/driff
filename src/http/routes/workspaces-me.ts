@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { DEFAULT_HISTORY_EXCLUDED_PATHS } from "@/config/history-content-filter.js";
+import { summaryLanguageSchema } from "@/config/summary-language.js";
 import {
   applyReleaseKindAndFilePath,
   isSupportedReleaseProjectKind,
@@ -119,6 +120,7 @@ const patchWorkspaceSettingsBodySchema = z
     historyExcludedActors: z
       .union([z.array(z.string().min(1).max(255)).max(100), z.null()])
       .optional(),
+    summaryLanguage: summaryLanguageSchema.optional(),
   })
   .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" })
   .superRefine((body, ctx) => {
@@ -1426,6 +1428,7 @@ export const handler = async (
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
         historyExcludedPaths: workspaceSettingsTable.historyExcludedPaths,
         historyExcludedActors: workspaceSettingsTable.historyExcludedActors,
+        summaryLanguage: workspaceSettingsTable.summaryLanguage,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -1441,6 +1444,7 @@ export const handler = async (
         historyExcludedPaths:
           row?.historyExcludedPaths ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS],
         historyExcludedActors: row?.historyExcludedActors ?? [],
+        summaryLanguage: row?.summaryLanguage ?? "auto",
       },
     });
   });
@@ -2000,6 +2004,9 @@ export const handler = async (
           ...(nextHistoryExcludedActors !== undefined
             ? { historyExcludedActors: nextHistoryExcludedActors }
             : {}),
+          ...(patch.summaryLanguage !== undefined
+            ? { summaryLanguage: patch.summaryLanguage }
+            : {}),
           ...releasePatch,
           updatedAt: now,
         })
@@ -2015,6 +2022,7 @@ export const handler = async (
             : nextHistoryExcludedPaths,
         historyExcludedActors:
           nextHistoryExcludedActors === undefined ? [] : nextHistoryExcludedActors,
+        summaryLanguage: patch.summaryLanguage ?? "auto",
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
         releaseVersionFilePath:
@@ -2047,6 +2055,7 @@ export const handler = async (
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
         historyExcludedPaths: workspaceSettingsTable.historyExcludedPaths,
         historyExcludedActors: workspaceSettingsTable.historyExcludedActors,
+        summaryLanguage: workspaceSettingsTable.summaryLanguage,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -2062,6 +2071,7 @@ export const handler = async (
         historyExcludedPaths:
           row?.historyExcludedPaths ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS],
         historyExcludedActors: row?.historyExcludedActors ?? [],
+        summaryLanguage: row?.summaryLanguage ?? "auto",
       },
     });
   });

@@ -12,6 +12,10 @@ import {
   cleanHistoryFilterValues,
   DEFAULT_HISTORY_EXCLUDED_PATHS,
 } from "@/config/history-content-filter.js";
+import {
+  execute as parseSummaryLanguage,
+  type SummaryLanguage,
+} from "@/config/summary-language.js";
 
 export interface MergedWorkspaceSettings {
   /** Id of the workspace this config belongs to (used to load output destinations). */
@@ -20,6 +24,7 @@ export interface MergedWorkspaceSettings {
   pushSummaryBranches: string[] | null;
   historyExcludedPaths: string[];
   historyExcludedActors: string[];
+  summaryLanguage: SummaryLanguage;
   /** Repo default branch from the linked workspace; used as push-summary branch fallback. */
   repoDefaultBranch: string | null;
   releaseInfoPlistPath: string | null;
@@ -56,6 +61,7 @@ const emptyMergedSettings = (workspaceId: string): MergedWorkspaceSettings => ({
   pushSummaryBranches: null,
   historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
   historyExcludedActors: [],
+  summaryLanguage: "auto",
   repoDefaultBranch: null,
   releaseInfoPlistPath: null,
   releaseVersionBranch: null,
@@ -136,6 +142,7 @@ export const mergeWorkspaceSettingsRow = (
   const historyExcludedPaths =
     cleanHistoryFilterValues(row.historyExcludedPaths) ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS];
   const historyExcludedActors = cleanHistoryFilterValues(row.historyExcludedActors) ?? [];
+  const summaryLanguage = parseSummaryLanguage(row.summaryLanguage);
 
   return {
     workspaceId: row.workspaceId ?? "",
@@ -143,6 +150,7 @@ export const mergeWorkspaceSettingsRow = (
     pushSummaryBranches,
     historyExcludedPaths,
     historyExcludedActors,
+    summaryLanguage,
     repoDefaultBranch: null,
     releaseInfoPlistPath,
     releaseVersionBranch,

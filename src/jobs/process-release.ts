@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { ReleaseProjector } from "@/changes/project-release.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
 import type { Destination } from "@/destinations/destination.js";
 import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { Database } from "@/db/client.js";
@@ -34,6 +35,7 @@ export interface ExecuteInput {
   releaseProjectKind?: ReleaseProjectKind | null;
   releaseVersionFilePath?: string | null;
   promptVersion: number;
+  summaryLanguage?: SummaryLanguage;
   releaseCompareRootSha: string | null;
   canonicalProjection?: {
     projector: ReleaseProjector;
@@ -235,6 +237,7 @@ export const execute = (input: ExecuteInput) => {
         branch: job.branch,
         prContributions,
         standaloneCommitHints,
+        language: input.summaryLanguage ?? "auto",
       });
       const publish = await publishBestEffort("publishRelease", () =>
         input.destination.publishRelease({

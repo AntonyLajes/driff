@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { PushProjector } from "@/changes/project-push.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, pushesTable } from "@/db/schema.js";
 import type { Destination } from "@/destinations/destination.js";
@@ -41,6 +42,7 @@ export interface ExecuteInput {
     excludedActors: readonly string[];
   };
   promptVersion: number;
+  summaryLanguage?: SummaryLanguage;
 }
 
 const parsePayload = (
@@ -195,6 +197,7 @@ export const execute = (input: ExecuteInput) => {
         context,
         repo: job.repo,
         branch: job.branch,
+        language: input.summaryLanguage ?? "auto",
       });
 
       const publish = await publishBestEffort("publishPush", () =>

@@ -19,6 +19,7 @@ import {
   usersTable,
   webhookEventsTable,
   workspaceDestinationsTable,
+  workspaceSettingsTable,
   workspacesTable,
 } from "@/db/schema.js";
 
@@ -112,6 +113,14 @@ describe("db/schema tables", () => {
         "summary_corrections_workspace_created_at_idx",
       ]),
     );
+  });
+
+  it("should store the generated-summary language per workspace", () => {
+    const columns = getTableColumns(workspaceSettingsTable);
+
+    expect(columns.summaryLanguage).toBeDefined();
+    expect(columns.summaryLanguage.notNull).toBe(true);
+    expect(columns.summaryLanguage.default).toBeDefined();
   });
 
   it("should define user_source_connections for per-provider OAuth tokens", () => {

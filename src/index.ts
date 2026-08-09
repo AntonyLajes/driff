@@ -356,6 +356,7 @@ const buildRuntimeDependencies = async (
             excludedActors: workspace.historyExcludedActors,
           },
           promptVersion: input.promptVersion ?? 1,
+          summaryLanguage: workspace.summaryLanguage,
         });
         await handler.execute(payload);
       },
@@ -392,6 +393,7 @@ const buildRuntimeDependencies = async (
             excludedPaths: workspace.historyExcludedPaths,
           },
           promptVersion: input.releasePromptVersion ?? 1,
+          summaryLanguage: workspace.summaryLanguage,
         });
         await handler.execute(payload);
       },
@@ -423,6 +425,7 @@ const buildRuntimeDependencies = async (
             excludedActors: workspace.historyExcludedActors,
           },
           promptVersion: input.pushPromptVersion ?? 1,
+          summaryLanguage: workspace.summaryLanguage,
         });
         await handler.execute(payload);
       },

@@ -537,6 +537,8 @@ export const workspaceSettingsTable = pgTable(
     historyExcludedPaths: jsonb("history_excluded_paths").$type<string[]>(),
     /** GitHub actor logins omitted before history is summarized. */
     historyExcludedActors: jsonb("history_excluded_actors").$type<string[]>(),
+    /** Output language for generated summaries: auto, en, or pt-BR. */
+    summaryLanguage: text("summary_language").default("auto").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

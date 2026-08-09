@@ -40,11 +40,20 @@ describe("llm/release-summarizer execute", () => {
         messages: { create },
       }),
     });
-    const result = await summarizer.summarizeRelease(baseSummarizeInput);
+    const result = await summarizer.summarizeRelease({
+      ...baseSummarizeInput,
+      language: "pt-BR",
+    });
     expect(result.title).toBe("1.0.1 (2)");
     expect(result.changelog).toContain("Bug fixes");
     expect(result.sections[0]?.label).toBe("Fixed");
     expect(create).toHaveBeenCalledOnce();
+    const calls = create.mock.calls as unknown as Array<
+      [{ messages: Array<{ content: string }> }]
+    >;
+    expect(calls[0]?.[0]?.messages[0]?.content).toContain(
+      '"outputLanguage": "pt-BR"',
+    );
   });
 
   it("should retry once when first response is not valid JSON", async () => {

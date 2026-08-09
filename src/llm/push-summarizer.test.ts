@@ -39,13 +39,19 @@ describe("llm/push-summarizer", () => {
       anthropicClientFactory: () => ({ messages: { create } }),
     });
 
-    const result = await summarizer.summarizePush({ context, repo: "acme/app", branch: "main" });
+    const result = await summarizer.summarizePush({
+      context,
+      repo: "acme/app",
+      branch: "main",
+      language: "pt-BR",
+    });
 
     expect(result.category).toBe("bugfix");
     expect(result.title).toBe("Hotfix login crash");
     expect(create).toHaveBeenCalledOnce();
     const calls = create.mock.calls as unknown as Array<[{ messages: Array<{ content: string }> }]>;
     expect(calls[0]?.[0]?.messages[0]?.content).toContain("acme/app");
+    expect(calls[0]?.[0]?.messages[0]?.content).toContain('"outputLanguage": "pt-BR"');
   });
 
   it("throws after retries when the response has no JSON object", async () => {
