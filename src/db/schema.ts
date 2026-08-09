@@ -31,6 +31,10 @@ export const webhookEventsTable = pgTable(
     deliveryIdUnique: unique("webhook_events_delivery_id_unique").on(
       table.deliveryId,
     ),
+    repoReceivedAtIndex: index("webhook_events_repo_received_at_idx").on(
+      sql`(${table.payload} -> 'repository' ->> 'full_name')`,
+      table.receivedAt.desc(),
+    ),
   }),
 );
 

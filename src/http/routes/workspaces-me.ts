@@ -24,6 +24,7 @@ import {
   releasesTable,
   summaryCorrectionsTable,
   usersTable,
+  webhookEventsTable,
   workspaceDestinationsTable,
   workspaceSettingsTable,
   workspacesTable,
@@ -232,6 +233,10 @@ const buildWorkspaceDiagnostics = (input: {
   repoFullName: string | null;
   repoDefaultBranch: string | null;
   hasEnabledDestination: boolean;
+  latestWebhook?: {
+    eventType: string;
+    receivedAt: Date;
+  } | null;
   settings:
     | {
         pushSummaryBranches?: string[] | null;
@@ -246,6 +251,7 @@ const buildWorkspaceDiagnostics = (input: {
   const defaultBranch = input.repoDefaultBranch?.trim() || "main";
   const settings = input.settings;
   const destinationConnected = input.hasEnabledDestination;
+  const webhookReceived = input.latestWebhook !== null && input.latestWebhook !== undefined;
 
   const releaseStrategy = settings?.releaseVersionStrategy ?? "version_file";
   const releaseKind = settings?.releaseProjectKind?.trim() ?? "";
@@ -272,6 +278,13 @@ const buildWorkspaceDiagnostics = (input: {
       code: "destination_not_connected",
       severity: "error",
       message: "Connect an output destination (e.g. Notion) to publish summaries.",
+    });
+  }
+  if (repo.length > 0 && !webhookReceived) {
+    issues.push({
+      code: "github_webhook_not_received",
+      severity: "warning",
+      message: "Waiting for the first GitHub event for this repository.",
     });
   }
   if (releaseStrategy === "version_file" && releaseSourceConfigured && !releaseBranch) {
@@ -307,6 +320,7 @@ const buildWorkspaceDiagnostics = (input: {
     checks: {
       repoLinked: repo.length > 0,
       destinationConnected,
+      webhookReceived,
       prSummaryReady,
       releaseSummaryReady,
       pushSummaryReady,
@@ -315,6 +329,11 @@ const buildWorkspaceDiagnostics = (input: {
       prBaseBranches: [defaultBranch],
       releaseBranch: defaultBranch,
       pushBranches: [defaultBranch],
+    },
+    webhook: {
+      received: webhookReceived,
+      lastReceivedAt: input.latestWebhook?.receivedAt.toISOString() ?? null,
+      eventType: input.latestWebhook?.eventType ?? null,
     },
     issues,
   };
@@ -332,6 +351,26 @@ const hasEnabledDestination = async (db: Database, workspaceId: string): Promise
     )
     .limit(1);
   return rows.length > 0;
+};
+
+const findLatestWebhookForRepo = async (
+  db: Database,
+  repoFullName: string | null,
+): Promise<{ eventType: string; receivedAt: Date } | null> => {
+  const repo = repoFullName?.trim();
+  if (!repo) return null;
+  const rows = await db
+    .select({
+      eventType: webhookEventsTable.eventType,
+      receivedAt: webhookEventsTable.receivedAt,
+    })
+    .from(webhookEventsTable)
+    .where(
+      sql`${webhookEventsTable.payload} -> 'repository' ->> 'full_name' = ${repo}`,
+    )
+    .orderBy(desc(webhookEventsTable.receivedAt))
+    .limit(1);
+  return rows[0] ?? null;
 };
 
 export const handler = async (
@@ -1626,10 +1665,15 @@ export const handler = async (
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
       .limit(1);
+    const [destinationConnected, latestWebhook] = await Promise.all([
+      hasEnabledDestination(input.db, wsId),
+      findLatestWebhookForRepo(input.db, loaded.workspace.repoFullName),
+    ]);
     const diagnostics = buildWorkspaceDiagnostics({
       repoFullName: loaded.workspace.repoFullName,
       repoDefaultBranch: loaded.workspace.repoDefaultBranch,
-      hasEnabledDestination: await hasEnabledDestination(input.db, wsId),
+      hasEnabledDestination: destinationConnected,
+      latestWebhook,
       settings: rows[0],
     });
     return reply.send({ diagnostics });

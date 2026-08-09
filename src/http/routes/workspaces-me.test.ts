@@ -393,6 +393,14 @@ describe("http/routes/workspaces-me", () => {
         from: vi.fn(() => ({
           where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
         })),
+      }))
+      // latest webhook -> none received yet
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            orderBy: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+          })),
+        })),
       }));
     const db = { select } as never;
 
@@ -541,7 +549,21 @@ describe("http/routes/workspaces-me", () => {
       .fn()
       .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
       .mockImplementationOnce(lookupSelect([settingsRow]))
-      .mockImplementationOnce(lookupSelect([{ id: "destination-id" }]));
+      .mockImplementationOnce(lookupSelect([{ id: "destination-id" }]))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            orderBy: vi.fn(() => ({
+              limit: vi.fn(async () => [
+                {
+                  eventType: "push",
+                  receivedAt: new Date("2026-08-09T18:00:00.000Z"),
+                },
+              ]),
+            })),
+          })),
+        })),
+      }));
     const server = fastify({ logger: false });
     servers.push(server);
     await handler(server, { db: { select } as never, jwtSecret });
@@ -558,11 +580,17 @@ describe("http/routes/workspaces-me", () => {
       checks: {
         repoLinked: true,
         destinationConnected: true,
+        webhookReceived: true,
         prSummaryReady: true,
         releaseSummaryReady: true,
         pushSummaryReady: true,
       },
       issues: [],
+      webhook: {
+        received: true,
+        eventType: "push",
+        lastReceivedAt: "2026-08-09T18:00:00.000Z",
+      },
     });
   });
 
