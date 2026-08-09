@@ -183,6 +183,13 @@
       "when": 1786284601369,
       "tag": "0025_white_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786293792221,
+      "tag": "0026_pink_otto_octavius",
+      "breakpoints": true
     }
   ]
 }

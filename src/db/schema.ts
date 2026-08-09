@@ -386,6 +386,77 @@ export const workspacesTable = pgTable(
   }),
 );
 
+export interface HistoryImportFailure {
+  prNumber: number;
+  message: string;
+}
+
+/**
+ * Bounded, resumable imports used to give a newly linked workspace immediate value.
+ * The import orchestrator reuses the regular process_pr pipeline and checkpoints each
+ * completed PR so a worker retry never starts the whole window from zero.
+ */
+export const historyImportsTable = pgTable(
+  "history_imports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    requestedByUserId: uuid("requested_by_user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    periodMonths: integer("period_months").notNull().default(12),
+    maxPullRequests: integer("max_pull_requests").notNull().default(100),
+    totalItems: integer("total_items").notNull().default(0),
+    processedItems: integer("processed_items").notNull().default(0),
+    failedItems: integer("failed_items").notNull().default(0),
+    completedPrNumbers: jsonb("completed_pr_numbers")
+      .$type<number[]>()
+      .notNull()
+      .default([]),
+    failures: jsonb("failures")
+      .$type<HistoryImportFailure[]>()
+      .notNull()
+      .default([]),
+    truncated: boolean("truncated").notNull().default(false),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    lastError: text("last_error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceCreatedAtIdx: index("history_imports_workspace_created_at_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    activeWorkspaceUnique: uniqueIndex(
+      "history_imports_active_workspace_unique",
+    )
+      .on(table.workspaceId)
+      .where(sql`${table.status} IN ('pending', 'running')`),
+    statusCheck: check(
+      "history_imports_status_check",
+      sql`${table.status} IN ('pending', 'running', 'completed', 'partial', 'failed', 'cancelled')`,
+    ),
+    periodMonthsCheck: check(
+      "history_imports_period_months_check",
+      sql`${table.periodMonths} BETWEEN 1 AND 24`,
+    ),
+    maxPullRequestsCheck: check(
+      "history_imports_max_pull_requests_check",
+      sql`${table.maxPullRequests} BETWEEN 10 AND 200`,
+    ),
+  }),
+);
+
 /**
  * Per-workspace INPUT config (release version source, branch filters). Output/destination
  * config lives in `workspace_destinations`. Non-secret values only.

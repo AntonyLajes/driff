@@ -1,7 +1,13 @@
 import sensible from "@fastify/sensible";
-import fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import fastify, {
+  type FastifyInstance,
+  type FastifyServerOptions,
+} from "fastify";
 
-import { execute as registerCors, type CorsRegistrationInput } from "@/http/cors.js";
+import {
+  execute as registerCors,
+  type CorsRegistrationInput,
+} from "@/http/cors.js";
 import {
   handler as registerAskMeRoute,
   type AskMeRegistrationInput,
@@ -14,6 +20,10 @@ import {
   handler as registerHealthRoute,
   type HealthRouteInput,
 } from "@/http/routes/health.js";
+import {
+  handler as registerHistoryImportsMeRoute,
+  type HistoryImportsMeRegistrationInput,
+} from "@/http/routes/history-imports-me.js";
 import {
   handler as registerGithubMeRoute,
   type GithubMeRegistrationInput,
@@ -65,6 +75,8 @@ export interface ExecuteInput {
   teamsMe?: TeamsMeRegistrationInput;
   /** When set, registers the canonical workspace timeline (Bearer session JWT). */
   timelineMe?: TimelineMeRegistrationInput;
+  /** When set, registers bounded GitHub history imports and progress reads. */
+  historyImportsMe?: HistoryImportsMeRegistrationInput;
   /** When set, registers cited canonical-history questions (Bearer session JWT). */
   askMe?: AskMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
@@ -106,6 +118,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.timelineMe !== undefined) {
       await registerTimelineMeRoute(instance, input.timelineMe);
+    }
+    if (input.historyImportsMe !== undefined) {
+      await registerHistoryImportsMeRoute(instance, input.historyImportsMe);
     }
     if (input.askMe !== undefined) {
       await registerAskMeRoute(instance, input.askMe);

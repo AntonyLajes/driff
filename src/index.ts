@@ -20,6 +20,9 @@ import { buildGithubMeRegistrationInput } from "@/http/routes/github-me.js";
 import { buildDestinationsMeRegistrationInput } from "@/http/routes/destinations-me.js";
 import { buildWhitelistRegistrationInput } from "@/http/routes/whitelist.js";
 import { buildEarlyAccessRegistrationInput } from "@/http/routes/early-access.js";
+import { execute as createHistoryImportRepository } from "@/history-imports/history-import-repository.js";
+import { execute as createHistoryImportJob } from "@/history-imports/process-history-import.js";
+import { execute as createMergedPullRequestLister } from "@/history-imports/list-merged-pull-requests.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
@@ -73,6 +76,7 @@ export interface ExecuteInput {
   processPrHandler?: JobHandler;
   processReleaseHandler?: JobHandler;
   processPushHandler?: JobHandler;
+  processHistoryImportHandler?: JobHandler;
   promptVersion?: number;
   releasePromptVersion?: number;
   pushPromptVersion?: number;
@@ -248,6 +252,7 @@ const buildRuntimeDependencies = async (
     googleOAuth !== undefined
       ? { db, jwtSecret: googleOAuth.jwtSecret }
       : undefined;
+  const historyImportsMe = workspacesMe;
   const askMe =
     googleOAuth !== undefined
       ? { db, jwtSecret: googleOAuth.jwtSecret }
@@ -268,6 +273,7 @@ const buildRuntimeDependencies = async (
       googleOAuth,
       workspacesMe,
       timelineMe,
+      historyImportsMe,
       askMe,
       meStats: workspacesMe,
       teamsMe:
@@ -410,12 +416,26 @@ const buildRuntimeDependencies = async (
       },
     };
 
+    const processHistoryImportHandler =
+      input.processHistoryImportHandler ??
+      createHistoryImportJob({
+        repository: createHistoryImportRepository({ db }),
+        listMergedPullRequests: createMergedPullRequestLister({
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+        }).list,
+        processPullRequest: async (payload) => {
+          await processPrHandler.execute(payload);
+        },
+      });
+
     return createWorker({
       queue,
       handlers: {
         process_pr: processPrHandler,
         process_release: processReleaseHandler,
         process_push: processPushHandler,
+        import_history: processHistoryImportHandler,
       },
     });
   })();
