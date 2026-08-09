@@ -9,10 +9,16 @@ vi.mock("@/workspaces/infer-workspace-settings.js", () => ({
 }));
 
 /* Sample-summary enqueue (Fase 3d) looks up the latest merged PR via Octokit. */
-const { pullsListMock } = vi.hoisted(() => ({ pullsListMock: vi.fn() }));
+const { pullsListMock, reposGetContentMock } = vi.hoisted(() => ({
+  pullsListMock: vi.fn(),
+  reposGetContentMock: vi.fn(),
+}));
 vi.mock("@octokit/rest", () => ({
   Octokit: class {
-    rest = { pulls: { list: pullsListMock } };
+    rest = {
+      pulls: { list: pullsListMock },
+      repos: { getContent: reposGetContentMock },
+    };
   },
 }));
 
@@ -32,6 +38,7 @@ describe("http/routes/workspaces-me", () => {
     vi.mocked(inferAndApplyWorkspaceSettings).mockReset();
     vi.mocked(loadUserGithubAccessToken).mockReset();
     pullsListMock.mockReset();
+    reposGetContentMock.mockReset();
   });
 
   const jwtSecret = "a".repeat(32);
@@ -1313,5 +1320,293 @@ describe("http/routes/workspaces-me", () => {
     });
     expect(badId.statusCode).toBe(400);
     expect(badId.json()).toMatchObject({ error: "invalid_id" });
+  });
+
+  it("returns the workspace shell and its normalized settings", async () => {
+    const settingsRow = {
+      pushSummaryBranches: ["main"],
+      prSummaryBaseBranches: ["main", "develop"],
+      releaseProjectKind: "react_native_expo",
+      releaseVersionFilePath: "app.json",
+      releaseVersionBranch: "main",
+    };
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([settingsRow]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const detail = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+    const settings = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(detail.json()).toEqual({
+      workspace: expect.objectContaining({ slug: "ride-pack" }),
+    });
+    expect(settings.json()).toEqual({ settings: settingsRow });
+  });
+
+  it("returns empty settings when the workspace has never been configured", async () => {
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.json()).toEqual({
+      settings: {
+        pushSummaryBranches: null,
+        prSummaryBaseBranches: null,
+        releaseProjectKind: null,
+        releaseVersionFilePath: null,
+        releaseVersionBranch: null,
+      },
+    });
+  });
+
+  it("updates project identity fields in its active team", async () => {
+    const workspaceId = "00000000-0000-4000-8000-0000000000aa";
+    const returning = vi.fn(async () => [
+      { ...feedWorkspaceRow, name: "Ride Pack Mobile", workspaceKind: "ios_pbx" },
+    ]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    const update = vi.fn(() => ({ set }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { update } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/workspaces/${workspaceId}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { name: "  Ride Pack Mobile  ", workspaceKind: "ios_pbx" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().workspace).toMatchObject({
+      name: "Ride Pack Mobile",
+      workspaceKind: "ios_pbx",
+    });
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Ride Pack Mobile", workspaceKind: "ios_pbx" }),
+    );
+  });
+
+  it("returns 404 when a project update cannot find the workspace", async () => {
+    const returning = vi.fn(async () => []);
+    const update = vi.fn(() => ({
+      set: vi.fn(() => ({ where: vi.fn(() => ({ returning })) })),
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { update } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/00000000-0000-4000-8000-0000000000aa",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { name: "Missing" },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "workspace_not_found" });
+  });
+
+  it("updates an existing release strategy and branch filters", async () => {
+    const resultRow = {
+      pushSummaryBranches: ["main", "develop"],
+      prSummaryBaseBranches: [],
+      releaseProjectKind: "react_native_expo",
+      releaseVersionFilePath: "app.json",
+      releaseVersionBranch: "main",
+    };
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([{ id: "settings-id" }]))
+      .mockImplementationOnce(lookupSelect([resultRow]));
+    const updateWhere = vi.fn(async () => undefined);
+    const set = vi.fn(() => ({ where: updateWhere }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: { select, update: vi.fn(() => ({ set })) } as never,
+      jwtSecret,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: {
+        pushSummaryBranches: [" main ", " ", " develop "],
+        prSummaryBaseBranches: [],
+        releaseProjectKind: "react_native_expo",
+        releaseVersionFilePath: " app.json ",
+        releaseVersionBranch: " main ",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ settings: resultRow });
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pushSummaryBranches: ["main", "develop"],
+        prSummaryBaseBranches: [],
+        releaseProjectKind: "react_native_expo",
+        releaseVersionFilePath: "app.json",
+        releaseExpoAppConfigPath: "app.json",
+        releaseVersionBranch: "main",
+      }),
+    );
+  });
+
+  it("creates settings and supports explicitly disabling release detection", async () => {
+    const resultRow = {
+      pushSummaryBranches: null,
+      prSummaryBaseBranches: null,
+      releaseProjectKind: null,
+      releaseVersionFilePath: null,
+      releaseVersionBranch: null,
+    };
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(lookupSelect([]))
+      .mockImplementationOnce(lookupSelect([resultRow]));
+    const values = vi.fn(async () => undefined);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: { select, insert: vi.fn(() => ({ values })) } as never,
+      jwtSecret,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: "/api/me/workspaces/by-slug/ride-pack/settings",
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: {
+        pushSummaryBranches: [" ", "  "],
+        prSummaryBaseBranches: null,
+        releaseProjectKind: null,
+        releaseVersionFilePath: null,
+        releaseVersionBranch: " ",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: feedWorkspaceRow.id,
+        pushSummaryBranches: null,
+        prSummaryBaseBranches: null,
+        releaseProjectKind: null,
+        releaseVersionFilePath: null,
+        releaseVersionBranch: null,
+      }),
+    );
+  });
+
+  it("browses the linked repository with directories first", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("github-token");
+    reposGetContentMock.mockResolvedValue({
+      data: [
+        { type: "file", name: "z.ts", path: "src/z.ts" },
+        { type: "dir", name: "components", path: "src/components" },
+        { type: "symlink", name: "ignored", path: "src/ignored" },
+        { type: "file", name: "a.ts", path: "src/a.ts" },
+      ],
+    });
+    const select = vi.fn().mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/repo/contents?path=src&ref=develop",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ref: "develop",
+      requestedPath: "src",
+      entries: [
+        { name: "components", path: "src/components", type: "dir" },
+        { name: "a.ts", path: "src/a.ts", type: "file" },
+        { name: "z.ts", path: "src/z.ts", type: "file" },
+      ],
+    });
+  });
+
+  it("returns the compact legacy workspace summary with bounded changelog", async () => {
+    const orderedLimited = (rows: unknown[]) => () => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn(() => ({ limit: vi.fn(async () => rows) })),
+        })),
+      })),
+    });
+    const longChangelog = "x".repeat(500);
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(
+        orderedLimited([
+          {
+            id: "release-id",
+            shortVersion: "1.4.0",
+            buildVersion: "7",
+            branch: "main",
+            headSha: "a".repeat(40),
+            createdAt: new Date("2026-08-08T12:00:00.000Z"),
+            changelog: longChangelog,
+          },
+        ]),
+      )
+      .mockImplementationOnce(orderedLimited([]))
+      .mockImplementationOnce(orderedLimited([]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/summary",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().releases[0].changelogPreview).toHaveLength(481);
+    expect(response.json()).toMatchObject({ pullRequests: [], pushes: [] });
   });
 });
