@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { ReleaseProjector } from "@/changes/project-release.js";
 import type { Destination } from "@/destinations/destination.js";
+import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable, releasesTable } from "@/db/schema.js";
 import type { ReleaseSummarizer } from "@/llm/release-summarizer.js";
@@ -187,19 +188,21 @@ export const execute = (input: ExecuteInput) => {
         prContributions,
         standaloneCommitHints,
       });
-      const publish = await input.destination.publishRelease({
-        title: notes.title,
-        repo: job.repo,
-        branch: job.branch,
-        newVersionKey: context.newVersionKey,
-        previousVersionKey: context.previousVersionKey,
-        shortVersion: context.afterVersion.short,
-        buildVersion: context.afterVersion.build,
-        compareUrl: context.compareUrl,
-        prNumbers: releasePrNumbers,
-        changelog: notes.changelog,
-        sections: notes.sections,
-      });
+      const publish = await publishBestEffort("publishRelease", () =>
+        input.destination.publishRelease({
+          title: notes.title,
+          repo: job.repo,
+          branch: job.branch,
+          newVersionKey: context.newVersionKey,
+          previousVersionKey: context.previousVersionKey,
+          shortVersion: context.afterVersion.short,
+          buildVersion: context.afterVersion.build,
+          compareUrl: context.compareUrl,
+          prNumbers: releasePrNumbers,
+          changelog: notes.changelog,
+          sections: notes.sections,
+        }),
+      );
 
       const priorEraRow = await input.db
         .select({ marketingEraStartSha: releasesTable.marketingEraStartSha })

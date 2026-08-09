@@ -139,6 +139,25 @@ describe("jobs/process-push execute", () => {
     );
   });
 
+  it("persists the canonical summary when external delivery fails", async () => {
+    mockedGather.mockResolvedValue(buildContext());
+    const dbMock = buildDbMock();
+    const deps = buildDeps(dbMock);
+    vi.mocked(deps.publishPush).mockRejectedValueOnce(new Error("Notion unavailable"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const handler = execute(deps);
+
+    await expect(handler.execute(payload)).resolves.toBeUndefined();
+    expect(dbMock.values).toHaveBeenCalledWith(
+      expect.objectContaining({ notionPageId: "", afterSha: "b".repeat(40) }),
+    );
+    expect(deps.project).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      "optional destination failed to publishPush:",
+      expect.any(Error),
+    );
+  });
+
   it("is idempotent: skips when a push row already exists for repo+afterSha", async () => {
     const dbMock = buildDbMock([{ id: "existing" }]);
     const deps = buildDeps(dbMock);

@@ -94,6 +94,58 @@ describe("jobs/process-pr execute", () => {
     );
   });
 
+  it("persists the canonical summary when external delivery fails", async () => {
+    const { db, values } = buildDbMock();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const handler = execute({
+      db,
+      promptVersion: 1,
+      source: {
+        fetchPullRequest: vi.fn(async () => ({
+          repo: "acme/mobile-app",
+          prNumber: 101,
+          title: "fix: checkout",
+          body: null,
+          author: "octocat",
+          mergedAt: new Date("2026-04-25T19:10:00Z"),
+          headSha: "def456",
+          baseBranch: "main",
+          diff: "diff",
+          files: [],
+        })),
+      },
+      summarizer: {
+        summarizePR: vi.fn(async () => ({
+          title: "Checkout fix",
+          summaryUserFacing: "Checkout is stable again.",
+          summaryTechnical: "Guards the checkout state.",
+          category: "bugfix" as const,
+          area: "checkout",
+          usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
+        })),
+        prompt: "prompt",
+      },
+      destination: {
+        publishPR: vi.fn(async () => {
+          throw new Error("Notion unavailable");
+        }),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
+    });
+
+    await expect(
+      handler.execute({ repo: "acme/mobile-app", prNumber: 101 }),
+    ).resolves.toBeUndefined();
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ notionPageId: "", prNumber: 101 }),
+    );
+    expect(warning).toHaveBeenCalledWith(
+      "optional destination failed to publishPR:",
+      expect.any(Error),
+    );
+  });
+
   it("should fail before projection when the legacy upsert returns no source id", async () => {
     const { db } = buildDbMock([]);
     const project = vi.fn(async () => undefined);

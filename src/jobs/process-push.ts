@@ -4,6 +4,7 @@ import type { PushProjector } from "@/changes/project-push.js";
 import type { Database } from "@/db/client.js";
 import { pushesTable } from "@/db/schema.js";
 import type { Destination } from "@/destinations/destination.js";
+import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { PushSummarizer } from "@/llm/push-summarizer.js";
 import { recordLlmUsage } from "@/llm/usage.js";
 import { findPushOverlap } from "@/jobs/push-dedup.js";
@@ -131,22 +132,24 @@ export const execute = (input: ExecuteInput) => {
         branch: job.branch,
       });
 
-      const publish = await input.destination.publishPush({
-        repo: job.repo,
-        branch: job.branch,
-        beforeSha: job.beforeSha,
-        afterSha: job.afterSha,
-        pusher: job.pusher,
-        pushedAt: job.pushedAt,
-        title: summary.title,
-        summaryUserFacing: summary.summaryUserFacing,
-        summaryTechnical: summary.summaryTechnical,
-        category: summary.category,
-        area: summary.area,
-        commitCount: context.totalCommits,
-        prNumbers: context.prNumbers,
-        compareUrl: context.compareUrl,
-      });
+      const publish = await publishBestEffort("publishPush", () =>
+        input.destination.publishPush({
+          repo: job.repo,
+          branch: job.branch,
+          beforeSha: job.beforeSha,
+          afterSha: job.afterSha,
+          pusher: job.pusher,
+          pushedAt: job.pushedAt,
+          title: summary.title,
+          summaryUserFacing: summary.summaryUserFacing,
+          summaryTechnical: summary.summaryTechnical,
+          category: summary.category,
+          area: summary.area,
+          commitCount: context.totalCommits,
+          prNumbers: context.prNumbers,
+          compareUrl: context.compareUrl,
+        }),
+      );
 
       const pushValues = {
         repo: job.repo,

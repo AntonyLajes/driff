@@ -1,5 +1,6 @@
 import type { PullRequestProjector } from "@/changes/project-pull-request.js";
 import type { Destination } from "@/destinations/destination.js";
+import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable } from "@/db/schema.js";
 import type { Summarizer } from "@/llm/summarizer.js";
@@ -46,18 +47,20 @@ export const execute = (input: ExecuteInput) => {
         jobPayload.prNumber,
       );
       const summary = await input.summarizer.summarizePR({ pullRequest });
-      const publishResult = await input.destination.publishPR({
-        repo: pullRequest.repo,
-        prNumber: pullRequest.prNumber,
-        title: summary.title,
-        author: pullRequest.author,
-        mergedAt: pullRequest.mergedAt,
-        summaryUserFacing: summary.summaryUserFacing,
-        summaryTechnical: summary.summaryTechnical,
-        category: summary.category,
-        area: summary.area,
-        prUrl: `https://github.com/${pullRequest.repo}/pull/${pullRequest.prNumber}`,
-      });
+      const publishResult = await publishBestEffort("publishPR", () =>
+        input.destination.publishPR({
+          repo: pullRequest.repo,
+          prNumber: pullRequest.prNumber,
+          title: summary.title,
+          author: pullRequest.author,
+          mergedAt: pullRequest.mergedAt,
+          summaryUserFacing: summary.summaryUserFacing,
+          summaryTechnical: summary.summaryTechnical,
+          category: summary.category,
+          area: summary.area,
+          prUrl: `https://github.com/${pullRequest.repo}/pull/${pullRequest.prNumber}`,
+        }),
+      );
 
       const sourceRecordId = await dbUpsertPullRequest({
         db: input.db,
