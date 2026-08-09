@@ -63,12 +63,12 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
     ).toThrow(/release_version_file_path/);
   });
 
-  it("should throw for unsupported release_project_kind", () => {
+  it("should throw for an unknown release_project_kind", () => {
     expect(() =>
       mergeWorkspaceSettingsRow(
-        row({ releaseProjectKind: "android_gradle", releaseVersionFilePath: "app/build.gradle" }),
+        row({ releaseProjectKind: "future_unknown", releaseVersionFilePath: "VERSION" }),
       ),
-    ).toThrow(/not supported yet/);
+    ).toThrow(/Invalid option/);
   });
 });
 

@@ -8,6 +8,10 @@ export const releaseProjectKindSchema = z.enum([
   "node_package",
   "android_gradle",
   "flutter_pubspec",
+  "python_pyproject",
+  "rust_cargo",
+  "java_maven",
+  "java_gradle",
 ]);
 
 export type ReleaseProjectKind = z.infer<typeof releaseProjectKindSchema>;
@@ -17,9 +21,17 @@ const SUPPORTED: ReadonlySet<ReleaseProjectKind> = new Set([
   "ios_pbx",
   "react_native_expo",
   "node_package",
+  "android_gradle",
+  "flutter_pubspec",
+  "python_pyproject",
+  "rust_cargo",
+  "java_maven",
+  "java_gradle",
 ]);
 
-export const isSupportedReleaseProjectKind = (kind: ReleaseProjectKind): boolean => {
+export const isSupportedReleaseProjectKind = (
+  kind: ReleaseProjectKind,
+): boolean => {
   return SUPPORTED.has(kind);
 };
 
@@ -42,22 +54,41 @@ export const applyReleaseKindAndFilePath = (
 ): LegacyReleasePaths => {
   const path = repoRelativePath.trim();
   if (!path) {
-    throw new Error("release_version_file_path must be a non-empty repo-relative path.");
+    throw new Error(
+      "release_version_file_path must be a non-empty repo-relative path.",
+    );
   }
   switch (kind) {
     case "ios_plist":
-      return { releaseInfoPlistPath: path, releaseProjectPbxprojPath: null, releaseExpoAppConfigPath: null };
+      return {
+        releaseInfoPlistPath: path,
+        releaseProjectPbxprojPath: null,
+        releaseExpoAppConfigPath: null,
+      };
     case "ios_pbx":
-      return { releaseInfoPlistPath: "", releaseProjectPbxprojPath: path, releaseExpoAppConfigPath: null };
+      return {
+        releaseInfoPlistPath: "",
+        releaseProjectPbxprojPath: path,
+        releaseExpoAppConfigPath: null,
+      };
     case "react_native_expo":
-      return { releaseInfoPlistPath: "", releaseProjectPbxprojPath: null, releaseExpoAppConfigPath: path };
+      return {
+        releaseInfoPlistPath: "",
+        releaseProjectPbxprojPath: null,
+        releaseExpoAppConfigPath: path,
+      };
     case "node_package":
-      return { releaseInfoPlistPath: null, releaseProjectPbxprojPath: null, releaseExpoAppConfigPath: null };
     case "android_gradle":
     case "flutter_pubspec":
-      throw new Error(
-        `release_project_kind "${kind}" is not implemented yet; use ios_plist, ios_pbx, react_native_expo, or node_package.`,
-      );
+    case "python_pyproject":
+    case "rust_cargo":
+    case "java_maven":
+    case "java_gradle":
+      return {
+        releaseInfoPlistPath: null,
+        releaseProjectPbxprojPath: null,
+        releaseExpoAppConfigPath: null,
+      };
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

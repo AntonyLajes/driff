@@ -92,7 +92,9 @@ describe("github/repo-kind-infer", () => {
         { type: "file", name: "app.config.ts" },
       ],
       files: {
-        "package.json": encoded(JSON.stringify({ dependencies: { expo: "latest" } })),
+        "package.json": encoded(
+          JSON.stringify({ dependencies: { expo: "latest" } }),
+        ),
       },
       defaultBranch: "main",
     });
@@ -110,7 +112,9 @@ describe("github/repo-kind-infer", () => {
     const { octokit } = buildOctokit({
       root: [{ type: "file", name: "package.json" }],
       files: {
-        "package.json": encoded(JSON.stringify({ devDependencies: { expo: "52" } })),
+        "package.json": encoded(
+          JSON.stringify({ devDependencies: { expo: "52" } }),
+        ),
       },
     });
 
@@ -118,7 +122,11 @@ describe("github/repo-kind-infer", () => {
       suggestedKind: "react_native_expo",
       confidence: "low",
       versionFilePath: null,
-      signals: ["github:acme/app", "dependency:expo", "missing_expo_config_file"],
+      signals: [
+        "github:acme/app",
+        "dependency:expo",
+        "missing_expo_config_file",
+      ],
     });
   });
 
@@ -139,6 +147,37 @@ describe("github/repo-kind-infer", () => {
       defaultBranch: "main",
       versionFilePath: "package.json",
       signals: ["github:acme/app", "file:package.json", "field:version"],
+    });
+  });
+
+  it.each([
+    ["pyproject.toml", "python_pyproject", '[project]\nversion = "1.2.0"'],
+    ["Cargo.toml", "rust_cargo", '[package]\nversion = "0.8.1"'],
+    ["pom.xml", "java_maven", "<project><version>3.1.0</version></project>"],
+    ["build.gradle", "java_gradle", "version = '4.0.0'"],
+  ])("detects %s as %s", async (file, kind, content) => {
+    const { octokit } = buildOctokit({
+      root: [{ type: "file", name: file }],
+      files: { [file]: encoded(content) },
+      defaultBranch: "main",
+    });
+
+    await expect(inferRepoKind(octokit, "acme/app")).resolves.toMatchObject({
+      suggestedKind: kind,
+      confidence: "high",
+      versionFilePath: file,
+    });
+  });
+
+  it("falls through when a known marker file has no version", async () => {
+    const { octokit } = buildOctokit({
+      root: [{ type: "file", name: "Cargo.toml" }],
+      files: { "Cargo.toml": encoded("[workspace]\nmembers = []") },
+    });
+
+    await expect(inferRepoKind(octokit, "acme/app")).resolves.toMatchObject({
+      suggestedKind: null,
+      signals: ["github:acme/app", "Cargo.toml_version_missing"],
     });
   });
 
@@ -167,12 +206,12 @@ describe("github/repo-kind-infer", () => {
     const direct = buildOctokit({
       root: [{ type: "dir", name: "ios" }],
       files: {
-        ios: [
-          { type: "file", name: "Info.plist", path: "ios/Info.plist" },
-        ],
+        ios: [{ type: "file", name: "Info.plist", path: "ios/Info.plist" }],
       },
     });
-    await expect(inferRepoKind(direct.octokit, "acme/app")).resolves.toMatchObject({
+    await expect(
+      inferRepoKind(direct.octokit, "acme/app"),
+    ).resolves.toMatchObject({
       suggestedKind: "ios_plist",
       confidence: "medium",
       versionFilePath: "ios/Info.plist",
@@ -185,7 +224,9 @@ describe("github/repo-kind-infer", () => {
         "ios/Runner/Info.plist": { type: "file" },
       },
     });
-    await expect(inferRepoKind(nested.octokit, "acme/app")).resolves.toMatchObject({
+    await expect(
+      inferRepoKind(nested.octokit, "acme/app"),
+    ).resolves.toMatchObject({
       suggestedKind: "ios_plist",
       confidence: "low",
       versionFilePath: "ios/Runner/Info.plist",
@@ -197,7 +238,9 @@ describe("github/repo-kind-infer", () => {
       root: [{ type: "dir", name: "App.xcodeproj" }],
       files: { "App.xcodeproj/project.pbxproj": { type: "file" } },
     });
-    await expect(inferRepoKind(xcode.octokit, "acme/app")).resolves.toMatchObject({
+    await expect(
+      inferRepoKind(xcode.octokit, "acme/app"),
+    ).resolves.toMatchObject({
       suggestedKind: "ios_pbx",
       confidence: "medium",
       versionFilePath: "App.xcodeproj/project.pbxproj",
@@ -207,7 +250,9 @@ describe("github/repo-kind-infer", () => {
       root: [{ type: "dir", name: "android" }],
       files: { "android/app/build.gradle": { type: "file" } },
     });
-    await expect(inferRepoKind(android.octokit, "acme/app")).resolves.toMatchObject({
+    await expect(
+      inferRepoKind(android.octokit, "acme/app"),
+    ).resolves.toMatchObject({
       suggestedKind: "android_gradle",
       confidence: "medium",
       versionFilePath: "android/app/build.gradle",

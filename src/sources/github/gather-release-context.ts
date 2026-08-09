@@ -6,6 +6,7 @@ import {
 import { execute as parseExpoAppConfig } from "@/lib/expo-app-config-version.js";
 import { execute as parsePackageJsonVersion } from "@/lib/package-json-version.js";
 import { execute as parsePbxVersion } from "@/lib/pbxproj-version.js";
+import { parseVersionMarkerFile } from "@/lib/version-marker-file.js";
 import {
   type IosPlistVersion,
   execute as parsePlist,
@@ -23,7 +24,12 @@ export interface CompareCommit {
 export interface GitHubCompareData {
   total_commits: number;
   commits: CompareCommit[];
-  files?: Array<{ filename: string; status: string; additions?: number; deletions?: number }>;
+  files?: Array<{
+    filename: string;
+    status: string;
+    additions?: number;
+    deletions?: number;
+  }>;
   html_url: string;
 }
 
@@ -31,14 +37,22 @@ const nullSha = (sha: string): boolean => {
   return /^0+$/.test(sha);
 };
 
-const decodeFileContent = (data: { type: string; encoding?: string; content?: string }): string => {
+const decodeFileContent = (data: {
+  type: string;
+  encoding?: string;
+  content?: string;
+}): string => {
   if (data.type !== "file" || !data.content || data.encoding !== "base64") {
-    throw new Error("Expected a single file with base64 content from the GitHub contents API.");
+    throw new Error(
+      "Expected a single file with base64 content from the GitHub contents API.",
+    );
   }
   return Buffer.from(data.content, "base64").toString("utf8");
 };
 
-export const extractPrNumbersFromCommitMessages = (messages: string[]): number[] => {
+export const extractPrNumbersFromCommitMessages = (
+  messages: string[],
+): number[] => {
   const seen = new Set<number>();
   const mergeRe = /^Merge pull request #(\d+)/im;
   const squashRe = /\(#(\d+)\)\s*$/m;
@@ -64,7 +78,9 @@ export const extractPrNumbersFromCommitMessages = (messages: string[]): number[]
   return [...seen].sort((a, b) => a - b);
 };
 
-const buildFileChangeSummary = (files: Array<{ filename: string; status: string }> | undefined): string => {
+const buildFileChangeSummary = (
+  files: Array<{ filename: string; status: string }> | undefined,
+): string => {
   if (!files || files.length === 0) {
     return "Nenhum arquivo listado no compare (ou alterações apenas em binário).";
   }
@@ -123,12 +139,17 @@ export interface ExecuteInput {
   octokitFactory?: (auth: string) => OctokitLike;
 }
 
-const getCredentials = (input: ExecuteInput): { appId: string; privateKey: string } => {
+const getCredentials = (
+  input: ExecuteInput,
+): { appId: string; privateKey: string } => {
   if (input.appId && input.privateKey) {
     return { appId: input.appId, privateKey: input.privateKey };
   }
   const env = loadEnv();
-  return { appId: input.appId ?? env.GITHUB_APP_ID, privateKey: input.privateKey ?? env.GITHUB_APP_PRIVATE_KEY };
+  return {
+    appId: input.appId ?? env.GITHUB_APP_ID,
+    privateKey: input.privateKey ?? env.GITHUB_APP_PRIVATE_KEY,
+  };
 };
 
 const getOctokitFactory = (
@@ -171,11 +192,14 @@ const compareShas = async (input: {
   afterSha: string;
 }): Promise<GitHubCompareData> => {
   const basehead = `${input.beforeSha}...${input.afterSha}`;
-  const response = await input.octokit.request<GitHubCompareData>("GET /repos/{owner}/{repo}/compare/{basehead}", {
-    owner: input.owner,
-    repo: input.repo,
-    basehead,
-  });
+  const response = await input.octokit.request<GitHubCompareData>(
+    "GET /repos/{owner}/{repo}/compare/{basehead}",
+    {
+      owner: input.owner,
+      repo: input.repo,
+      basehead,
+    },
+  );
   return response.data;
 };
 
@@ -184,20 +208,30 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
   const trimmedAfter = input.afterSha.trim();
   const compareOverride = input.compareBeforeSha?.trim();
   const compareLeft =
-    compareOverride !== undefined && compareOverride !== null && compareOverride.length > 0
+    compareOverride !== undefined &&
+    compareOverride !== null &&
+    compareOverride.length > 0
       ? compareOverride
       : trimmedBefore;
 
   if (nullSha(trimmedAfter) || nullSha(trimmedBefore) || nullSha(compareLeft)) {
-    throw new Error("Ref inválida: before/after não podem ser o SHA nulo (branch nova ou deletada).");
+    throw new Error(
+      "Ref inválida: before/after não podem ser o SHA nulo (branch nova ou deletada).",
+    );
   }
   if (compareLeft === trimmedAfter) {
-    throw new Error("Invalid Git compare range: compare base SHA equals after SHA.");
+    throw new Error(
+      "Invalid Git compare range: compare base SHA equals after SHA.",
+    );
   }
 
   const { appId, privateKey } = getCredentials(input);
   const octokitFactory = getOctokitFactory(input.octokitFactory);
-  const { octokit, owner, repo: repository } = await getInstallationOctokit({
+  const {
+    octokit,
+    owner,
+    repo: repository,
+  } = await getInstallationOctokit({
     appId,
     privateKey,
     repo: input.repo,
@@ -220,7 +254,9 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
   const expoPath = input.expoAppConfigPath?.trim() ?? "";
   if (unifiedKind === "node_package") {
     if (unifiedPath.length === 0) {
-      throw new Error("package.json path is required for node_package releases.");
+      throw new Error(
+        "package.json path is required for node_package releases.",
+      );
     }
     const [beforePackage, afterPackage] = await Promise.all([
       fetchFileTextAt({
@@ -247,12 +283,66 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     }
     beforeVersion = b;
     afterVersion = a;
+  } else if (
+    [
+      "android_gradle",
+      "flutter_pubspec",
+      "python_pyproject",
+      "rust_cargo",
+      "java_maven",
+      "java_gradle",
+    ].includes(unifiedKind)
+  ) {
+    if (unifiedPath.length === 0) {
+      throw new Error(
+        `A version file path is required for ${unifiedKind} releases.`,
+      );
+    }
+    const [beforeFile, afterFile] = await Promise.all([
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: unifiedPath,
+        ref: trimmedBefore,
+      }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: unifiedPath,
+        ref: trimmedAfter,
+      }),
+    ]);
+    const b = parseVersionMarkerFile(unifiedKind, beforeFile);
+    const a = parseVersionMarkerFile(unifiedKind, afterFile);
+    if (!a) {
+      throw new Error(
+        `Could not read a version marker for ${unifiedKind} at the after ref.`,
+      );
+    }
+    beforeVersion = b;
+    afterVersion = a;
   } else if (expoPath.length > 0) {
     const [beforeExpo, afterExpo] = await Promise.all([
-      fetchFileTextAt({ octokit, owner, repo: repository, path: expoPath, ref: trimmedBefore }),
-      fetchFileTextAt({ octokit, owner, repo: repository, path: expoPath, ref: trimmedAfter }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: expoPath,
+        ref: trimmedBefore,
+      }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: expoPath,
+        ref: trimmedAfter,
+      }),
     ]);
-    const fileName = expoPath.includes("/") ? expoPath.split("/").pop() ?? expoPath : expoPath;
+    const fileName = expoPath.includes("/")
+      ? (expoPath.split("/").pop() ?? expoPath)
+      : expoPath;
     const b = parseExpoAppConfig(beforeExpo, fileName);
     const a = parseExpoAppConfig(afterExpo, fileName);
     if (!a) {
@@ -264,8 +354,20 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
     afterVersion = a;
   } else if (pbx.length > 0) {
     const [beforePbx, afterPbx] = await Promise.all([
-      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: trimmedBefore }),
-      fetchFileTextAt({ octokit, owner, repo: repository, path: pbx, ref: trimmedAfter }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: pbx,
+        ref: trimmedBefore,
+      }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: pbx,
+        ref: trimmedAfter,
+      }),
     ]);
     const b = parsePbxVersion(beforePbx);
     const a = parsePbxVersion(afterPbx);
@@ -284,15 +386,32 @@ export const execute = async (input: ExecuteInput): Promise<ReleaseContext> => {
       );
     }
     const [beforeText, afterText] = await Promise.all([
-      fetchFileTextAt({ octokit, owner, repo: repository, path: plistPath, ref: trimmedBefore }),
-      fetchFileTextAt({ octokit, owner, repo: repository, path: plistPath, ref: trimmedAfter }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: plistPath,
+        ref: trimmedBefore,
+      }),
+      fetchFileTextAt({
+        octokit,
+        owner,
+        repo: repository,
+        path: plistPath,
+        ref: trimmedAfter,
+      }),
     ]);
     const b = parsePlist(beforeText);
     const a = parsePlist(afterText);
     if (!a) {
-      throw new Error("Não foi possível ler CFBundleShortVersionString / CFBundleVersion no Info.plist (destino).");
+      throw new Error(
+        "Não foi possível ler CFBundleShortVersionString / CFBundleVersion no Info.plist (destino).",
+      );
     }
-    if (isPlaceholderPlistVersion(a) || (b !== null && isPlaceholderPlistVersion(b))) {
+    if (
+      isPlaceholderPlistVersion(a) ||
+      (b !== null && isPlaceholderPlistVersion(b))
+    ) {
       throw new Error(
         "O Info.plist usa variáveis Xcode (ex.: $(MARKETING_VERSION)); defina RELEASE_PROJECT_PBXPROJ_PATH para o project.pbxproj onde a versão é realmente alterada.",
       );
