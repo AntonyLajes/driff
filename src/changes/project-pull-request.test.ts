@@ -26,8 +26,9 @@ const buildDbMock = () => {
       return { onConflictDoUpdate };
     },
   }));
-  const transaction = vi.fn(async (callback: (tx: { insert: typeof insert }) => Promise<void>) =>
-    callback({ insert }),
+  const transaction = vi.fn(
+    async (callback: (tx: { insert: typeof insert }) => Promise<void>) =>
+      callback({ insert }),
   );
   const db = { transaction } as unknown as Database;
 
@@ -86,11 +87,24 @@ const idFrom = (record: InsertRecord): string => {
   return record.values.id;
 };
 
+const createProjector = (db: Database) =>
+  execute({
+    db,
+    lineageProjector: vi.fn(async () => ({
+      kind: "unassigned" as const,
+      reason: "insufficient_identity" as const,
+    })),
+  });
+
 describe("changes/project-pull-request execute", () => {
   it("should project a PR into one atomic canonical graph transaction", async () => {
     const { db, onConflictDoUpdate, records, transaction } = buildDbMock();
 
-    await execute({ db }).project(projectionInput);
+    const lineageProjector = vi.fn(async () => ({
+      kind: "unassigned" as const,
+      reason: "insufficient_identity" as const,
+    }));
+    await execute({ db, lineageProjector }).project(projectionInput);
 
     expect(transaction).toHaveBeenCalledOnce();
     expect(records).toHaveLength(5);
@@ -122,13 +136,15 @@ describe("changes/project-pull-request execute", () => {
       }),
       expect.objectContaining({
         kind: "file",
-        sourceKey: "github:acme/mobile-app:pull_request:42:file:src/checkout/button.tsx",
+        sourceKey:
+          "github:acme/mobile-app:pull_request:42:file:src/checkout/button.tsx",
         path: "src/checkout/button.tsx",
         metadata: { additions: 12, deletions: 2 },
       }),
       expect.objectContaining({
         kind: "file",
-        sourceKey: "github:acme/mobile-app:pull_request:42:file:src/checkout/state.ts",
+        sourceKey:
+          "github:acme/mobile-app:pull_request:42:file:src/checkout/state.ts",
         path: "src/checkout/state.ts",
         metadata: { additions: 8, deletions: 4 },
       }),
@@ -152,14 +168,26 @@ describe("changes/project-pull-request execute", () => {
         sourceUrl: "https://github.com/Octo%20Cat",
       }),
     );
+    expect(lineageProjector).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db,
+        workspaceId: projectionInput.workspaceId,
+        changeId: idFrom(recordFor(records, changesTable)),
+        title: summary.title,
+        category: summary.category,
+        areaId: idFrom(recordFor(records, productAreasTable)),
+        areaSlug: "pagamentos-checkout",
+        filePaths: pullRequest.files.map((file) => file.path),
+      }),
+    );
   });
 
   it("should derive the same entity ids when the same PR is projected again", async () => {
     const first = buildDbMock();
     const second = buildDbMock();
 
-    await execute({ db: first.db }).project(projectionInput);
-    await execute({ db: second.db }).project(projectionInput);
+    await createProjector(first.db).project(projectionInput);
+    await createProjector(second.db).project(projectionInput);
 
     expect(idFrom(recordFor(first.records, changesTable))).toBe(
       idFrom(recordFor(second.records, changesTable)),
@@ -172,7 +200,7 @@ describe("changes/project-pull-request execute", () => {
   it("should omit area records when the summary has no product area", async () => {
     const { db, insert, records } = buildDbMock();
 
-    await execute({ db }).project({
+    await createProjector(db).project({
       ...projectionInput,
       summary: { ...summary, area: null },
     });
@@ -185,7 +213,10 @@ describe("changes/project-pull-request execute", () => {
   it("should preserve a missing legacy prompt version", async () => {
     const { db, records } = buildDbMock();
 
-    await execute({ db }).project({ ...projectionInput, promptVersion: null });
+    await createProjector(db).project({
+      ...projectionInput,
+      promptVersion: null,
+    });
 
     expect(recordFor(records, changesTable).values).toEqual(
       expect.objectContaining({ promptVersion: null }),
@@ -198,6 +229,8 @@ describe("changes/project-pull-request execute", () => {
       transaction: vi.fn(async () => Promise.reject(cause)),
     } as unknown as Database;
 
-    await expect(execute({ db }).project(projectionInput)).rejects.toBe(cause);
+    await expect(createProjector(db).project(projectionInput)).rejects.toBe(
+      cause,
+    );
   });
 });
