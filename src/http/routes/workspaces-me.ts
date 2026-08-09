@@ -1170,6 +1170,129 @@ export const handler = async (
     },
   );
 
+  instance.post(
+    "/api/me/workspaces/by-slug/:slug/summaries/:type/:id/regenerate",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; type?: string; id?: string };
+      const type = params.type ?? "";
+      const id = params.id ?? "";
+      if (!isSummaryType(type) || !uuidPattern.test(id)) {
+        return reply.status(400).send({ error: "invalid_summary_reference" });
+      }
+
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(loaded.team.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+
+      const repo = loaded.workspace.repoFullName?.trim();
+      if (repo === undefined || repo.length === 0) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+
+      let jobType: "process_pr" | "process_push" | "process_release";
+      let payload: Record<string, unknown>;
+      if (type === "pr") {
+        const rows = await input.db
+          .select({ prNumber: pullRequestsTable.prNumber })
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .limit(1);
+        if (rows[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        jobType = "process_pr";
+        payload = { repo, prNumber: rows[0].prNumber, force: true };
+      } else if (type === "push") {
+        const rows = await input.db
+          .select({
+            beforeSha: pushesTable.beforeSha,
+            afterSha: pushesTable.afterSha,
+            branch: pushesTable.branch,
+            pusher: pushesTable.pusher,
+            pushedAt: pushesTable.pushedAt,
+          })
+          .from(pushesTable)
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .limit(1);
+        if (rows[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        jobType = "process_push";
+        payload = {
+          repo,
+          beforeSha: rows[0].beforeSha,
+          afterSha: rows[0].afterSha,
+          branch: rows[0].branch,
+          pusher: rows[0].pusher,
+          pushedAt: rows[0].pushedAt.toISOString(),
+          force: true,
+        };
+      } else {
+        const rows = await input.db
+          .select({
+            beforeSha: releasesTable.beforeSha,
+            afterSha: releasesTable.headSha,
+            branch: releasesTable.branch,
+            releasedAt: releasesTable.createdAt,
+          })
+          .from(releasesTable)
+          .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+          .limit(1);
+        if (rows[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        jobType = "process_release";
+        payload = {
+          repo,
+          beforeSha: rows[0].beforeSha,
+          afterSha: rows[0].afterSha,
+          branch: rows[0].branch,
+          releasedAt: rows[0].releasedAt.toISOString(),
+          force: true,
+        };
+      }
+
+      const now = new Date();
+      await input.db.insert(jobsTable).values({
+        type: jobType,
+        payload,
+        status: "pending",
+        attempts: 0,
+        availableAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return reply.status(202).send({ queued: true, type });
+    },
+  );
+
   instance.get("/api/me/workspaces/by-slug/:slug/stats", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {

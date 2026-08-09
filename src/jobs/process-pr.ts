@@ -16,6 +16,7 @@ import {
 export interface ProcessPrJobPayload {
   repo: string;
   prNumber: number;
+  force: boolean;
 }
 
 export interface ExecuteInput {
@@ -45,7 +46,7 @@ const parsePayload = (payload: Record<string, unknown>): ProcessPrJobPayload => 
     throw new Error("Invalid process_pr payload: prNumber must be a positive integer.");
   }
 
-  return { repo, prNumber };
+  return { repo, prNumber, force: payload.force === true };
 };
 
 export const execute = (input: ExecuteInput) => {
@@ -63,7 +64,7 @@ export const execute = (input: ExecuteInput) => {
           ),
         )
         .limit(1);
-      if (existing.length > 0) {
+      if (existing.length > 0 && !jobPayload.force) {
         return;
       }
 

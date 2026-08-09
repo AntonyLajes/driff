@@ -23,6 +23,7 @@ export interface ProcessPushJobPayload {
   branch: string;
   pusher: string | null;
   pushedAt: Date;
+  force: boolean;
 }
 
 export interface ExecuteInput {
@@ -86,6 +87,7 @@ const parsePayload = (
     branch,
     pusher: pusherValue,
     pushedAt: pushedAtValue,
+    force: payload.force === true,
   };
 };
 
@@ -109,7 +111,7 @@ export const execute = (input: ExecuteInput) => {
           ),
         )
         .limit(1);
-      if (existing.length > 0) {
+      if (existing.length > 0 && !job.force) {
         return;
       }
 
@@ -127,7 +129,7 @@ export const execute = (input: ExecuteInput) => {
           ),
         )
         .limit(1);
-      if (existingPullRequest.length > 0) {
+      if (existingPullRequest.length > 0 && !job.force) {
         console.log(
           `[process_push] skipped ${job.repo}@${job.afterSha.slice(0, 7)} (stored PR head)`,
         );
@@ -182,7 +184,7 @@ export const execute = (input: ExecuteInput) => {
         afterSha: job.afterSha,
         prNumbers: context.prNumbers,
       });
-      if (overlap.skip) {
+      if (overlap.skip && !job.force) {
         console.log(
           `[process_push] skipped ${job.repo}@${job.afterSha.slice(0, 7)} (${overlap.reason})`,
         );

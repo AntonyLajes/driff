@@ -66,6 +66,51 @@ describe("jobs/process-pr execute", () => {
     expect(project).not.toHaveBeenCalled();
   });
 
+  it("regenerates a pull request when force is true", async () => {
+    const { db, insert } = buildDbMock(undefined, [{ id: "existing-pr" }]);
+    const fetchPullRequest = vi.fn(async () => ({
+      repo: "acme/mobile-app",
+      prNumber: 100,
+      title: "feat: checkout",
+      body: null,
+      author: "octocat",
+      mergedAt: new Date("2026-04-25T19:10:00Z"),
+      headSha: "abc123",
+      baseBranch: "main",
+      diff: "diff",
+      files: [],
+    }));
+    const summarizePR = vi.fn(async () => ({
+      title: "Checkout updates",
+      summaryUserFacing: "Users can check out faster.",
+      summaryTechnical: "Refreshes checkout orchestration.",
+      category: "feature" as const,
+      area: "checkout",
+      usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
+    }));
+    const handler = execute({
+      db,
+      promptVersion: 2,
+      source: { fetchPullRequest },
+      summarizer: { summarizePR, prompt: "prompt" },
+      destination: {
+        publishPR: vi.fn(async () => ({ pageId: "notion-page-2" })),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
+    });
+
+    await handler.execute({
+      repo: "acme/mobile-app",
+      prNumber: 100,
+      force: true,
+    });
+
+    expect(fetchPullRequest).toHaveBeenCalledOnce();
+    expect(summarizePR).toHaveBeenCalledOnce();
+    expect(insert).toHaveBeenCalled();
+  });
+
   it("should process pr and upsert pull request", async () => {
     const { db, values, onConflictDoUpdate } = buildDbMock();
     const fetchPullRequest = vi.fn(async () => ({

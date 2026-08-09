@@ -18,6 +18,7 @@ export interface ProcessReleaseJobPayload {
   afterSha: string;
   branch: string;
   releasedAt: Date;
+  force: boolean;
 }
 
 export interface ExecuteInput {
@@ -83,7 +84,14 @@ const parsePayload = (
   ) {
     releasedAtValue = releasedAt;
   }
-  return { repo, beforeSha, afterSha, branch, releasedAt: releasedAtValue };
+  return {
+    repo,
+    beforeSha,
+    afterSha,
+    branch,
+    releasedAt: releasedAtValue,
+    force: payload.force === true,
+  };
 };
 
 const isNullSha = (sha: string): boolean => {
@@ -167,7 +175,7 @@ export const execute = (input: ExecuteInput) => {
           ),
         )
         .limit(1);
-      if (existing.length > 0) {
+      if (existing.length > 0 && !job.force) {
         return;
       }
 
@@ -264,29 +272,36 @@ export const execute = (input: ExecuteInput) => {
           ? existingEraSha
           : effectiveCompareBefore;
 
-      const releaseRows = await input.db
+      const releaseValues = {
+        repo: job.repo,
+        versionKey: context.newVersionKey,
+        shortVersion: context.afterVersion.short,
+        buildVersion: context.afterVersion.build,
+        previousVersionKey: context.previousVersionKey,
+        branch: job.branch,
+        headSha: job.afterSha,
+        beforeSha: effectiveCompareBefore,
+        prNumbers: releasePrNumbers,
+        changelog: notes.changelog,
+        sections: {
+          sections: notes.sections,
+          title: notes.title,
+        } as unknown as Record<string, unknown>,
+        notionPageId: publish.pageId,
+        promptVersion: input.promptVersion,
+        marketingEraStartSha,
+        createdAt: job.releasedAt,
+        updatedAt: new Date(),
+      };
+      const releaseInsert = input.db
         .insert(releasesTable)
-        .values({
-          repo: job.repo,
-          versionKey: context.newVersionKey,
-          shortVersion: context.afterVersion.short,
-          buildVersion: context.afterVersion.build,
-          previousVersionKey: context.previousVersionKey,
-          branch: job.branch,
-          headSha: job.afterSha,
-          beforeSha: effectiveCompareBefore,
-          prNumbers: releasePrNumbers,
-          changelog: notes.changelog,
-          sections: {
-            sections: notes.sections,
-            title: notes.title,
-          } as unknown as Record<string, unknown>,
-          notionPageId: publish.pageId,
-          promptVersion: input.promptVersion,
-          marketingEraStartSha,
-          createdAt: job.releasedAt,
-          updatedAt: new Date(),
-        })
+        .values(releaseValues);
+      const releaseRows = await (job.force
+        ? releaseInsert.onConflictDoUpdate({
+            target: [releasesTable.repo, releasesTable.versionKey],
+            set: releaseValues,
+          })
+        : releaseInsert)
         .returning({
           id: releasesTable.id,
           createdAt: releasesTable.createdAt,

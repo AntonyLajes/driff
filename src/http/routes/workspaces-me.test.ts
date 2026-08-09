@@ -1447,6 +1447,40 @@ describe("http/routes/workspaces-me", () => {
     expect(response.json()).toMatchObject({ error: "invalid_body" });
   });
 
+  it("queues a forced PR summary regeneration", async () => {
+    const summaryId = "00000000-0000-4000-8000-000000000b41";
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(detailSelect([{ prNumber: 16 }]));
+    const values = vi.fn(async () => undefined);
+    const insert = vi.fn(() => ({ values }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select, insert } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/workspaces/by-slug/ride-pack/summaries/pr/${summaryId}/regenerate`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ queued: true, type: "pr" });
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "process_pr",
+        status: "pending",
+        payload: {
+          repo: "AntonyLajes/ride-pack",
+          prNumber: 16,
+          force: true,
+        },
+      }),
+    );
+  });
+
   it("returns 404 when the summary detail row does not exist for the repo", async () => {
     const select = vi
       .fn()
