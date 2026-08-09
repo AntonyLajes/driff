@@ -21,6 +21,7 @@
     "lab:validate": "tsx src/lab/validate-scenario.ts",
     "lab:verify": "tsx src/lab/verify-lab.ts",
     "lab:replay": "tsx src/lab/replay-lab.ts",
+    "ask:evaluate": "tsx src/ask/evaluate-golden-corpus.ts",
     "canonical:backfill": "tsx src/cli/backfill-workspace.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
