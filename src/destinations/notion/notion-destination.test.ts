@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { execute } from "@/destinations/notion/notion-destination.js";
-import type { PRSummary, ReleaseNotesSummary } from "@/destinations/destination.js";
+import type {
+  PRSummary,
+  PushSummary,
+  ReleaseNotesSummary,
+} from "@/destinations/destination.js";
 
 const summary: PRSummary = {
   repo: "acme/mobile-app",
@@ -73,27 +77,19 @@ describe("destinations/notion/notion-destination execute", () => {
     expect(createInput.properties.Area.rich_text).toEqual([]);
   });
 
-  it("should throw when publishing a PR without a PR database id", async () => {
+  it("should skip publishing a PR when its database is not configured", async () => {
+    const create = vi.fn(async () => ({ id: "x" }));
     const destination = execute({
       token: "notion-token",
       notionClientFactory: () => ({
-        pages: { create: vi.fn(async () => ({ id: "x" })) },
+        pages: { create },
       }),
     });
-    await expect(
-      destination.publishPR({
-        repo: "acme/app",
-        prNumber: 1,
-        title: "t",
-        author: "a",
-        mergedAt: new Date("2026-01-01T00:00:00.000Z"),
-        summaryUserFacing: "u",
-        summaryTechnical: "tech",
-        category: "feature",
-        area: null,
-        prUrl: "https://example.com/pr/1",
-      }),
-    ).rejects.toThrow(/PR database id is not configured/i);
+
+    const result = await destination.publishPR(summary);
+
+    expect(result).toEqual({ pageId: "" });
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("should throw when token is missing", () => {
@@ -152,5 +148,46 @@ describe("destinations/notion/notion-destination execute", () => {
         }),
       }),
     );
+  });
+
+  it("should skip release and push publishing when their databases are not configured", async () => {
+    const create = vi.fn(async () => ({ id: "x" }));
+    const destination = execute({
+      token: "notion-token",
+      notionClientFactory: () => ({ pages: { create } }),
+    });
+    const releaseSummary: ReleaseNotesSummary = {
+      title: "2.0.0 (50)",
+      repo: "acme/ios",
+      branch: "main",
+      newVersionKey: "2.0.0+50",
+      previousVersionKey: "1.9.0+49",
+      shortVersion: "2.0.0",
+      buildVersion: "50",
+      compareUrl: "https://github.com/acme/ios/compare/1.9...2.0",
+      prNumbers: [10],
+      changelog: "Faster checkout.",
+      sections: [],
+    };
+    const pushSummary: PushSummary = {
+      repo: "acme/ios",
+      branch: "main",
+      beforeSha: "before",
+      afterSha: "after",
+      pusher: "octocat",
+      pushedAt: new Date("2026-01-01T00:00:00.000Z"),
+      title: "Improve checkout",
+      summaryUserFacing: "Checkout is faster.",
+      summaryTechnical: "Optimizes the checkout query.",
+      category: "feature",
+      area: "checkout",
+      compareUrl: "https://github.com/acme/ios/compare/before...after",
+      commitCount: 1,
+      prNumbers: [],
+    };
+
+    await expect(destination.publishRelease(releaseSummary)).resolves.toEqual({ pageId: "" });
+    await expect(destination.publishPush(pushSummary)).resolves.toEqual({ pageId: "" });
+    expect(create).not.toHaveBeenCalled();
   });
 });
