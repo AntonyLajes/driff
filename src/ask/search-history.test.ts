@@ -227,7 +227,10 @@ describe("ask/search-history execute", () => {
   });
 
   it("should recover a cited change when the query contains a small typo", async () => {
-    const buttonChange = change("16", "Improve button feedback on Home");
+    const buttonChange = change(
+      "16",
+      "Improve touch feedback on Home quick action buttons",
+    );
     const unrelated = change("15", "Estimate fuel stops on ride cards");
     const timelineReader = vi.fn(async () =>
       page([], [unrelated, buttonChange]),

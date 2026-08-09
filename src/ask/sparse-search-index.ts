@@ -124,7 +124,7 @@ export const buildSearchChunks = (input: SearchDocumentInput): SearchChunk[] =>
     };
   }).filter((chunk) => chunk.text.length > 0);
 
-const MIN_SEMANTIC_SIMILARITY = 0.52;
+const MIN_SEMANTIC_SIMILARITY = 0.4;
 
 /** Hybrid exact + sparse-semantic rank. Exact matches preserve the established
  * V1 ranking; the embedding contributes only when a term was not found exactly. */

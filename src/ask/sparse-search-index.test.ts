@@ -66,6 +66,20 @@ describe("ask/sparse-search-index", () => {
     expect(scoreSearchChunks(fuelDocument, ["buton"])).toBe(0);
   });
 
+  it("matches a typo against an inflected document term", () => {
+    const plural = buildSearchChunks({
+      title: "Improve touch feedback on Home quick action buttons",
+      summaryExecutive: null,
+      summaryTechnical: null,
+      category: "feature",
+      areas: ["home"],
+      contributors: ["AntonyLajes"],
+      evidence: ["pull request 16"],
+    });
+
+    expect(scoreSearchChunks(plural, ["buton"])).toBeGreaterThan(0);
+  });
+
   it("omits empty optional chunks", () => {
     const chunks = buildSearchChunks({
       title: "Release",
