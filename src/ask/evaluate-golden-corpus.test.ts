@@ -47,14 +47,26 @@ describe("ask/evaluate-golden-corpus execute", () => {
     const fixture = JSON.parse(raw) as {
       questions: Array<{
         id: string;
-        expected: { changeIds?: string[] };
+        expected: {
+          status: string;
+          mode?: string;
+          version?: string;
+          changeIds?: string[];
+          evidenceUrls: string[];
+          contributors: string[];
+        };
       }>;
     };
     const target = fixture.questions.find(
       (question) => question.id === "home-actions-en",
     );
     if (target === undefined) throw new Error("Expected golden question.");
+    target.expected.status = "no_evidence";
+    target.expected.mode = "version";
+    target.expected.version = "99.0.0";
     target.expected.changeIds = ["change-that-does-not-exist"];
+    target.expected.evidenceUrls = ["https://example.com/missing-evidence"];
+    target.expected.contributors = ["missing-contributor"];
     const failingPath = join(directory, "failing-corpus.json");
     await writeFile(failingPath, JSON.stringify(fixture), "utf8");
 
@@ -67,7 +79,14 @@ describe("ask/evaluate-golden-corpus execute", () => {
     ).toEqual(
       expect.objectContaining({
         passed: false,
-        failures: ["missing expected change change-that-does-not-exist"],
+        failures: expect.arrayContaining([
+          "expected status no_evidence, received answered",
+          "expected mode version, received change",
+          "expected version 99.0.0, received none",
+          "missing expected change change-that-does-not-exist",
+          "missing expected evidence https://example.com/missing-evidence",
+          "missing expected contributor missing-contributor",
+        ]),
       }),
     );
   });
