@@ -20,6 +20,7 @@ import {
   pullRequestsTable,
   pushesTable,
   releasesTable,
+  summaryCorrectionsTable,
   workspaceDestinationsTable,
   workspaceSettingsTable,
   workspacesTable,
@@ -1037,8 +1038,25 @@ export const handler = async (
 
       const now = new Date();
       const body = parsedBody.data;
+      let beforeUserFacing: string | null;
+      let beforeTechnical: string | null;
+      let sourceRecordType: string;
       let updated: Array<{ id: string }>;
       if (type === "pr") {
+        const current = await input.db
+          .select({
+            summaryUserFacing: pullRequestsTable.summaryUserFacing,
+            summaryTechnical: pullRequestsTable.summaryTechnical,
+          })
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .limit(1);
+        if (current[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        beforeUserFacing = current[0].summaryUserFacing;
+        beforeTechnical = current[0].summaryTechnical;
+        sourceRecordType = "pull_requests";
         updated = await input.db
           .update(pullRequestsTable)
           .set({
@@ -1049,6 +1067,20 @@ export const handler = async (
           .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
           .returning({ id: pullRequestsTable.id });
       } else if (type === "push") {
+        const current = await input.db
+          .select({
+            summaryUserFacing: pushesTable.summaryUserFacing,
+            summaryTechnical: pushesTable.summaryTechnical,
+          })
+          .from(pushesTable)
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .limit(1);
+        if (current[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        beforeUserFacing = current[0].summaryUserFacing;
+        beforeTechnical = current[0].summaryTechnical;
+        sourceRecordType = "pushes";
         updated = await input.db
           .update(pushesTable)
           .set({
@@ -1059,6 +1091,17 @@ export const handler = async (
           .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
           .returning({ id: pushesTable.id });
       } else {
+        const current = await input.db
+          .select({ changelog: releasesTable.changelog })
+          .from(releasesTable)
+          .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+          .limit(1);
+        if (current[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        beforeUserFacing = current[0].changelog;
+        beforeTechnical = null;
+        sourceRecordType = "releases";
         updated = await input.db
           .update(releasesTable)
           .set({ changelog: body.summaryUserFacing, updatedAt: now })
@@ -1069,6 +1112,17 @@ export const handler = async (
       if (updated.length === 0) {
         return reply.status(404).send({ error: "summary_not_found" });
       }
+      await input.db.insert(summaryCorrectionsTable).values({
+        workspaceId: loaded.workspace.id,
+        sourceRecordType,
+        sourceRecordId: id,
+        editedByUserId: session.userId,
+        beforeUserFacing,
+        beforeTechnical,
+        afterUserFacing: body.summaryUserFacing,
+        afterTechnical: type === "version" ? null : (body.summaryTechnical ?? null),
+        createdAt: now,
+      });
       return reply.send({ updated: true, updatedAt: now.toISOString() });
     },
   );

@@ -14,6 +14,7 @@ import {
   projectVersionsTable,
   promptsTable,
   pullRequestsTable,
+  summaryCorrectionsTable,
   userSourceConnectionsTable,
   usersTable,
   webhookEventsTable,
@@ -89,6 +90,28 @@ describe("db/schema tables", () => {
     expect(config.uniqueConstraints.length).toBe(1);
     // teamIdIdx + userIdIdx + partial unique index on (sourceProvider, repoFullName)
     expect(config.indexes.length).toBe(3);
+  });
+
+  it("should keep an immutable audit trail for summary corrections", () => {
+    const columns = getTableColumns(summaryCorrectionsTable);
+    const config = getTableConfig(summaryCorrectionsTable);
+
+    expect(columns.workspaceId).toBeDefined();
+    expect(columns.sourceRecordType).toBeDefined();
+    expect(columns.sourceRecordId).toBeDefined();
+    expect(columns.editedByUserId).toBeDefined();
+    expect(columns.beforeUserFacing).toBeDefined();
+    expect(columns.beforeTechnical).toBeDefined();
+    expect(columns.afterUserFacing).toBeDefined();
+    expect(columns.afterTechnical).toBeDefined();
+    expect(columns.createdAt).toBeDefined();
+    expect(config.foreignKeys.length).toBe(2);
+    expect(config.indexes.map((candidate) => candidate.config.name)).toEqual(
+      expect.arrayContaining([
+        "summary_corrections_record_created_at_idx",
+        "summary_corrections_workspace_created_at_idx",
+      ]),
+    );
   });
 
   it("should define user_source_connections for per-provider OAuth tokens", () => {

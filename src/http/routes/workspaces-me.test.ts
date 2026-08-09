@@ -1346,14 +1346,24 @@ describe("http/routes/workspaces-me", () => {
     const summaryId = "00000000-0000-4000-8000-000000000b41";
     const select = vi
       .fn()
-      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(
+        detailSelect([
+          {
+            summaryUserFacing: "Old customer impact.",
+            summaryTechnical: "Old implementation.",
+          },
+        ]),
+      );
     const returning = vi.fn(async () => [{ id: summaryId }]);
     const where = vi.fn(() => ({ returning }));
     const set = vi.fn(() => ({ where }));
     const update = vi.fn(() => ({ set }));
+    const values = vi.fn(async () => undefined);
+    const insert = vi.fn(() => ({ values }));
     const server = fastify({ logger: false });
     servers.push(server);
-    await handler(server, { db: { select, update } as never, jwtSecret });
+    await handler(server, { db: { select, update, insert } as never, jwtSecret });
     await server.ready();
 
     const response = await server.inject({
@@ -1373,6 +1383,19 @@ describe("http/routes/workspaces-me", () => {
       expect.objectContaining({
         summaryUserFacing: "Customers can now plan fuel stops.",
         summaryTechnical: "Adds deterministic stop estimates.",
+      }),
+    );
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: feedWorkspaceRow.id,
+        sourceRecordType: "pull_requests",
+        sourceRecordId: summaryId,
+        editedByUserId: "00000000-0000-4000-8000-000000000099",
+        beforeUserFacing: "Old customer impact.",
+        beforeTechnical: "Old implementation.",
+        afterUserFacing: "Customers can now plan fuel stops.",
+        afterTechnical: "Adds deterministic stop estimates.",
       }),
     );
   });

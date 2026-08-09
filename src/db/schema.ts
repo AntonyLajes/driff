@@ -386,6 +386,39 @@ export const workspacesTable = pgTable(
   }),
 );
 
+/** Immutable audit trail for human corrections made to generated summaries. */
+export const summaryCorrectionsTable = pgTable(
+  "summary_corrections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    sourceRecordType: text("source_record_type").notNull(),
+    sourceRecordId: uuid("source_record_id").notNull(),
+    editedByUserId: uuid("edited_by_user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    beforeUserFacing: text("before_user_facing"),
+    beforeTechnical: text("before_technical"),
+    afterUserFacing: text("after_user_facing").notNull(),
+    afterTechnical: text("after_technical"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    recordCreatedAtIdx: index("summary_corrections_record_created_at_idx").on(
+      table.sourceRecordType,
+      table.sourceRecordId,
+      table.createdAt,
+    ),
+    workspaceCreatedAtIdx: index(
+      "summary_corrections_workspace_created_at_idx",
+    ).on(table.workspaceId, table.createdAt),
+  }),
+);
+
 export interface HistoryImportFailure {
   sourceKind: "pull_request" | "release" | "commit";
   sourceKey: string;
