@@ -322,6 +322,29 @@ export const handler = async (
       const targetChangeIds = new Set(
         targetVersion.changes.map((change) => change.id),
       );
+      const activeLineage = (
+        change: (typeof baseVersion.changes)[number],
+      ) => {
+        const active = (change.lineages ?? []).filter(
+          (lineage) => lineage.status !== "merged",
+        );
+        return active.length === 1 ? (active[0] ?? null) : null;
+      };
+      const baseByLineage = new Map(
+        baseVersion.changes.flatMap((change) => {
+          const lineage = activeLineage(change);
+          return lineage === null ? [] : [[lineage.id, change] as const];
+        }),
+      );
+      const evolved = targetVersion.changes.flatMap((change) => {
+        const lineage = activeLineage(change);
+        if (lineage === null) return [];
+        const previous = baseByLineage.get(lineage.id);
+        if (previous === undefined || previous.id === change.id) return [];
+        return [{ lineage, from: previous, to: change }];
+      });
+      const evolvedBaseIds = new Set(evolved.map((item) => item.from.id));
+      const evolvedTargetIds = new Set(evolved.map((item) => item.to.id));
 
       return reply.send({
         workspace,
@@ -329,15 +352,20 @@ export const handler = async (
         targetVersion,
         comparison: {
           onlyInBase: baseVersion.changes.filter(
-            (change) => !targetChangeIds.has(change.id),
+            (change) =>
+              !targetChangeIds.has(change.id) &&
+              !evolvedBaseIds.has(change.id),
           ),
           onlyInTarget: targetVersion.changes.filter(
-            (change) => !baseChangeIds.has(change.id),
+            (change) =>
+              !baseChangeIds.has(change.id) &&
+              !evolvedTargetIds.has(change.id),
           ),
           shared: targetVersion.changes.filter((change) =>
             baseChangeIds.has(change.id),
           ),
-          classification: "snapshot",
+          evolved,
+          classification: evolved.length > 0 ? "lineage" : "snapshot",
         },
       });
     },

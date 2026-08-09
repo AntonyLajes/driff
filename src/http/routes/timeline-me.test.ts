@@ -355,6 +355,7 @@ describe("http/routes/timeline-me", () => {
         onlyInBase: [baseChange],
         onlyInTarget: [targetChange],
         shared: [sharedChange],
+        evolved: [],
         classification: "snapshot",
       },
     });
@@ -364,6 +365,67 @@ describe("http/routes/timeline-me", () => {
         versionIds: [BASE_VERSION_ID, VERSION_ID],
       }),
     );
+  });
+
+  it("should pair changes from the same verified lineage as an evolution", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+    ]);
+    const lineage = {
+      id: "00000000-0000-4000-8000-0000000000dd",
+      key: "home-quick-actions",
+      title: "Home quick actions",
+      description: null,
+      status: "active",
+      source: "rule",
+      confidence: 92,
+      relationType: "modified",
+      assignmentSource: "rule",
+      assignmentConfidence: 100,
+      correctedAt: null,
+    };
+    const baseChange = {
+      ...canonicalChange("change-base", "Add Home quick actions"),
+      lineages: [{ ...lineage, relationType: "introduced" }],
+    };
+    const targetChange = {
+      ...canonicalChange("change-target", "Improve Home quick actions"),
+      lineages: [lineage],
+    };
+    const baseVersion = canonicalVersion(BASE_VERSION_ID, "1.3.3", [
+      baseChange,
+    ]);
+    const targetVersion = canonicalVersion(VERSION_ID, "1.3.4", [
+      targetChange,
+    ]);
+    const timelineReader = vi.fn(async () => ({
+      versions: [targetVersion, baseVersion],
+      inDevelopment: null,
+      pageInfo: { hasNextPage: false, nextCursor: null },
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      timelineReader,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/versions/${BASE_VERSION_ID}/compare/${VERSION_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().comparison).toEqual({
+      onlyInBase: [],
+      onlyInTarget: [],
+      shared: [],
+      evolved: [{ lineage, from: baseChange, to: targetChange }],
+      classification: "lineage",
+    });
   });
 
   it("should reject comparing a version with itself", async () => {

@@ -135,6 +135,22 @@ describe("timeline/read-timeline execute", () => {
           metadata: { branch: "main" },
         },
       ]),
+      joinedWhereQuery([
+        {
+          changeId: "change-released",
+          id: "lineage-checkout",
+          key: "checkout-payments",
+          title: "Checkout payments",
+          description: null,
+          status: "active",
+          source: "rule",
+          confidence: 88,
+          relationType: "introduced",
+          assignmentSource: "rule",
+          assignmentConfidence: 92,
+          correctedAt: null,
+        },
+      ]),
     ]);
 
     const result = await execute({
@@ -163,6 +179,12 @@ describe("timeline/read-timeline execute", () => {
             areas: [expect.objectContaining({ slug: "checkout" })],
             contributors: [expect.objectContaining({ role: "pr_author" })],
             evidence: [expect.objectContaining({ kind: "pull_request" })],
+            lineages: [
+              expect.objectContaining({
+                id: "lineage-checkout",
+                relationType: "introduced",
+              }),
+            ],
           }),
         ],
       }),
@@ -177,7 +199,7 @@ describe("timeline/read-timeline execute", () => {
         }),
       ],
     });
-    expect(db.select).toHaveBeenCalledTimes(6);
+    expect(db.select).toHaveBeenCalledTimes(7);
   });
 
   it("should omit in-development changes on subsequent cursor pages", async () => {
@@ -232,6 +254,7 @@ describe("timeline/read-timeline execute", () => {
       whereQuery([]),
       joinedWhereQuery([]),
       orderedQuery([]),
+      joinedWhereQuery([]),
     ]);
 
     const result = await execute({
@@ -252,7 +275,7 @@ describe("timeline/read-timeline execute", () => {
       hasNextPage: false,
       nextCursor: null,
     });
-    expect(db.select).toHaveBeenCalledTimes(5);
+    expect(db.select).toHaveBeenCalledTimes(6);
   });
 
   it("should load two selected version snapshots in one relation pass", async () => {
@@ -269,6 +292,7 @@ describe("timeline/read-timeline execute", () => {
       whereQuery([]),
       joinedWhereQuery([]),
       orderedQuery([]),
+      joinedWhereQuery([]),
     ]);
 
     const result = await execute({
@@ -296,6 +320,6 @@ describe("timeline/read-timeline execute", () => {
       hasNextPage: false,
       nextCursor: null,
     });
-    expect(db.select).toHaveBeenCalledTimes(5);
+    expect(db.select).toHaveBeenCalledTimes(6);
   });
 });

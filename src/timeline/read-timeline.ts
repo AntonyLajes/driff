@@ -15,6 +15,8 @@ import {
   changeAreasTable,
   changeContributorsTable,
   changeEvidenceTable,
+  changeLineageEntriesTable,
+  changeLineagesTable,
   changesTable,
   productAreasTable,
   projectVersionsTable,
@@ -210,6 +212,30 @@ export const execute = async (input: ExecuteInput) => {
             desc(changeEvidenceTable.occurredAt),
             desc(changeEvidenceTable.id),
           );
+  const lineageRows =
+    changeIds.length === 0
+      ? []
+      : await input.db
+          .select({
+            changeId: changeLineageEntriesTable.changeId,
+            id: changeLineagesTable.id,
+            key: changeLineagesTable.key,
+            title: changeLineagesTable.title,
+            description: changeLineagesTable.description,
+            status: changeLineagesTable.status,
+            source: changeLineagesTable.source,
+            confidence: changeLineagesTable.confidence,
+            relationType: changeLineageEntriesTable.relationType,
+            assignmentSource: changeLineageEntriesTable.source,
+            assignmentConfidence: changeLineageEntriesTable.confidence,
+            correctedAt: changeLineageEntriesTable.correctedAt,
+          })
+          .from(changeLineageEntriesTable)
+          .innerJoin(
+            changeLineagesTable,
+            eq(changeLineageEntriesTable.lineageId, changeLineagesTable.id),
+          )
+          .where(inArray(changeLineageEntriesTable.changeId, changeIds));
 
   const contributorsByChange = new Map<
     string,
@@ -235,43 +261,68 @@ export const execute = async (input: ExecuteInput) => {
     rows.push(row);
     evidenceByChange.set(row.changeId, rows);
   }
+  const lineagesByChange = new Map<
+    string,
+    Array<(typeof lineageRows)[number]>
+  >();
+  for (const row of lineageRows) {
+    const rows = lineagesByChange.get(row.changeId) ?? [];
+    rows.push(row);
+    lineagesByChange.set(row.changeId, rows);
+  }
 
-  const serializeChange = (row: (typeof allChanges)[number]) => ({
-    id: row.id,
-    title: row.title,
-    summaryExecutive: row.summaryExecutive,
-    summaryTechnical: row.summaryTechnical,
-    category: row.category,
-    confidence: row.confidence,
-    firstOccurredAt: row.firstOccurredAt.toISOString(),
-    lastOccurredAt: row.lastOccurredAt.toISOString(),
-    areas: (areasByChange.get(row.id) ?? []).map((area) => ({
-      id: area.id,
-      name: area.name,
-      slug: area.slug,
-      confidence: area.confidence,
-      source: area.source,
-    })),
-    contributors: (contributorsByChange.get(row.id) ?? []).map(
-      (contributor) => ({
-        externalIdentity: contributor.externalIdentity,
-        displayName: contributor.displayName,
-        role: contributor.role,
-        sourceUrl: contributor.sourceUrl,
-      }),
-    ),
-    evidence: (evidenceByChange.get(row.id) ?? []).map((evidence) => ({
-      id: evidence.id,
-      kind: evidence.kind,
-      sourceKey: evidence.sourceKey,
-      externalId: evidence.externalId,
-      url: evidence.url,
-      sha: evidence.sha,
-      path: evidence.path,
-      occurredAt: evidence.occurredAt.toISOString(),
-      metadata: evidence.metadata,
-    })),
-  });
+  const serializeChange = (row: (typeof allChanges)[number]) => {
+    const lineages = (lineagesByChange.get(row.id) ?? []).map((lineage) => ({
+      id: lineage.id,
+      key: lineage.key,
+      title: lineage.title,
+      description: lineage.description,
+      status: lineage.status,
+      source: lineage.source,
+      confidence: lineage.confidence,
+      relationType: lineage.relationType,
+      assignmentSource: lineage.assignmentSource,
+      assignmentConfidence: lineage.assignmentConfidence,
+      correctedAt: lineage.correctedAt?.toISOString() ?? null,
+    }));
+    return {
+      id: row.id,
+      title: row.title,
+      summaryExecutive: row.summaryExecutive,
+      summaryTechnical: row.summaryTechnical,
+      category: row.category,
+      confidence: row.confidence,
+      firstOccurredAt: row.firstOccurredAt.toISOString(),
+      lastOccurredAt: row.lastOccurredAt.toISOString(),
+      areas: (areasByChange.get(row.id) ?? []).map((area) => ({
+        id: area.id,
+        name: area.name,
+        slug: area.slug,
+        confidence: area.confidence,
+        source: area.source,
+      })),
+      contributors: (contributorsByChange.get(row.id) ?? []).map(
+        (contributor) => ({
+          externalIdentity: contributor.externalIdentity,
+          displayName: contributor.displayName,
+          role: contributor.role,
+          sourceUrl: contributor.sourceUrl,
+        }),
+      ),
+      evidence: (evidenceByChange.get(row.id) ?? []).map((evidence) => ({
+        id: evidence.id,
+        kind: evidence.kind,
+        sourceKey: evidence.sourceKey,
+        externalId: evidence.externalId,
+        url: evidence.url,
+        sha: evidence.sha,
+        path: evidence.path,
+        occurredAt: evidence.occurredAt.toISOString(),
+        metadata: evidence.metadata,
+      })),
+      ...(lineages.length === 0 ? {} : { lineages }),
+    };
+  };
 
   const changesByVersion = new Map<
     string,
