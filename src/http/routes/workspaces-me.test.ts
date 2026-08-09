@@ -1649,6 +1649,21 @@ describe("http/routes/workspaces-me", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it.each(protectedWorkspaceRoutes)("rejects an invalid JWT for %s %s", async (method, url) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url,
+      headers: { authorization: "Bearer invalid" },
+      payload: method === "POST" ? {} : method === "PATCH" ? { name: "Updated" } : undefined,
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "invalid_session" });
+  });
+
   const slugWorkspaceRoutes = [
     ["GET", "/summary"],
     ["GET", "/summaries"],
@@ -1691,5 +1706,42 @@ describe("http/routes/workspaces-me", () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: "workspace_not_found" });
+  });
+
+  it.each(slugWorkspaceRoutes)("rejects an invalid team for %s %s", async (method, suffix) => {
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: {} as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url: `/api/me/workspaces/by-slug/ride-pack${suffix}`,
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": "invalid" },
+      payload: method === "POST" ? {} : method === "PATCH" ? { pushSummaryBranches: ["main"] } : undefined,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_team" });
+  });
+
+  it.each(slugWorkspaceRoutes)("rejects a non-member for %s %s", async (method, suffix) => {
+    const select = vi.fn().mockImplementationOnce(() => ({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: vi.fn(async () => []) })),
+        })),
+      })),
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    const response = await server.inject({
+      method,
+      url: `/api/me/workspaces/by-slug/ride-pack${suffix}`,
+      headers: { authorization: `Bearer ${feedToken()}`, "x-team-id": SHARED_TEAM_ID },
+      payload: method === "POST" ? {} : method === "PATCH" ? { pushSummaryBranches: ["main"] } : undefined,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "not_a_team_member" });
   });
 });
