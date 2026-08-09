@@ -37,6 +37,10 @@ import {
   type MeStatsRegistrationInput,
 } from "@/http/routes/me-stats.js";
 import {
+  handler as registerAiUsageMeRoute,
+  type AiUsageMeRegistrationInput,
+} from "@/http/routes/ai-usage-me.js";
+import {
   handler as registerProductFunnelMeRoute,
   type ProductFunnelMeRegistrationInput,
 } from "@/http/routes/product-funnel-me.js";
@@ -75,6 +79,8 @@ export interface ExecuteInput {
   workspacesMe?: WorkspacesMeRegistrationInput;
   /** When set, registers `/api/me/stats` and `/api/me/activity` (Bearer session JWT). */
   meStats?: MeStatsRegistrationInput;
+  /** When set, registers team-scoped aggregate AI token usage. */
+  aiUsageMe?: AiUsageMeRegistrationInput;
   /** When set, registers privacy-preserving first-value funnel aggregates. */
   productFunnelMe?: ProductFunnelMeRegistrationInput;
   /** When set, registers `/api/me/teams` (Bearer session JWT). */
@@ -118,6 +124,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.meStats !== undefined) {
       await registerMeStatsRoute(instance, input.meStats);
+    }
+    if (input.aiUsageMe !== undefined) {
+      await registerAiUsageMeRoute(instance, input.aiUsageMe);
     }
     if (input.productFunnelMe !== undefined) {
       await registerProductFunnelMeRoute(instance, input.productFunnelMe);

@@ -277,6 +277,7 @@ const buildRuntimeDependencies = async (
       historyImportsMe,
       askMe,
       meStats: workspacesMe,
+      aiUsageMe: workspacesMe,
       productFunnelMe: workspacesMe,
       teamsMe:
         workspacesMe !== undefined
