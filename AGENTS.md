@@ -33,7 +33,7 @@ The phased "Phase 1…8" sections further down are the **original build plan** a
 **Three summary pipelines, all live and validated end-to-end:**
 
 - `process_pr` — merged PR → AI summary → destinations. Base-branch filter via `workspace_settings.pr_summary_base_branches` (empty/null = any base).
-- `process_release` — push to the configured release branch that touches the version file (iOS plist/pbxproj or Expo `app.json`) → AI changelog → destinations. Config: `release_project_kind` + `release_version_file_path` (+ `release_version_branch`).
+- `process_release` — version marker → AI changelog → destinations. `workspace_settings.release_version_strategy` selects `version_file` (push touching the configured file/branch), `git_tag` (SemVer tag push), or `github_release` (published, non-draft GitHub Release with a SemVer tag). Tag strategies resolve the tag commit, compare it with the previous projected version, and keep the tag/Release URL as canonical evidence.
 - `process_push` — direct push to a configured branch → AI summary → destinations. Config: `workspace_settings.push_summary_branches`. **Gotcha:** when empty, `buildPushConfig` returns `null` and **no push job is ever enqueued** (it does NOT fall back to the default branch at that layer). **Overlap dedup (implemented):** a push that is really a PR merge or a release version bump is skipped in `process_push` (no duplicate push summary) — see `src/jobs/push-dedup.ts`. Detection is race-free via the sibling `jobs` rows: skip if a `process_release` job shares the push's `afterSha`, or if every PR number the push references (from merge/squash commit messages) has a `process_pr` job. Requiring _all_ referenced PRs to be covered fails safe — a push mixing PR merges with un-summarized direct commits is still published.
 
 **Per-workspace summary language:** `workspace_settings.summary_language` controls all three pipelines and forced regenerations. Supported values are `auto` (default; follow the dominant source language), `en`, and `pt-BR`. Normalize persisted values through `src/config/summary-language.ts`, pass the resolved value through each job into its summarizer input, and include `outputLanguage` in the untrusted JSON user message. Do not duplicate language-specific pipelines or translate code identifiers, version strings, or product names.
@@ -377,6 +377,7 @@ INSERT INTO workspace_settings (
   notion_releases_database_id,
   release_project_kind,
   release_version_file_path,
+  release_version_strategy,
   release_version_branch,
   pr_summary_base_branches
 ) VALUES (
@@ -385,12 +386,15 @@ INSERT INTO workspace_settings (
   'your-notion-releases-database-id',
   'ios_plist',
   'ios/App/Info.plist',
+  'version_file',
   'main',
   '["main"]'::jsonb
 );
 ```
 
-**Preferido (onboarding / “adicionar projeto”):** `release_project_kind` + `release_version_file_path` (sempre os dois). Valores de `release_project_kind`: `ios_plist` (Info.plist), `ios_pbx` (`project.pbxproj`), `react_native_expo` (`app.json` / `app.config.*`). Reservados (ainda sem parser): `android_gradle`, `flutter_pubspec`. O merge em `workspace-settings.ts` mapeia isto para os campos internos usados por `gather-release-context`.
+**Estratégia de versão:** `release_version_strategy` aceita `version_file` (default), `git_tag`, ou `github_release`. `version_file` exige `release_project_kind` + `release_version_file_path` e `release_version_branch`. As estratégias de tag não exigem ficheiro/branch; aceitam apenas SemVer (`v1.2.3`, `2.0.0-rc.1`, etc.). `github_release` ignora drafts e responde apenas ao evento `release.published`. A importação histórica lista tags ou Releases conforme a estratégia e preserva a URL canônica.
+
+**Arquivo de versão:** valores de `release_project_kind`: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`, `node_package`, `python_pyproject`, `rust_cargo`, `java_maven`, e `java_gradle`. O merge em `workspace-settings.ts` mapeia o par para os campos internos usados por `gather-release-context`.
 
 **Legado:** ainda podes preencher só `release_info_plist_path`, `release_project_pbxproj_path`, ou `release_expo_app_config_path` (ou envs equivalentes); o boot infere `release_project_kind` + `release_version_file_path` para UI.
 
@@ -738,11 +742,11 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 ## Phase 2 — Version bump detection (implemented)
 
-**Goal:** When a push to the configured branch updates the app’s visible version (ficheiro definido por `release_project_kind` + `release_version_file_path`, ou caminhos legados plist / pbx / Expo), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
+**Goal:** When the configured version marker changes — file bump, SemVer tag, or published GitHub Release — generate consolidated release notes and persist one row per logical version in `releases` plus `project_versions`.
 
 **Behavior:**
 
-- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH`, (if set) `RELEASE_PROJECT_PBXPROJ_PATH`, or (if set) the Expo app config path — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
+- `version_file`: GitHub `push` to the configured branch, gated by the configured version paths. `git_tag`: `push` to `refs/tags/<semver>`. `github_release`: published, non-draft `release` event with a SemVer tag. Driff consumes markers; creating tags/Releases remains the team's CI responsibility.
 - Job `process_release`: read version sources at the push webhook’s `before` / `after` SHAs (`gather-release-context`: Expo path takes precedence over pbx, then plist). The GitHub compare range for commits/PR hints may use a **wider** left edge: build-only bumps anchor to the latest prior `releases.head_sha` for the same `repo`, `branch`, and `short_version` (fallback: optional `RELEASE_COMPARE_ROOT_SHA`, then webhook `before`); marketing bumps use the earliest stored `marketing_era_start_sha` on the old `short_version`, then the latest prior `head_sha` on that line, then the same fallbacks (`docs/release-compare-windows.md`). If `RELEASE_EXPO_APP_CONFIG_PATH` (or DB column) is set, read `expo.version` and native build fields from that file at each SHA; else if `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` from the pbx; otherwise read the plist. If the plist only contains `$(...)` placeholders and neither pbx nor Expo path is set, the job fails with a clear config error. The GitHub compare range supplies every commit (`compareCommits`); commits that are **not** merge/squash PR lines are passed as `standaloneCommitHints` to the LLM. For each PR number found in that range, matching rows in `pull_requests` (same `repo`) enrich the input with stored `summary_user_facing` when the PR was processed earlier. The prompt `release-changelog.md` returns user-facing **changelog** copy only (no engineering appendix), stored in `releases.changelog`, with optional sectioned bullets; Notion page body shows **Changelog** + sections. Persist the effective compare base in `releases.before_sha` and the marketing-line era anchor in `releases.marketing_era_start_sha` (first row on a `short_version` sets it; later rows reuse it).
 - Idempotency: `releases` has unique (`repo`, `version_key`).
 
@@ -750,7 +754,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 **Notion “Releases” database properties (must match integration):** Title, Repo, Branch, Version, Short Version, Build, Previous Version, URL, PR Numbers (see `notion-destination`).
 
-**Out of scope:** Plist **binary** format, Android versioning **outside** Expo `expo.android.versionCode` in the configured app config, App Store Connect, creating git tags.
+**Out of scope:** Plist **binary** format, App Store Connect, and creating git tags/Releases.
 
 ---
 
