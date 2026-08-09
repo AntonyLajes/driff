@@ -26,6 +26,7 @@
     "ask:evaluate:all": "tsx src/ask/evaluate-golden-suite.ts",
     "canonical:backfill": "tsx src/cli/backfill-workspace.ts",
     "lineages:backfill": "tsx src/cli/backfill-lineages.ts",
+    "areas:normalize": "tsx src/cli/normalize-workspace-areas.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
