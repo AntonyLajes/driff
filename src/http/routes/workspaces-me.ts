@@ -13,6 +13,7 @@ import {
 import type { Database } from "@/db/client.js";
 import {
   jobsTable,
+  productAreasTable,
   pullRequestsTable,
   pushesTable,
   releasesTable,
@@ -150,6 +151,10 @@ const patchWorkspaceSettingsBodySchema = z
       }
     }
   });
+
+const patchProductAreaBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
 
 const repoContentsQuerySchema = z.object({
   path: z.string().max(2048).optional().default(""),
@@ -1077,6 +1082,120 @@ export const handler = async (
       },
     });
   });
+
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/product-areas",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string };
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const areas = await input.db
+        .select({
+          id: productAreasTable.id,
+          name: productAreasTable.name,
+          slug: productAreasTable.slug,
+          rules: productAreasTable.rules,
+          updatedAt: productAreasTable.updatedAt,
+        })
+        .from(productAreasTable)
+        .where(eq(productAreasTable.workspaceId, loaded.workspace.id))
+        .orderBy(productAreasTable.name);
+
+      return reply.send({ areas });
+    },
+  );
+
+  instance.patch(
+    "/api/me/workspaces/by-slug/:slug/product-areas/:areaId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; areaId?: string };
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(loaded.team.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+
+      const parsedAreaId = workspaceIdParamSchema.safeParse(params.areaId);
+      const parsedBody = patchProductAreaBodySchema.safeParse(request.body);
+      if (!parsedAreaId.success || !parsedBody.success) {
+        return reply.status(400).send({ error: "invalid_body" });
+      }
+
+      const rows = await input.db
+        .update(productAreasTable)
+        .set({ name: parsedBody.data.name, updatedAt: new Date() })
+        .where(
+          and(
+            eq(productAreasTable.id, parsedAreaId.data),
+            eq(productAreasTable.workspaceId, loaded.workspace.id),
+          ),
+        )
+        .returning({
+          id: productAreasTable.id,
+          name: productAreasTable.name,
+          slug: productAreasTable.slug,
+          rules: productAreasTable.rules,
+          updatedAt: productAreasTable.updatedAt,
+        });
+      const area = rows[0];
+      if (area === undefined) {
+        return reply.status(404).send({ error: "product_area_not_found" });
+      }
+
+      return reply.send({ area });
+    },
+  );
 
   instance.get("/api/me/workspaces/by-slug/:slug/diagnostics", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);

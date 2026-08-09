@@ -1541,6 +1541,112 @@ describe("http/routes/workspaces-me", () => {
     });
   });
 
+  it("lists manager-facing product areas for a workspace", async () => {
+    const updatedAt = new Date("2026-08-09T18:00:00.000Z");
+    const areaRows = [
+      {
+        id: "00000000-0000-4000-8000-0000000000c1",
+        name: "Home",
+        slug: "home",
+        rules: null,
+        updatedAt,
+      },
+      {
+        id: "00000000-0000-4000-8000-0000000000c2",
+        name: "Ride Creation",
+        slug: "ride-creation",
+        rules: { aliases: ["create ride"] },
+        updatedAt,
+      },
+    ];
+    const orderedSelect = () => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ orderBy: vi.fn(async () => areaRows) })),
+      })),
+    });
+    const select = vi
+      .fn()
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]))
+      .mockImplementationOnce(orderedSelect);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/product-areas",
+      headers: { authorization: `Bearer ${feedToken()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      areas: areaRows.map((area) => ({ ...area, updatedAt: updatedAt.toISOString() })),
+    });
+  });
+
+  it("lets a workspace manager rename a product area without changing its slug", async () => {
+    const areaId = "00000000-0000-4000-8000-0000000000c1";
+    const updatedAt = new Date("2026-08-09T18:00:00.000Z");
+    const returning = vi.fn(async () => [
+      { id: areaId, name: "Home Experience", slug: "home", rules: null, updatedAt },
+    ]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    const select = vi.fn().mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: { select, update: vi.fn(() => ({ set })) } as never,
+      jwtSecret,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/workspaces/by-slug/ride-pack/product-areas/${areaId}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: { name: "  Home Experience  " },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().area).toMatchObject({
+      id: areaId,
+      name: "Home Experience",
+      slug: "home",
+    });
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Home Experience", updatedAt: expect.any(Date) }),
+    );
+  });
+
+  it("blocks a member from renaming a product area in a shared team", async () => {
+    const areaId = "00000000-0000-4000-8000-0000000000c1";
+    const select = vi
+      .fn()
+      .mockImplementationOnce(membershipSelect("member"))
+      .mockImplementationOnce(lookupSelect([feedWorkspaceRow]));
+    const update = vi.fn();
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select, update } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "PATCH",
+      url: `/api/me/workspaces/by-slug/ride-pack/product-areas/${areaId}`,
+      headers: {
+        authorization: `Bearer ${feedToken()}`,
+        "x-team-id": SHARED_TEAM_ID,
+      },
+      payload: { name: "Home Experience" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "insufficient_role" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("updates project identity fields in its active team", async () => {
     const workspaceId = "00000000-0000-4000-8000-0000000000aa";
     const returning = vi.fn(async () => [
