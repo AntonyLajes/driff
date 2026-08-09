@@ -15,9 +15,9 @@ describe("changes/reconcile-workspace-areas", () => {
         { changeId: "change-a", rawArea: "authentication" },
       ],
       [
-        { changeId: "change-a", slug: "authentication" },
-        { changeId: "change-b", slug: "checkout" },
-        { changeId: "change-c", slug: "legacy" },
+        { changeId: "change-a", name: "authentication", slug: "authentication" },
+        { changeId: "change-b", name: "Checkout", slug: "checkout" },
+        { changeId: "change-c", name: "legacy", slug: "legacy" },
       ],
     );
 
@@ -47,9 +47,9 @@ describe("changes/reconcile-workspace-areas", () => {
     const [item] = buildAreaReconciliationPlan(
       [{ changeId: "change", rawArea: "theme" }],
       [
-        { changeId: "change", slug: "theming" },
-        { changeId: "change", slug: "theme" },
-        { changeId: "change", slug: "theme" },
+        { changeId: "change", name: "theming", slug: "theming" },
+        { changeId: "change", name: "Theme", slug: "theme" },
+        { changeId: "change", name: "Theme", slug: "theme" },
       ],
     );
 
@@ -77,6 +77,21 @@ describe("changes/reconcile-workspace-areas", () => {
     );
   });
 
+  it("updates a display name even when the stable slug already matches", () => {
+    const [item] = buildAreaReconciliationPlan(
+      [{ changeId: "home-change", rawArea: "home" }],
+      [{ changeId: "home-change", name: "home", slug: "home" }],
+    );
+
+    expect(item).toEqual(
+      expect.objectContaining({
+        currentSlugs: ["home"],
+        target: { name: "Home", slug: "home" },
+        changed: true,
+      }),
+    );
+  });
+
   it("summarizes dry-run and apply plans with stable target counts", () => {
     const plan = buildAreaReconciliationPlan(
       [
@@ -85,9 +100,9 @@ describe("changes/reconcile-workspace-areas", () => {
         { changeId: "c", rawArea: null },
       ],
       [
-        { changeId: "a", slug: "authentication" },
-        { changeId: "b", slug: "auth" },
-        { changeId: "c", slug: "legacy" },
+        { changeId: "a", name: "authentication", slug: "authentication" },
+        { changeId: "b", name: "Auth", slug: "auth" },
+        { changeId: "c", name: "legacy", slug: "legacy" },
       ],
     );
 

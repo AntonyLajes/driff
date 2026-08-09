@@ -19,6 +19,7 @@ export interface AreaCandidate {
 
 export interface CurrentAreaAssignment {
   changeId: string;
+  name: string;
   slug: string;
 }
 
@@ -67,10 +68,15 @@ export const buildAreaReconciliationPlan = (
   candidates: AreaCandidate[],
   currentAssignments: CurrentAreaAssignment[],
 ): AreaReconciliationItem[] => {
-  const currentByChange = new Map<string, string[]>();
+  const currentByChange = new Map<
+    string,
+    Array<{ name: string; slug: string }>
+  >();
   for (const assignment of currentAssignments) {
     const current = currentByChange.get(assignment.changeId) ?? [];
-    if (!current.includes(assignment.slug)) current.push(assignment.slug);
+    if (!current.some((area) => area.slug === assignment.slug)) {
+      current.push({ name: assignment.name, slug: assignment.slug });
+    }
     currentByChange.set(assignment.changeId, current);
   }
 
@@ -83,14 +89,22 @@ export const buildAreaReconciliationPlan = (
 
   return [...candidateByChange.values()]
     .map((candidate) => {
-      const currentSlugs = [...(currentByChange.get(candidate.changeId) ?? [])].sort();
+      const currentAreas = [
+        ...(currentByChange.get(candidate.changeId) ?? []),
+      ].sort((left, right) => left.slug.localeCompare(right.slug));
+      const currentSlugs = currentAreas.map((area) => area.slug);
       const target = normalizeProductArea(candidate.rawArea);
       const targetSlugs = target === null ? [] : [target.slug];
+      const nameChanged =
+        target !== null &&
+        currentAreas.length === 1 &&
+        currentAreas[0]?.slug === target.slug &&
+        currentAreas[0].name !== target.name;
       return {
         ...candidate,
         currentSlugs,
         target,
-        changed: !sameSlugs(currentSlugs, targetSlugs),
+        changed: !sameSlugs(currentSlugs, targetSlugs) || nameChanged,
       };
     })
     .sort((left, right) => left.changeId.localeCompare(right.changeId));
@@ -146,6 +160,7 @@ const loadCurrentAssignments = async (
   db
     .select({
       changeId: changeAreasTable.changeId,
+      name: productAreasTable.name,
       slug: productAreasTable.slug,
     })
     .from(changeAreasTable)
