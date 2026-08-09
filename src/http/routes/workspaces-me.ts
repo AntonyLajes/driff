@@ -38,6 +38,7 @@ import {
   resolveTeamContext,
 } from "@/teams/team-context.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
+import { execute as deleteWorkspaceData } from "@/workspaces/delete-workspace-data.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
@@ -2367,25 +2368,12 @@ export const handler = async (
       return reply.status(404).send({ error: "workspace_not_found" });
     }
 
-    // Wipe the repo's summary history so a recreated workspace reprocesses from scratch.
-    // Summary tables are keyed on `repo` only (no workspace FK); `(provider, repo)` uniqueness
-    // guarantees a single workspace owns the repo, so deleting by repo name is safe today.
-    const repo = ownedRow.repoFullName?.trim();
-    if (repo !== undefined && repo.length > 0) {
-      await input.db.delete(pullRequestsTable).where(eq(pullRequestsTable.repo, repo));
-      await input.db.delete(releasesTable).where(eq(releasesTable.repo, repo));
-      await input.db.delete(pushesTable).where(eq(pushesTable.repo, repo));
-    }
-
-    // Delete the workspace last (workspace_settings cascades via FK).
-    await input.db
-      .delete(workspacesTable)
-      .where(
-        and(
-          eq(workspacesTable.id, workspaceId),
-          eq(workspacesTable.teamId, team.context.teamId),
-        ),
-      );
+    await deleteWorkspaceData({
+      db: input.db,
+      workspaceId,
+      teamId: team.context.teamId,
+      repoFullName: ownedRow.repoFullName,
+    });
 
     return reply.status(204).send();
   });

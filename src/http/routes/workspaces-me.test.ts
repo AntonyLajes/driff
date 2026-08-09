@@ -5,6 +5,13 @@ import { signSessionJwt } from "@/auth/session-jwt.js";
 import { DEFAULT_HISTORY_EXCLUDED_PATHS } from "@/config/history-content-filter.js";
 import { handler } from "@/http/routes/workspaces-me.js";
 
+const { deleteWorkspaceDataMock } = vi.hoisted(() => ({
+  deleteWorkspaceDataMock: vi.fn(),
+}));
+vi.mock("@/workspaces/delete-workspace-data.js", () => ({
+  execute: deleteWorkspaceDataMock,
+}));
+
 vi.mock("@/workspaces/infer-workspace-settings.js", () => ({
   inferAndApplyWorkspaceSettings: vi.fn(),
 }));
@@ -40,6 +47,7 @@ describe("http/routes/workspaces-me", () => {
     vi.mocked(loadUserGithubAccessToken).mockReset();
     pullsListMock.mockReset();
     reposGetContentMock.mockReset();
+    deleteWorkspaceDataMock.mockReset();
   });
 
   const jwtSecret = "a".repeat(32);
@@ -576,9 +584,7 @@ describe("http/routes/workspaces-me", () => {
         })),
       })),
     }));
-    const deleteWhere = vi.fn(async () => undefined);
-    const deleteFn = vi.fn(() => ({ where: deleteWhere }));
-    const db = { select, delete: deleteFn } as never;
+    const db = { select } as never;
 
     const server = fastify({ logger: false });
     servers.push(server);
@@ -592,8 +598,12 @@ describe("http/routes/workspaces-me", () => {
     });
 
     expect(response.statusCode).toBe(204);
-    // 3 summary-table deletes + the workspace delete
-    expect(deleteFn).toHaveBeenCalledTimes(4);
+    expect(deleteWorkspaceDataMock).toHaveBeenCalledWith({
+      db,
+      workspaceId,
+      teamId: expect.any(String),
+      repoFullName: "AntonyLajes/ride-pack",
+    });
   });
 
   it("returns 404 when deleting a workspace the user does not own", async () => {
