@@ -177,8 +177,8 @@ describe("changes/project-push execute", () => {
     expect(recordFor(records, productAreasTable).values).toEqual(
       expect.objectContaining({
         workspaceId: projectionInput.workspaceId,
-        name: "Pagamentos / Checkout",
-        slug: "pagamentos-checkout",
+        name: "Checkout",
+        slug: "checkout",
       }),
     );
     expect(recordFor(records, changeAreasTable).values).toEqual(
@@ -197,7 +197,7 @@ describe("changes/project-push execute", () => {
         workspaceId: projectionInput.workspaceId,
         title: summary.title,
         category: "bugfix",
-        areaSlug: "pagamentos-checkout",
+        areaSlug: "checkout",
         filePaths: ["src/checkout.ts"],
       }),
     );

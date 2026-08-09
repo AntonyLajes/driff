@@ -1,4 +1,5 @@
 import { execute as buildCanonicalId } from "@/changes/canonical-id.js";
+import { normalizeProductArea } from "@/changes/normalize-product-area.js";
 import type { Database } from "@/db/client.js";
 import {
   changeAreasTable,
@@ -34,15 +35,6 @@ export interface ExecuteInput {
   lineageProjector?: typeof projectLineageChange;
 }
 
-const slugify = (value: string): string =>
-  value
-    .normalize("NFKD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/gu, "-")
-    .replace(/^-+|-+$/gu, "");
-
 const extractFilePaths = (summary: string): string[] =>
   summary
     .split("\n")
@@ -65,18 +57,17 @@ export const execute = ({
       pushSourceKey,
     );
     const now = new Date();
-    const areaName = input.summary.area?.trim() ?? "";
-    const areaSlug = slugify(areaName);
+    const normalizedArea = normalizeProductArea(input.summary.area);
     const projectedArea =
-      areaSlug.length === 0
+      normalizedArea === null
         ? null
         : {
+            ...normalizedArea,
             id: buildCanonicalId(
               "product-area",
               input.workspaceId,
-              areaSlug,
+              normalizedArea.slug,
             ),
-            slug: areaSlug,
           };
     const filePaths = extractFilePaths(input.context.fileChangeSummary);
 
@@ -175,13 +166,13 @@ export const execute = ({
           .values({
             id: projectedArea.id,
             workspaceId: input.workspaceId,
-            name: areaName,
+            name: projectedArea.name,
             slug: projectedArea.slug,
             updatedAt: now,
           })
           .onConflictDoUpdate({
             target: [productAreasTable.workspaceId, productAreasTable.slug],
-            set: { name: areaName, updatedAt: now },
+            set: { name: projectedArea.name, updatedAt: now },
           });
 
         await tx

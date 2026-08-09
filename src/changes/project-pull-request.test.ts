@@ -153,8 +153,8 @@ describe("changes/project-pull-request execute", () => {
     expect(recordFor(records, productAreasTable).values).toEqual(
       expect.objectContaining({
         workspaceId: projectionInput.workspaceId,
-        name: "Pagamentos / Checkout",
-        slug: "pagamentos-checkout",
+        name: "Checkout",
+        slug: "checkout",
       }),
     );
     expect(recordFor(records, changeAreasTable).values).toEqual(
@@ -176,7 +176,7 @@ describe("changes/project-pull-request execute", () => {
         title: summary.title,
         category: summary.category,
         areaId: idFrom(recordFor(records, productAreasTable)),
-        areaSlug: "pagamentos-checkout",
+        areaSlug: "checkout",
         filePaths: pullRequest.files.map((file) => file.path),
       }),
     );
