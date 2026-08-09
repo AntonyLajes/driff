@@ -673,6 +673,7 @@ describe("http/routes/teams-me", () => {
       headers: { authorization: `Bearer ${token()}` },
     });
     expect(ok.statusCode).toBe(204);
+    expect(deleteFn).toHaveBeenCalledTimes(2);
 
     const adminSelect = vi
       .fn()
@@ -735,7 +736,7 @@ describe("http/routes/teams-me", () => {
     });
 
     expect(response.statusCode).toBe(204);
-    expect(deleteFn).toHaveBeenCalledOnce();
+    expect(deleteFn).toHaveBeenCalledTimes(2);
   });
 
   it("lets an owner rename a team and blocks renaming the personal team", async () => {
@@ -1084,7 +1085,7 @@ describe("http/routes/teams-me", () => {
       headers: { authorization: `Bearer ${token()}` },
     });
     expect(response.statusCode).toBe(204);
-    expect(del).toHaveBeenCalledOnce();
+    expect(del).toHaveBeenCalledTimes(2);
   });
 
   it("validates team renames and handles a disappeared team", async () => {

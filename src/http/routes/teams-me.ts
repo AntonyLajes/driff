@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
@@ -13,6 +13,8 @@ import {
   teamMembersTable,
   teamsTable,
   usersTable,
+  workspaceMemberAccessTable,
+  workspacesTable,
 } from "@/db/schema.js";
 import { sendInviteEmail } from "@/email/send-invite-email.js";
 import { slugifyWorkspaceName } from "@/lib/workspace-slug.js";
@@ -685,6 +687,21 @@ export const handler = async (
     return rows[0];
   };
 
+  const revokeWorkspaceGrants = async (teamId: string, targetUserId: string) => {
+    await input.db
+      .delete(workspaceMemberAccessTable)
+      .where(
+        and(
+          eq(workspaceMemberAccessTable.userId, targetUserId),
+          sql`EXISTS (
+            SELECT 1 FROM ${workspacesTable}
+            WHERE ${workspacesTable.id} = ${workspaceMemberAccessTable.workspaceId}
+              AND ${workspacesTable.teamId} = ${teamId}
+          )`,
+        ),
+      );
+  };
+
   instance.patch(
     "/api/me/teams/:teamId/members/:userId",
     async (request, reply) => {
@@ -776,6 +793,7 @@ export const handler = async (
       if (target.role === "admin" && !canManageAdmins(role)) {
         return reply.status(403).send({ error: "insufficient_role" });
       }
+      await revokeWorkspaceGrants(teamId, targetId);
       await input.db
         .delete(teamMembersTable)
         .where(
@@ -828,6 +846,7 @@ export const handler = async (
         return reply.status(409).send({ error: "last_owner" });
       }
     }
+    await revokeWorkspaceGrants(teamId, session.userId);
     await input.db
       .delete(teamMembersTable)
       .where(
