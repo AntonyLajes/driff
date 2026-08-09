@@ -10,12 +10,14 @@ import {
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import { sealSecret } from "@/auth/token-aes.js";
 import type { Env } from "@/config/env.js";
+import { releaseProjectKindSchema } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import { userSourceConnectionsTable } from "@/db/schema.js";
 
 const GITHUB_PROVIDER = "github";
 import { loadUserGithubAccessToken } from "@/github/load-user-github-access-token.js";
 import { inferRepoKind } from "@/github/repo-kind-infer.js";
+import { parseProjectVersionPreview } from "@/lib/project-version-preview.js";
 
 const GITHUB_OAUTH_SCOPES = "read:user repo";
 const REQUIRED_GITHUB_SCOPES = GITHUB_OAUTH_SCOPES.split(" ");
@@ -472,6 +474,86 @@ export const handler = async (
         return reply.status(404).send({ error: "repo_not_found_or_no_access" });
       }
       return reply.status(500).send({ error: "infer_failed" });
+    }
+  });
+
+  const versionPreviewBodySchema = z.object({
+    fullName: z
+      .string()
+      .min(3)
+      .max(241)
+      .regex(/^[\w.-]+\/[\w.-]+$/u, "expected owner/repo"),
+    kind: releaseProjectKindSchema,
+    path: z.string().trim().min(1).max(2048),
+    ref: z.string().trim().min(1).max(255).optional(),
+  });
+
+  instance.post("/api/me/github/repo/version-preview", async (request, reply) => {
+    const bearer = readBearerToken(request.headers.authorization);
+    if (bearer === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(bearer, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const parsed = versionPreviewBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+    const accessToken = await loadUserGithubAccessToken(
+      input.db,
+      session.userId,
+      input.jwtSecret,
+    );
+    if (accessToken === null) {
+      return reply.status(400).send({ error: "github_not_connected" });
+    }
+
+    const [owner, repo] = parsed.data.fullName.split("/", 2) as [string, string];
+    const octokit = new Octokit({ auth: accessToken });
+    try {
+      const { data } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path: parsed.data.path,
+        ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
+      });
+      if (
+        Array.isArray(data) ||
+        !("content" in data) ||
+        typeof data.content !== "string" ||
+        data.encoding !== "base64"
+      ) {
+        return reply.status(422).send({ error: "version_file_unreadable" });
+      }
+      const raw = Buffer.from(data.content, "base64").toString("utf8");
+      const version = parseProjectVersionPreview(
+        parsed.data.kind,
+        parsed.data.path,
+        raw,
+      );
+      if (version === null || version.short.trim().length === 0) {
+        return reply.status(422).send({ error: "version_not_detected" });
+      }
+      return reply.send({
+        version: {
+          short: version.short.trim(),
+          build: version.build.trim() || null,
+        },
+        path: parsed.data.path,
+        ref: parsed.data.ref ?? null,
+      });
+    } catch (err) {
+      request.log.warn({ err }, "github_version_preview_failed");
+      const status =
+        typeof err === "object" && err !== null && "status" in err
+          ? Number((err as { status?: unknown }).status)
+          : NaN;
+      if (status === 404) {
+        return reply.status(404).send({ error: "version_file_not_found" });
+      }
+      return reply.status(500).send({ error: "version_preview_failed" });
     }
   });
 

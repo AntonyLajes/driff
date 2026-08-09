@@ -155,6 +155,7 @@ describe("http/routes/github-me", () => {
     ["DELETE", "/api/me/github/disconnect"],
     ["GET", "/api/me/github/repos"],
     ["POST", "/api/me/github/repo/infer"],
+    ["POST", "/api/me/github/repo/version-preview"],
     ["GET", "/api/me/github/repo/branches?repo=owner/repo"],
     ["GET", "/api/me/github/repo/contents?repo=owner/repo"],
   ] as const;
@@ -493,6 +494,70 @@ describe("http/routes/github-me", () => {
       payload: { fullName: "invalid" },
     });
     expect(invalid.json()).toEqual({ error: "invalid_body" });
+  });
+
+  it("previews the version read from a selected repository file", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("token");
+    octokitMocks.getContent.mockResolvedValue({
+      data: {
+        encoding: "base64",
+        content: Buffer.from(
+          JSON.stringify({
+            expo: { version: "1.3.4", android: { versionCode: 6 } },
+          }),
+        ).toString("base64"),
+      },
+    });
+    const server = await register();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/github/repo/version-preview",
+      headers: authorization,
+      payload: {
+        fullName: "acme/app",
+        kind: "react_native_expo",
+        path: "app.json",
+        ref: "main",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      version: { short: "1.3.4", build: "6" },
+      path: "app.json",
+      ref: "main",
+    });
+    expect(octokitMocks.getContent).toHaveBeenCalledWith({
+      owner: "acme",
+      repo: "app",
+      path: "app.json",
+      ref: "main",
+    });
+  });
+
+  it("reports when the selected marker does not contain a version", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValue("token");
+    octokitMocks.getContent.mockResolvedValue({
+      data: {
+        encoding: "base64",
+        content: Buffer.from("[workspace]").toString("base64"),
+      },
+    });
+    const server = await register();
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/github/repo/version-preview",
+      headers: authorization,
+      payload: {
+        fullName: "acme/app",
+        kind: "rust_cargo",
+        path: "Cargo.toml",
+      },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "version_not_detected" });
   });
 
   it("lists branches across pages and returns the real default branch", async () => {
