@@ -11,6 +11,7 @@ import {
   type MergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
 import { loadWorkspaceDestination } from "@/destinations/load-workspace-destinations.js";
+import { internalDestination } from "@/destinations/internal-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
 import type { CorsRegistrationInput } from "@/http/cors.js";
 import { buildGoogleOAuthRegistrationInput } from "@/http/routes/auth-google.js";
@@ -213,12 +214,7 @@ const createDestinationForWorkspace = async (
     workspace.workspaceId,
     jwtSecret,
   );
-  if (destination === null) {
-    throw new Error(
-      `No enabled output destination configured for workspace "${workspace.workspaceId}".`,
-    );
-  }
-  return destination;
+  return destination ?? internalDestination;
 };
 
 const buildRuntimeDependencies = async (
