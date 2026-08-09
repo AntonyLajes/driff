@@ -1610,6 +1610,151 @@ describe("http/routes/workspaces-me", () => {
     expect(response.json()).toMatchObject({ pullRequests: [], pushes: [] });
   });
 
+  const projectWithRepo = (repoFullName: string | null) => ({
+    ...feedWorkspaceRow,
+    repoFullName,
+  });
+
+  const injectProjectRoute = async (input: {
+    method: "GET" | "POST" | "PATCH";
+    suffix: string;
+    workspace?: ReturnType<typeof projectWithRepo>;
+    payload?: Record<string, unknown>;
+    query?: string;
+  }) => {
+    const select = vi.fn().mockImplementationOnce(
+      lookupSelect([input.workspace ?? feedWorkspaceRow]),
+    );
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+    return server.inject({
+      method: input.method,
+      url: `/api/me/workspaces/by-slug/ride-pack${input.suffix}${input.query ?? ""}`,
+      headers: { authorization: `Bearer ${feedToken()}` },
+      payload: input.payload,
+    });
+  };
+
+  it("requires a linked repository before inferring settings", async () => {
+    const response = await injectProjectRoute({
+      method: "POST",
+      suffix: "/settings/infer",
+      workspace: projectWithRepo(null),
+      payload: {},
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "workspace_repo_not_linked" });
+  });
+
+  it("requires GitHub before inferring settings", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce(null);
+    const response = await injectProjectRoute({ method: "POST", suffix: "/settings/infer", payload: {} });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "github_not_connected" });
+  });
+
+  it("validates the inference options", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce("token");
+    const response = await injectProjectRoute({
+      method: "POST",
+      suffix: "/settings/infer",
+      payload: { apply: "yes" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_body" });
+  });
+
+  it.each([
+    [404, "repo_not_found_or_no_access"],
+    [500, "infer_failed"],
+  ] as const)("maps inference failures with status %s", async (status, error) => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce("token");
+    vi.mocked(inferAndApplyWorkspaceSettings).mockRejectedValueOnce(
+      status === 404 ? Object.assign(new Error("missing"), { status }) : new Error("boom"),
+    );
+    const response = await injectProjectRoute({ method: "POST", suffix: "/settings/infer", payload: {} });
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toMatchObject({ error });
+  });
+
+  it("requires a linked repository before browsing files", async () => {
+    const response = await injectProjectRoute({
+      method: "GET",
+      suffix: "/repo/contents",
+      workspace: projectWithRepo(null),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "workspace_repo_not_linked" });
+  });
+
+  it("requires GitHub before browsing files", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce(null);
+    const response = await injectProjectRoute({ method: "GET", suffix: "/repo/contents" });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "github_not_connected" });
+  });
+
+  it("validates repository browsing queries", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce("token");
+    const response = await injectProjectRoute({
+      method: "GET",
+      suffix: "/repo/contents",
+      query: `?path=${"a".repeat(2049)}`,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_query" });
+  });
+
+  it("rejects a malformed linked repository name", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce("token");
+    const response = await injectProjectRoute({
+      method: "GET",
+      suffix: "/repo/contents",
+      workspace: projectWithRepo("malformed"),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_repo_full_name" });
+  });
+
+  it("returns a single repository file", async () => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce("token");
+    reposGetContentMock.mockResolvedValueOnce({ data: { name: "app.json", path: "app.json" } });
+    const response = await injectProjectRoute({ method: "GET", suffix: "/repo/contents" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ref: "main",
+      requestedPath: "",
+      entries: [{ name: "app.json", path: "app.json", type: "file" }],
+    });
+  });
+
+  it.each([
+    [Object.assign(new Error("missing"), { status: 404 }), 404, "repo_path_not_found"],
+    [new Error("boom"), 500, "repo_contents_failed"],
+  ] as const)("maps repository browsing failures", async (failure, status, error) => {
+    vi.mocked(loadUserGithubAccessToken).mockResolvedValueOnce("token");
+    reposGetContentMock.mockRejectedValueOnce(failure);
+    const response = await injectProjectRoute({ method: "GET", suffix: "/repo/contents" });
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toMatchObject({ error });
+  });
+
+  it.each([
+    {},
+    { releaseProjectKind: "node_package" },
+    { releaseVersionFilePath: "package.json" },
+    { releaseProjectKind: null, releaseVersionFilePath: "package.json" },
+    { releaseProjectKind: "react_native_expo", releaseVersionFilePath: null },
+    { releaseProjectKind: "generic", releaseVersionFilePath: "version.txt" },
+    { releaseProjectKind: "react_native_expo", releaseVersionFilePath: " " },
+  ])("rejects inconsistent project settings: %j", async (payload) => {
+    const response = await injectProjectRoute({ method: "PATCH", suffix: "/settings", payload });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_body" });
+  });
+
   const protectedWorkspaceRoutes = [
     ["GET", "/api/me/workspaces/by-slug/ride-pack/summary"],
     ["GET", "/api/me/workspaces/by-slug/ride-pack/summaries"],
