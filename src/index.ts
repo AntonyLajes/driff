@@ -388,6 +388,9 @@ const buildRuntimeDependencies = async (
             projector: createReleaseProjector({ db }),
             workspaceId: workspace.workspaceId,
           },
+          contentFilter: {
+            excludedPaths: workspace.historyExcludedPaths,
+          },
           promptVersion: input.releasePromptVersion ?? 1,
         });
         await handler.execute(payload);

@@ -76,7 +76,7 @@ describe("jobs/process-release integration", () => {
       prNumbers: [],
       totalCommits: 1,
       compareUrl: "https://c",
-      fileChangeSummary: "—",
+      fileChangeSummary: "modified: package-lock.json\nmodified: src/home.ts",
     });
     const { select } = buildSelectChain([]);
     const { insert, values } = buildInsertChain();
@@ -108,6 +108,7 @@ describe("jobs/process-release integration", () => {
         workspaceId: "workspace-1",
         projector: { project },
       },
+      contentFilter: { excludedPaths: ["package-lock.json"] },
     });
     await handler.execute({
       repo: "o/r",
@@ -124,6 +125,9 @@ describe("jobs/process-release integration", () => {
         standaloneCommitHints: [
           { sha: "direct-commit", messageLine: "fix: direct hotfix" },
         ],
+        context: expect.objectContaining({
+          fileChangeSummary: "modified: src/home.ts",
+        }),
       }),
     );
     expect(publishRelease).toHaveBeenCalledOnce();

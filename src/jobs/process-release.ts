@@ -10,6 +10,7 @@ import { execute as buildStandaloneHints } from "@/lib/release-commit-hints.js";
 import { execute as resolveReleaseCompareBefore } from "@/jobs/resolve-release-compare-before.js";
 import type { ReleaseProjectKind } from "@/config/release-project-kind.js";
 import { execute as gatherReleaseContext } from "@/sources/github/gather-release-context.js";
+import { filterHistoryFileSummary } from "@/config/history-content-filter.js";
 
 export interface ProcessReleaseJobPayload {
   repo: string;
@@ -36,6 +37,9 @@ export interface ExecuteInput {
   canonicalProjection?: {
     projector: ReleaseProjector;
     workspaceId: string;
+  };
+  contentFilter?: {
+    excludedPaths: readonly string[];
   };
 }
 
@@ -168,10 +172,17 @@ export const execute = (input: ExecuteInput) => {
       }
 
       const releasePrNumbers = normalizeReleasePrNumbers(context.prNumbers);
+      const contextWithFilteredFiles = {
+        ...context,
+        fileChangeSummary: filterHistoryFileSummary(
+          context.fileChangeSummary,
+          input.contentFilter?.excludedPaths ?? [],
+        ),
+      };
       const summarizerContext =
         releasePrNumbers.length === context.prNumbers.length
-          ? context
-          : { ...context, prNumbers: releasePrNumbers };
+          ? contextWithFilteredFiles
+          : { ...contextWithFilteredFiles, prNumbers: releasePrNumbers };
 
       let prContributions: Array<{
         prNumber: number;
