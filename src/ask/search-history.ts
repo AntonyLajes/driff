@@ -57,6 +57,7 @@ const SYNONYMS: Record<string, string[]> = {
   botoes: ["buttons"],
   combustivel: ["fuel"],
   inicio: ["home"],
+  inicial: ["home"],
   parada: ["stop"],
   paradas: ["stops"],
   rapido: ["quick"],
