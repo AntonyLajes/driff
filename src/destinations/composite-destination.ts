@@ -26,7 +26,6 @@ export const execute = (input: ExecuteInput): Destination => {
   const logError =
     input.logError ??
     ((label, kind, error) => {
-      // eslint-disable-next-line no-console
       console.warn(`destination "${label}" failed to ${kind}:`, error);
     });
 

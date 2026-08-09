@@ -26,7 +26,7 @@ describe("auth/session-jwt", () => {
       email: "ops@example.com",
       expiresInSeconds: 3600,
     });
-    const [h, p, s] = token.split(".");
+    const [h, , s] = token.split(".");
     const tampered = `${h}.${Buffer.from(
       JSON.stringify({
         sub: "01900000-0000-7000-8000-000000000001",

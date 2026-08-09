@@ -117,7 +117,7 @@ export const execute = (input: ExecuteInput): WorkerAdapter => {
   const run = async (): Promise<void> => {
     logger.info("worker started", { pollIntervalMs });
     while (isRunning) {
-      let processed = false;
+      let processed: boolean;
       try {
         processed = await runOnce();
       } catch (error) {
