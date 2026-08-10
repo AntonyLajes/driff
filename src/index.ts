@@ -284,6 +284,7 @@ const buildRuntimeDependencies = async (
           db,
           jwtSecret: googleOAuth.jwtSecret,
           answerComposer: askAnswerComposer?.compose,
+          answerStreamer: askAnswerComposer?.stream,
         }
       : undefined;
   const githubMeBase = buildGithubMeRegistrationInput(env);

@@ -36,6 +36,15 @@ interface AnthropicMessageResponse {
   usage?: { input_tokens?: number; output_tokens?: number } | null;
 }
 
+interface AnthropicMessageStreamLike {
+  on: (
+    event: "text",
+    listener: (textDelta: string, textSnapshot: string) => void,
+  ) => AnthropicMessageStreamLike;
+  finalMessage: () => Promise<AnthropicMessageResponse>;
+  abort: () => void;
+}
+
 export interface AnthropicClientLike {
   messages: {
     create: (input: {
@@ -44,6 +53,12 @@ export interface AnthropicClientLike {
       system: string;
       messages: Array<{ role: "user"; content: string }>;
     }) => Promise<AnthropicMessageResponse>;
+    stream?: (input: {
+      model: string;
+      max_tokens: number;
+      system: string;
+      messages: Array<{ role: "user"; content: string }>;
+    }) => AnthropicMessageStreamLike;
   };
 }
 
@@ -60,6 +75,12 @@ export interface ComposedAnswer {
 
 export interface AskAnswerComposer {
   compose: (input: ComposeAnswerInput) => Promise<ComposedAnswer>;
+  stream: (
+    input: ComposeAnswerInput & {
+      onText: (textDelta: string) => void;
+      signal?: AbortSignal;
+    },
+  ) => Promise<ComposedAnswer>;
 }
 
 export interface ExecuteInput {
@@ -118,6 +139,21 @@ const buildRetrievalContext = (retrieval: SearchResult) => ({
   })),
 });
 
+const buildMessage = ({
+  question,
+  conversation,
+  retrieval,
+}: ComposeAnswerInput): string =>
+  JSON.stringify(
+    {
+      question,
+      conversation: conversation.slice(-8),
+      retrieval: buildRetrievalContext(retrieval),
+    },
+    null,
+    2,
+  );
+
 export const execute = async (
   input: ExecuteInput = {},
 ): Promise<AskAnswerComposer> => {
@@ -140,15 +176,7 @@ export const execute = async (
         messages: [
           {
             role: "user",
-            content: JSON.stringify(
-              {
-                question,
-                conversation: conversation.slice(-8),
-                retrieval: buildRetrievalContext(retrieval),
-              },
-              null,
-              2,
-            ),
+            content: buildMessage({ question, conversation, retrieval }),
           },
         ],
       });
@@ -156,6 +184,59 @@ export const execute = async (
         answerText: extractText(response),
         usage: extractUsage(response, model),
       };
+    },
+    stream: async ({
+      question,
+      conversation,
+      retrieval,
+      onText,
+      signal,
+    }) => {
+      if (anthropic.messages.stream === undefined) {
+        return (async () => {
+          const composed = await anthropic.messages.create({
+            model,
+            max_tokens: maxTokens,
+            system: prompt,
+            messages: [
+              {
+                role: "user",
+                content: buildMessage({ question, conversation, retrieval }),
+              },
+            ],
+          });
+          const answerText = extractText(composed);
+          onText(answerText);
+          return { answerText, usage: extractUsage(composed, model) };
+        })();
+      }
+
+      const stream = anthropic.messages.stream({
+        model,
+        max_tokens: maxTokens,
+        system: prompt,
+        messages: [
+          {
+            role: "user",
+            content: buildMessage({ question, conversation, retrieval }),
+          },
+        ],
+      });
+      const abort = () => stream.abort();
+      if (signal?.aborted === true) abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      stream.on("text", (textDelta) => {
+        if (textDelta.length > 0) onText(textDelta);
+      });
+      try {
+        const response = await stream.finalMessage();
+        return {
+          answerText: extractText(response),
+          usage: extractUsage(response, model),
+        };
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
     },
   };
 };

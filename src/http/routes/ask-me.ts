@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -9,6 +9,7 @@ import {
 import type {
   ComposeAnswerInput,
   ComposedAnswer,
+  AskAnswerComposer,
 } from "@/ask/compose-answer.js";
 import { execute as resolveCasualMessage } from "@/ask/resolve-casual-message.js";
 import { execute as resolveFollowUp } from "@/ask/resolve-follow-up.js";
@@ -50,6 +51,7 @@ export interface AskMeRegistrationInput {
     input: SearchHistoryInput,
   ) => Promise<Awaited<ReturnType<typeof searchHistory>>>;
   answerComposer?: (input: ComposeAnswerInput) => Promise<ComposedAnswer>;
+  answerStreamer?: AskAnswerComposer["stream"];
   usageRecorder?: (input: {
     repo: string;
     usage: TokenUsage;
@@ -66,6 +68,25 @@ const readBearerToken = (authorization: string | undefined): string | null => {
   }
   const token = authorization.slice("Bearer ".length).trim();
   return token.length > 0 ? token : null;
+};
+
+const wantsEventStream = (accept: string | undefined): boolean =>
+  accept?.split(",").some((value) => value.trim() === "text/event-stream") ??
+  false;
+
+const openEventStream = (reply: FastifyReply): void => {
+  reply.hijack();
+  reply.raw.statusCode = 200;
+  reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
+  reply.raw.setHeader("Connection", "keep-alive");
+  reply.raw.flushHeaders();
+};
+
+const writeEvent = (reply: FastifyReply, event: object): void => {
+  if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+    reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
 };
 
 export const handler = async (
@@ -145,7 +166,7 @@ export const handler = async (
 
       const casualMessage = resolveCasualMessage(bodyParsed.data.question);
       if (casualMessage !== null) {
-        return reply.send({
+        const response = {
           workspace: {
             id: workspace.id,
             name: workspace.name,
@@ -164,7 +185,14 @@ export const handler = async (
           hasMore: false,
           version: null,
           matches: [],
-        });
+        };
+        if (wantsEventStream(request.headers.accept)) {
+          openEventStream(reply);
+          writeEvent(reply, { type: "done", answer: response });
+          reply.raw.end();
+          return reply;
+        }
+        return reply.send(response);
       }
 
       const result = await (input.historySearcher ?? searchHistory)({
@@ -175,6 +203,91 @@ export const handler = async (
           conversation: bodyParsed.data.conversation,
         }),
       });
+
+      if (
+        wantsEventStream(request.headers.accept) &&
+        input.answerStreamer !== undefined
+      ) {
+        openEventStream(reply);
+        writeEvent(reply, { type: "start" });
+        const abortController = new AbortController();
+        const abort = () => abortController.abort();
+        reply.raw.once("close", abort);
+        try {
+          const composed = await input.answerStreamer({
+            question: bodyParsed.data.question,
+            conversation: bodyParsed.data.conversation,
+            retrieval: result,
+            signal: abortController.signal,
+            onText: (text) => writeEvent(reply, { type: "delta", text }),
+          });
+
+          try {
+            await (input.usageRecorder ??
+              (async ({ repo, usage }) =>
+                recordLlmUsage({
+                  db: input.db,
+                  repo,
+                  jobType: "ask",
+                  usage,
+                })))(
+              {
+                repo: workspace.repoFullName ?? workspace.slug,
+                usage: composed.usage,
+              },
+            );
+          } catch (error) {
+            request.log.warn(
+              { error, workspaceId: workspace.id },
+              "ask_usage_record_failed",
+            );
+          }
+
+          let interactionId: string | null = null;
+          try {
+            interactionId = await recordInteraction({
+              workspaceId: workspace.id,
+              hadEvidence:
+                result.status === "answered" && result.matches.length > 0,
+            });
+          } catch (error) {
+            request.log.warn(
+              { error, workspaceId: workspace.id },
+              "ask_interaction_record_failed",
+            );
+          }
+
+          writeEvent(reply, {
+            type: "done",
+            answer: {
+              workspace: {
+                id: workspace.id,
+                name: workspace.name,
+                slug: workspace.slug,
+              },
+              question: bodyParsed.data.question,
+              intent: "history",
+              answerText: composed.answerText,
+              interactionId,
+              ...result,
+            },
+          });
+        } catch (error) {
+          if (!abortController.signal.aborted && !reply.raw.destroyed) {
+            request.log.warn(
+              { error, workspaceId: workspace.id },
+              "ask_answer_stream_failed",
+            );
+            writeEvent(reply, { type: "error", error: "ask_stream_failed" });
+          }
+        } finally {
+          reply.raw.off("close", abort);
+          if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+            reply.raw.end();
+          }
+        }
+        return reply;
+      }
 
       let answerText: string | null = null;
       if (input.answerComposer !== undefined) {
