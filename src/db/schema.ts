@@ -336,7 +336,7 @@ export const teamAuditEventsTable = pgTable(
     ),
     actionCheck: check(
       "team_audit_events_action_check",
-      sql`${table.action} IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left', 'workspace_access_changed')`,
+      sql`${table.action} IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left', 'workspace_access_changed', 'workspace_retention_changed')`,
     ),
     targetTypeCheck: check(
       "team_audit_events_target_type_check",
@@ -645,6 +645,11 @@ export const workspaceSettingsTable = pgTable(
     historyExcludedActors: jsonb("history_excluded_actors").$type<string[]>(),
     /** Output language for generated summaries: auto, en, or pt-BR. */
     summaryLanguage: text("summary_language").default("auto").notNull(),
+    /** Optional retention window for raw webhook payloads and finished job records. */
+    sourceDataRetentionDays: integer("source_data_retention_days"),
+    retentionLastRunAt: timestamp("retention_last_run_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -659,6 +664,10 @@ export const workspaceSettingsTable = pgTable(
     releaseVersionStrategyCheck: check(
       "workspace_settings_release_version_strategy_check",
       sql`${table.releaseVersionStrategy} IN ('version_file', 'git_tag', 'github_release')`,
+    ),
+    sourceDataRetentionDaysCheck: check(
+      "workspace_settings_source_data_retention_days_check",
+      sql`${table.sourceDataRetentionDays} IS NULL OR ${table.sourceDataRetentionDays} IN (30, 90, 180, 365)`,
     ),
   }),
 );

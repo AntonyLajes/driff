@@ -244,6 +244,76 @@ describe("http/routes/workspaces-me", () => {
     );
   });
 
+  it("previews source-data retention without changing the saved policy", async () => {
+    const userId = "00000000-0000-4000-8000-000000000099";
+    const workspaceId = "00000000-0000-4000-8000-0000000000aa";
+    const token = signSessionJwt({
+      secret: jwtSecret,
+      userId,
+      email: "owner@example.com",
+      expiresInSeconds: 3600,
+    });
+    const select = vi
+      .fn()
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [
+              {
+                id: workspaceId,
+                name: "Acme",
+                slug: "acme",
+                repoFullName: "acme/app",
+                memberAccess: "all",
+              },
+            ]),
+          })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(async () => [
+              {
+                retentionDays: 90,
+                lastRunAt: new Date("2026-08-08T12:00:00.000Z"),
+              },
+            ]),
+          })),
+        })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(async () => [{ value: 4 }]) })),
+      }))
+      .mockImplementationOnce(() => ({
+        from: vi.fn(() => ({ where: vi.fn(async () => [{ value: 7 }]) })),
+      }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, { db: { select } as never, jwtSecret });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/acme/retention?retentionDays=30",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      retention: {
+        retentionDays: 90,
+        lastRunAt: "2026-08-08T12:00:00.000Z",
+        preview: {
+          retentionDays: 30,
+          rawWebhookEvents: 4,
+          finishedJobs: 7,
+          totalRecords: 11,
+        },
+      },
+    });
+  });
+
   it("returns 201 after creating a workspace linked to a repo", async () => {
     const userId = "00000000-0000-4000-8000-000000000099";
     const token = signSessionJwt({

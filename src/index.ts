@@ -50,6 +50,7 @@ import type { Source } from "@/sources/source.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import type { JobHandler } from "@/queue/worker.js";
+import { createWorkspaceRetentionJob } from "@/retention/workspace-retention.js";
 
 export interface ServerLike {
   listen: (options: { port: number; host: string }) => Promise<string>;
@@ -487,6 +488,7 @@ const buildRuntimeDependencies = async (
         process_release: processReleaseHandler,
         process_push: processPushHandler,
         import_history: processHistoryImportHandler,
+        apply_retention: createWorkspaceRetentionJob({ db }),
       },
     });
   })();

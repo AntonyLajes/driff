@@ -1,0 +1,5 @@
+ALTER TABLE "team_audit_events" DROP CONSTRAINT "team_audit_events_action_check";--> statement-breakpoint
+ALTER TABLE "workspace_settings" ADD COLUMN "source_data_retention_days" integer;--> statement-breakpoint
+ALTER TABLE "workspace_settings" ADD COLUMN "retention_last_run_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "team_audit_events" ADD CONSTRAINT "team_audit_events_action_check" CHECK ("team_audit_events"."action" IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left', 'workspace_access_changed', 'workspace_retention_changed'));--> statement-breakpoint
+ALTER TABLE "workspace_settings" ADD CONSTRAINT "workspace_settings_source_data_retention_days_check" CHECK ("workspace_settings"."source_data_retention_days" IS NULL OR "workspace_settings"."source_data_retention_days" IN (30, 90, 180, 365));

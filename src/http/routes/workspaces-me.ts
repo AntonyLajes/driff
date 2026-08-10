@@ -45,6 +45,11 @@ import type { TeamAuditRecorder } from "@/teams/record-audit-event.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
 import { execute as deleteWorkspaceData } from "@/workspaces/delete-workspace-data.js";
 import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
+import {
+  loadWorkspaceRetentionPreview,
+  scheduleWorkspaceRetention,
+  sourceDataRetentionDaysSchema,
+} from "@/retention/workspace-retention.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
@@ -120,6 +125,14 @@ const patchWorkspaceAccessBodySchema = z
     memberUserIds: z.array(z.string().uuid()).max(100).default([]),
   })
   .strict();
+
+const patchWorkspaceRetentionBodySchema = z
+  .object({ retentionDays: z.union([sourceDataRetentionDaysSchema, z.null()]) })
+  .strict();
+
+const workspaceRetentionQuerySchema = z.object({
+  retentionDays: z.enum(["30", "90", "180", "365", "forever"]).optional(),
+});
 
 const patchWorkspaceSettingsBodySchema = z
   .object({
@@ -571,6 +584,141 @@ export const handler = async (
       access: {
         mode: parsed.data.mode,
         memberUserIds: parsed.data.mode === "restricted" ? requestedIds : [],
+      },
+    });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/retention", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) return reply.status(401).send({ error: "invalid_session" });
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const parsedQuery = workspaceRetentionQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) return reply.status(400).send({ error: "invalid_query" });
+    const rows = await input.db
+      .select({
+        retentionDays: workspaceSettingsTable.sourceDataRetentionDays,
+        lastRunAt: workspaceSettingsTable.retentionLastRunAt,
+      })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, loaded.workspace.id))
+      .limit(1);
+    const row = rows[0];
+    const parsedDays = sourceDataRetentionDaysSchema.safeParse(row?.retentionDays);
+    const retentionDays = parsedDays.success ? parsedDays.data : null;
+    const previewRetentionDays =
+      parsedQuery.data.retentionDays === undefined
+        ? retentionDays
+        : parsedQuery.data.retentionDays === "forever"
+          ? null
+          : sourceDataRetentionDaysSchema.parse(Number(parsedQuery.data.retentionDays));
+    const preview = await loadWorkspaceRetentionPreview({
+      db: input.db,
+      workspaceId: loaded.workspace.id,
+      repoFullName: loaded.workspace.repoFullName,
+      retentionDays: previewRetentionDays,
+    });
+    return reply.send({
+      retention: {
+        retentionDays,
+        lastRunAt: row?.lastRunAt ?? null,
+        preview,
+      },
+    });
+  });
+
+  instance.patch("/api/me/workspaces/by-slug/:slug/retention", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) return reply.status(401).send({ error: "invalid_session" });
+    const parsed = patchWorkspaceRetentionBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: "invalid_body" });
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+
+    const now = new Date();
+    const existing = await input.db
+      .select({ id: workspaceSettingsTable.id })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, loaded.workspace.id))
+      .limit(1);
+    if (existing[0] === undefined) {
+      await input.db.insert(workspaceSettingsTable).values({
+        workspaceId: loaded.workspace.id,
+        sourceDataRetentionDays: parsed.data.retentionDays,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await input.db
+        .update(workspaceSettingsTable)
+        .set({ sourceDataRetentionDays: parsed.data.retentionDays, updatedAt: now })
+        .where(eq(workspaceSettingsTable.id, existing[0].id));
+    }
+    await scheduleWorkspaceRetention({
+      db: input.db,
+      workspaceId: loaded.workspace.id,
+      retentionDays: parsed.data.retentionDays,
+      availableAt: now,
+    });
+    const preview = await loadWorkspaceRetentionPreview({
+      db: input.db,
+      workspaceId: loaded.workspace.id,
+      repoFullName: loaded.workspace.repoFullName,
+      retentionDays: parsed.data.retentionDays,
+      now,
+    });
+    if (input.auditRecorder !== undefined) {
+      try {
+        await input.auditRecorder({
+          teamId: loaded.team.teamId,
+          actorUserId: session.userId,
+          action: "workspace_retention_changed",
+          targetType: "workspace",
+          targetId: loaded.workspace.id,
+          targetLabel: loaded.workspace.name,
+          metadata: { retentionDays: parsed.data.retentionDays },
+        });
+      } catch (error) {
+        request.log.warn({ err: error }, "Failed to record workspace retention audit event");
+      }
+    }
+    return reply.send({
+      retention: {
+        retentionDays: parsed.data.retentionDays,
+        lastRunAt: null,
+        preview,
       },
     });
   });

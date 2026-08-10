@@ -267,6 +267,13 @@
       "when": 1786318183035,
       "tag": "0037_misty_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786320349794,
+      "tag": "0038_careless_wolfsbane",
+      "breakpoints": true
     }
   ]
 }
