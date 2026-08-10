@@ -180,6 +180,61 @@ describe("http/routes/ask-me", () => {
     );
   });
 
+  it("should answer a greeting without searching or attaching evidence", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      {
+        id: WORKSPACE_ID,
+        name: "ride-pack",
+        slug: "ride-pack",
+        repoFullName: "AntonyLajes/ride-pack",
+      },
+    ]);
+    const historySearcher = vi.fn();
+    const answerComposer = vi.fn();
+    const usageRecorder = vi.fn();
+    const interactionRecorder = vi.fn();
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      historySearcher,
+      answerComposer,
+      usageRecorder,
+      interactionRecorder,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces/by-slug/ride-pack/ask",
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { question: "Oi" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+      question: "Oi",
+      answerText:
+        "Olá! Como posso ajudar? Você pode me perguntar sobre mudanças, versões, funcionalidades e participantes deste projeto.",
+      interactionId: null,
+      status: "no_evidence",
+      mode: "change",
+      confidence: "none",
+      queryTerms: [],
+      period: null,
+      totalMatches: 0,
+      hasMore: false,
+      version: null,
+      matches: [],
+    });
+    expect(historySearcher).not.toHaveBeenCalled();
+    expect(answerComposer).not.toHaveBeenCalled();
+    expect(usageRecorder).not.toHaveBeenCalled();
+    expect(interactionRecorder).not.toHaveBeenCalled();
+  });
+
   it("should update feedback only for an interaction in the acting workspace", async () => {
     const { db: workspaceDb } = buildWorkspaceDb([{ id: WORKSPACE_ID }]);
     const returning = vi.fn(async () => [{ id: INTERACTION_ID }]);
