@@ -10,6 +10,7 @@ import type {
   ComposeAnswerInput,
   ComposedAnswer,
 } from "@/ask/compose-answer.js";
+import { execute as resolveFollowUp } from "@/ask/resolve-follow-up.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
 import { askInteractionsTable, workspacesTable } from "@/db/schema.js";
@@ -139,7 +140,10 @@ export const handler = async (
       const result = await (input.historySearcher ?? searchHistory)({
         db: input.db,
         workspaceId: workspace.id,
-        question: bodyParsed.data.question,
+        question: resolveFollowUp({
+          question: bodyParsed.data.question,
+          conversation: bodyParsed.data.conversation,
+        }),
       });
 
       let answerText: string | null = null;
