@@ -2,6 +2,7 @@ import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { signSessionJwt } from "@/auth/session-jwt.js";
+import { execute as registerCors } from "@/http/cors.js";
 import { handler } from "@/http/routes/ask-me.js";
 
 const JWT_SECRET = "a".repeat(32);
@@ -213,6 +214,7 @@ describe("http/routes/ask-me", () => {
     const interactionRecorder = vi.fn(async () => INTERACTION_ID);
     const server = fastify({ logger: false });
     servers.push(server);
+    await registerCors(server, { kind: "reflect" });
     await handler(server, {
       db: workspaceDb.db,
       jwtSecret: JWT_SECRET,
@@ -229,16 +231,23 @@ describe("http/routes/ask-me", () => {
       headers: {
         authorization: `Bearer ${token()}`,
         accept: "text/event-stream",
+        origin: "https://driff-web-development.up.railway.app",
       },
       payload: { question: "O checkout mudou?" },
     });
     const events = response.body
       .trim()
       .split("\n\n")
-      .map((entry) => JSON.parse(entry.replace(/^data: /, "")) as Record<string, unknown>);
+      .map(
+        (entry) =>
+          JSON.parse(entry.replace(/^data: /, "")) as Record<string, unknown>,
+      );
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("text/event-stream");
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "https://driff-web-development.up.railway.app",
+    );
     expect(events.map((event) => event.type)).toEqual([
       "start",
       "delta",
