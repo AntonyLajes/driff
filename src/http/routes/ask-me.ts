@@ -10,6 +10,7 @@ import type {
   ComposeAnswerInput,
   ComposedAnswer,
 } from "@/ask/compose-answer.js";
+import { execute as resolveCasualMessage } from "@/ask/resolve-casual-message.js";
 import { execute as resolveFollowUp } from "@/ask/resolve-follow-up.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
@@ -20,7 +21,12 @@ import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 const askBodySchema = z.object({
-  question: z.string().trim().min(3).max(500),
+  question: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .regex(/[\p{Letter}\p{Number}]/u),
   conversation: z
     .array(
       z.object({
@@ -135,6 +141,29 @@ export const handler = async (
       const workspace = workspaceRows[0];
       if (workspace === undefined) {
         return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const casualMessage = resolveCasualMessage(bodyParsed.data.question);
+      if (casualMessage !== null) {
+        return reply.send({
+          workspace: {
+            id: workspace.id,
+            name: workspace.name,
+            slug: workspace.slug,
+          },
+          question: bodyParsed.data.question,
+          answerText: casualMessage.answerText,
+          interactionId: null,
+          status: "no_evidence",
+          mode: "change",
+          confidence: "none",
+          queryTerms: [],
+          period: null,
+          totalMatches: 0,
+          hasMore: false,
+          version: null,
+          matches: [],
+        });
       }
 
       const result = await (input.historySearcher ?? searchHistory)({
