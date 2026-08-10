@@ -21,6 +21,9 @@ const whitelistBodySchema = z.object({
   teamSize: optionalText(40),
   role: optionalText(80),
   githubOrg: optionalText(200),
+  releaseFrequency: optionalText(60),
+  mainPain: optionalText(120),
+  messageVariant: optionalText(40),
   locale: optionalText(10),
   /** Honeypot: hidden field humans leave empty; bots fill it. */
   website: optionalText(200),
@@ -72,6 +75,9 @@ export const handler = async (
         teamSize: data.teamSize,
         role: data.role,
         githubOrg: data.githubOrg,
+        releaseFrequency: data.releaseFrequency,
+        mainPain: data.mainPain,
+        messageVariant: data.messageVariant,
       })
       .onConflictDoNothing()
       .returning({ id: whitelistSignupsTable.id });

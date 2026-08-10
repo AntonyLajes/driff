@@ -1099,6 +1099,12 @@ export const whitelistSignupsTable = pgTable(
     role: text("role"),
     /** Optional GitHub org link the lead provided. */
     githubOrg: text("github_org"),
+    /** Self-reported release cadence used to qualify design partners. */
+    releaseFrequency: text("release_frequency"),
+    /** Primary historical-change pain selected on the public landing page. */
+    mainPain: text("main_pain"),
+    /** Landing positioning variant shown when this conversion happened. */
+    messageVariant: text("message_variant"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
