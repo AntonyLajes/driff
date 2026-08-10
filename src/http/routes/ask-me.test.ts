@@ -50,7 +50,12 @@ describe("http/routes/ask-me", () => {
 
   it("should scope a valid question to the workspace and acting team", async () => {
     const workspaceDb = buildWorkspaceDb([
-      { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
+      {
+        id: WORKSPACE_ID,
+        name: "ride-pack",
+        slug: "ride-pack",
+        repoFullName: "AntonyLajes/ride-pack",
+      },
     ]);
     const historySearcher = vi.fn(async () => ({
       status: "no_evidence" as const,
@@ -63,6 +68,11 @@ describe("http/routes/ask-me", () => {
       version: null,
       matches: [],
     }));
+    const answerComposer = vi.fn(async () => ({
+      answerText: "Não encontrei evidências sobre o botão de checkout.",
+      usage: { model: "test-model", inputTokens: 120, outputTokens: 24 },
+    }));
+    const usageRecorder = vi.fn(async () => undefined);
     const interactionRecorder = vi.fn(async () => INTERACTION_ID);
     const server = fastify({ logger: false });
     servers.push(server);
@@ -70,6 +80,8 @@ describe("http/routes/ask-me", () => {
       db: workspaceDb.db,
       jwtSecret: JWT_SECRET,
       historySearcher,
+      answerComposer,
+      usageRecorder,
       interactionRecorder,
     });
     await server.ready();
@@ -78,7 +90,13 @@ describe("http/routes/ask-me", () => {
       method: "POST",
       url: "/api/me/workspaces/by-slug/ride-pack/ask",
       headers: { authorization: `Bearer ${token()}` },
-      payload: { question: "  checkout button  " },
+      payload: {
+        question: "  checkout button  ",
+        conversation: [
+          { role: "user", content: "  What changed recently?  " },
+          { role: "assistant", content: "The Home changed." },
+        ],
+      },
     });
 
     expect(response.statusCode).toBe(200);
@@ -86,6 +104,7 @@ describe("http/routes/ask-me", () => {
       expect.objectContaining({
         workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
         question: "checkout button",
+        answerText: "Não encontrei evidências sobre o botão de checkout.",
         interactionId: INTERACTION_ID,
         status: "no_evidence",
       }),
@@ -100,6 +119,65 @@ describe("http/routes/ask-me", () => {
       workspaceId: WORKSPACE_ID,
       hadEvidence: false,
     });
+    expect(answerComposer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: "checkout button",
+        conversation: [
+          { role: "user", content: "What changed recently?" },
+          { role: "assistant", content: "The Home changed." },
+        ],
+      }),
+    );
+    expect(usageRecorder).toHaveBeenCalledWith({
+      repo: "AntonyLajes/ride-pack",
+      usage: { model: "test-model", inputTokens: 120, outputTokens: 24 },
+    });
+  });
+
+  it("should keep retrieval available when conversational composition fails", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      {
+        id: WORKSPACE_ID,
+        name: "ride-pack",
+        slug: "ride-pack",
+        repoFullName: "AntonyLajes/ride-pack",
+      },
+    ]);
+    const historySearcher = vi.fn(async () => ({
+      status: "no_evidence" as const,
+      mode: "change" as const,
+      confidence: "none" as const,
+      queryTerms: [],
+      period: null,
+      totalMatches: 0,
+      hasMore: false,
+      version: null,
+      matches: [],
+    }));
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      historySearcher,
+      answerComposer: vi.fn(async () => {
+        throw new Error("provider unavailable");
+      }),
+      interactionRecorder: vi.fn(async () => null),
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces/by-slug/ride-pack/ask",
+      headers: { authorization: `Bearer ${token()}` },
+      payload: { question: "What changed?" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(
+      expect.objectContaining({ status: "no_evidence", answerText: null }),
+    );
   });
 
   it("should update feedback only for an interaction in the acting workspace", async () => {
