@@ -52,10 +52,7 @@ export interface AskMeRegistrationInput {
   ) => Promise<Awaited<ReturnType<typeof searchHistory>>>;
   answerComposer?: (input: ComposeAnswerInput) => Promise<ComposedAnswer>;
   answerStreamer?: AskAnswerComposer["stream"];
-  usageRecorder?: (input: {
-    repo: string;
-    usage: TokenUsage;
-  }) => Promise<void>;
+  usageRecorder?: (input: { repo: string; usage: TokenUsage }) => Promise<void>;
   interactionRecorder?: (input: {
     workspaceId: string;
     hadEvidence: boolean;
@@ -75,8 +72,12 @@ const wantsEventStream = (accept: string | undefined): boolean =>
   false;
 
 const openEventStream = (reply: FastifyReply): void => {
+  const fastifyHeaders = reply.getHeaders();
   reply.hijack();
   reply.raw.statusCode = 200;
+  for (const [name, value] of Object.entries(fastifyHeaders)) {
+    if (value !== undefined) reply.raw.setHeader(name, value);
+  }
   reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   reply.raw.setHeader("Cache-Control", "no-cache, no-transform");
   reply.raw.setHeader("Connection", "keep-alive");
@@ -155,7 +156,10 @@ export const handler = async (
           and(
             eq(workspacesTable.teamId, team.context.teamId),
             eq(workspacesTable.slug, slug),
-            workspaceVisibilityCondition({ userId: session.userId, role: team.context.role }),
+            workspaceVisibilityCondition({
+              userId: session.userId,
+              role: team.context.role,
+            }),
           ),
         )
         .limit(1);
@@ -223,19 +227,19 @@ export const handler = async (
           });
 
           try {
-            await (input.usageRecorder ??
+            await (
+              input.usageRecorder ??
               (async ({ repo, usage }) =>
                 recordLlmUsage({
                   db: input.db,
                   repo,
                   jobType: "ask",
                   usage,
-                })))(
-              {
-                repo: workspace.repoFullName ?? workspace.slug,
-                usage: composed.usage,
-              },
-            );
+                }))
+            )({
+              repo: workspace.repoFullName ?? workspace.slug,
+              usage: composed.usage,
+            });
           } catch (error) {
             request.log.warn(
               { error, workspaceId: workspace.id },
@@ -298,19 +302,19 @@ export const handler = async (
             retrieval: result,
           });
           answerText = composed.answerText;
-          await (input.usageRecorder ??
+          await (
+            input.usageRecorder ??
             (async ({ repo, usage }) =>
               recordLlmUsage({
                 db: input.db,
                 repo,
                 jobType: "ask",
                 usage,
-              })))(
-            {
-              repo: workspace.repoFullName ?? workspace.slug,
-              usage: composed.usage,
-            },
-          );
+              }))
+          )({
+            repo: workspace.repoFullName ?? workspace.slug,
+            usage: composed.usage,
+          });
         } catch (error) {
           // Retrieval remains useful when conversational composition is unavailable.
           request.log.warn(
@@ -324,11 +328,15 @@ export const handler = async (
       try {
         interactionId = await recordInteraction({
           workspaceId: workspace.id,
-          hadEvidence: result.status === "answered" && result.matches.length > 0,
+          hadEvidence:
+            result.status === "answered" && result.matches.length > 0,
         });
       } catch (error) {
         // Product analytics must never make the evidence search unavailable.
-        request.log.warn({ error, workspaceId: workspace.id }, "ask_interaction_record_failed");
+        request.log.warn(
+          { error, workspaceId: workspace.id },
+          "ask_interaction_record_failed",
+        );
       }
 
       return reply.send({
@@ -351,7 +359,9 @@ export const handler = async (
     async (request, reply) => {
       const token = readBearerToken(request.headers.authorization);
       if (token === null) {
-        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
       }
       const session = verifySessionJwt(token, input.jwtSecret);
       if (session === null) {
@@ -394,7 +404,10 @@ export const handler = async (
           and(
             eq(workspacesTable.teamId, team.context.teamId),
             eq(workspacesTable.slug, slug),
-            workspaceVisibilityCondition({ userId: session.userId, role: team.context.role }),
+            workspaceVisibilityCondition({
+              userId: session.userId,
+              role: team.context.role,
+            }),
           ),
         )
         .limit(1);
