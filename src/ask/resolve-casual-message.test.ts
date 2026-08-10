@@ -5,7 +5,9 @@ import { execute } from "@/ask/resolve-casual-message.js";
 describe("ask/resolve-casual-message", () => {
   it.each([
     ["Olá!", "greeting", "Olá!"],
+    ["Olá, tudo bem com você?", "greeting", "Olá!"],
     ["oi Driff", "greeting", "Olá!"],
+    ["Hello, how are you?", "greeting", "Hello!"],
     ["Thanks", "thanks", "You're welcome!"],
     ["Muchas gracias", "thanks", "¡De nada!"],
     ["Au revoir", "farewell", "À bientôt !"],

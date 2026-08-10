@@ -104,6 +104,7 @@ describe("http/routes/ask-me", () => {
       expect.objectContaining({
         workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
         question: "checkout button",
+        intent: "history",
         answerText: "Não encontrei evidências sobre o botão de checkout.",
         interactionId: INTERACTION_ID,
         status: "no_evidence",
@@ -216,6 +217,7 @@ describe("http/routes/ask-me", () => {
     expect(response.json()).toEqual({
       workspace: { id: WORKSPACE_ID, name: "ride-pack", slug: "ride-pack" },
       question: "Oi",
+      intent: "conversation",
       answerText:
         "Olá! Como posso ajudar? Você pode me perguntar sobre mudanças, versões, funcionalidades e participantes deste projeto.",
       interactionId: null,
