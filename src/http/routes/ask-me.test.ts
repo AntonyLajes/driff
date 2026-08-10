@@ -181,6 +181,85 @@ describe("http/routes/ask-me", () => {
     );
   });
 
+  it("should stream answer deltas before the final cited response", async () => {
+    const workspaceDb = buildWorkspaceDb([
+      {
+        id: WORKSPACE_ID,
+        name: "ride-pack",
+        slug: "ride-pack",
+        repoFullName: "AntonyLajes/ride-pack",
+      },
+    ]);
+    const retrieval = {
+      status: "no_evidence" as const,
+      mode: "change" as const,
+      confidence: "none" as const,
+      queryTerms: ["checkout"],
+      period: null,
+      totalMatches: 0,
+      hasMore: false,
+      version: null,
+      matches: [],
+    };
+    const answerStreamer = vi.fn(async ({ onText }) => {
+      onText("Não encontrei ");
+      onText("essa mudança.");
+      return {
+        answerText: "Não encontrei essa mudança.",
+        usage: { model: "test-model", inputTokens: 90, outputTokens: 12 },
+      };
+    });
+    const usageRecorder = vi.fn(async () => undefined);
+    const interactionRecorder = vi.fn(async () => INTERACTION_ID);
+    const server = fastify({ logger: false });
+    servers.push(server);
+    await handler(server, {
+      db: workspaceDb.db,
+      jwtSecret: JWT_SECRET,
+      historySearcher: vi.fn(async () => retrieval),
+      answerStreamer,
+      usageRecorder,
+      interactionRecorder,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/me/workspaces/by-slug/ride-pack/ask",
+      headers: {
+        authorization: `Bearer ${token()}`,
+        accept: "text/event-stream",
+      },
+      payload: { question: "O checkout mudou?" },
+    });
+    const events = response.body
+      .trim()
+      .split("\n\n")
+      .map((entry) => JSON.parse(entry.replace(/^data: /, "")) as Record<string, unknown>);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/event-stream");
+    expect(events.map((event) => event.type)).toEqual([
+      "start",
+      "delta",
+      "delta",
+      "done",
+    ]);
+    expect(events[1]).toEqual({ type: "delta", text: "Não encontrei " });
+    expect(events[3]).toEqual(
+      expect.objectContaining({
+        type: "done",
+        answer: expect.objectContaining({
+          answerText: "Não encontrei essa mudança.",
+          interactionId: INTERACTION_ID,
+          status: "no_evidence",
+        }),
+      }),
+    );
+    expect(usageRecorder).toHaveBeenCalledOnce();
+    expect(interactionRecorder).toHaveBeenCalledOnce();
+  });
+
   it("should answer a greeting without searching or attaching evidence", async () => {
     const workspaceDb = buildWorkspaceDb([
       {

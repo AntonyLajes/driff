@@ -76,4 +76,52 @@ describe("ask/compose-answer execute", () => {
       }),
     ).rejects.toThrow("did not contain text content");
   });
+
+  it("should stream text deltas and return the final metered answer", async () => {
+    let textListener: ((delta: string, snapshot: string) => void) | undefined;
+    const stream = {
+      on: vi.fn(
+        (
+          _event: "text",
+          listener: (delta: string, snapshot: string) => void,
+        ) => {
+          textListener = listener;
+          return stream;
+        },
+      ),
+      finalMessage: vi.fn(async () => {
+        textListener?.("A Home ", "A Home ");
+        textListener?.("mudou.", "A Home mudou.");
+        return {
+          content: [{ type: "text" as const, text: "A Home mudou." }],
+          usage: { input_tokens: 210, output_tokens: 18 },
+        };
+      }),
+      abort: vi.fn(),
+    };
+    const create = vi.fn<AnthropicClientLike["messages"]["create"]>();
+    const composer = await execute({
+      apiKey: "anthropic-key",
+      model: "test-model",
+      readPrompt: async () => "Use only supplied evidence.",
+      anthropicClientFactory: () => ({
+        messages: { create, stream: vi.fn(() => stream) },
+      }),
+    });
+    const deltas: string[] = [];
+
+    const result = await composer.stream({
+      question: "O que mudou?",
+      conversation: [],
+      retrieval,
+      onText: (delta) => deltas.push(delta),
+    });
+
+    expect(deltas).toEqual(["A Home ", "mudou."]);
+    expect(result).toEqual({
+      answerText: "A Home mudou.",
+      usage: { model: "test-model", inputTokens: 210, outputTokens: 18 },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
 });
