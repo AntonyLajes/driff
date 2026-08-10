@@ -184,7 +184,7 @@ export const pushesTable = pgTable(
 /**
  * Per-summary LLM token usage (metering only — no enforcement yet). Feeds future
  * usage-based pricing/tiers; see the billing-tiers project note. One row per
- * successful summarization (PR / release / push).
+ * successful generation (PR / release / push / Ask response).
  */
 export const llmUsageTable = pgTable(
   "llm_usage",

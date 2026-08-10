@@ -6,15 +6,30 @@ import {
   execute as searchHistory,
   type ExecuteInput as SearchHistoryInput,
 } from "@/ask/search-history.js";
+import type {
+  ComposeAnswerInput,
+  ComposedAnswer,
+} from "@/ask/compose-answer.js";
 import { verifySessionJwt } from "@/auth/session-jwt.js";
 import type { Database } from "@/db/client.js";
 import { askInteractionsTable, workspacesTable } from "@/db/schema.js";
 import { normalizeWorkspaceSlug } from "@/lib/workspace-slug.js";
+import { recordLlmUsage, type TokenUsage } from "@/llm/usage.js";
 import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
 import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 const askBodySchema = z.object({
   question: z.string().trim().min(3).max(500),
+  conversation: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().trim().min(1).max(2_000),
+      }),
+    )
+    .max(8)
+    .optional()
+    .default([]),
 });
 
 const feedbackBodySchema = z.object({
@@ -27,6 +42,11 @@ export interface AskMeRegistrationInput {
   historySearcher?: (
     input: SearchHistoryInput,
   ) => Promise<Awaited<ReturnType<typeof searchHistory>>>;
+  answerComposer?: (input: ComposeAnswerInput) => Promise<ComposedAnswer>;
+  usageRecorder?: (input: {
+    repo: string;
+    usage: TokenUsage;
+  }) => Promise<void>;
   interactionRecorder?: (input: {
     workspaceId: string;
     hadEvidence: boolean;
@@ -100,6 +120,7 @@ export const handler = async (
           id: workspacesTable.id,
           name: workspacesTable.name,
           slug: workspacesTable.slug,
+          repoFullName: workspacesTable.repoFullName,
         })
         .from(workspacesTable)
         .where(
@@ -121,6 +142,37 @@ export const handler = async (
         question: bodyParsed.data.question,
       });
 
+      let answerText: string | null = null;
+      if (input.answerComposer !== undefined) {
+        try {
+          const composed = await input.answerComposer({
+            question: bodyParsed.data.question,
+            conversation: bodyParsed.data.conversation,
+            retrieval: result,
+          });
+          answerText = composed.answerText;
+          await (input.usageRecorder ??
+            (async ({ repo, usage }) =>
+              recordLlmUsage({
+                db: input.db,
+                repo,
+                jobType: "ask",
+                usage,
+              })))(
+            {
+              repo: workspace.repoFullName ?? workspace.slug,
+              usage: composed.usage,
+            },
+          );
+        } catch (error) {
+          // Retrieval remains useful when conversational composition is unavailable.
+          request.log.warn(
+            { error, workspaceId: workspace.id },
+            "ask_answer_composition_failed",
+          );
+        }
+      }
+
       let interactionId: string | null = null;
       try {
         interactionId = await recordInteraction({
@@ -133,8 +185,13 @@ export const handler = async (
       }
 
       return reply.send({
-        workspace,
+        workspace: {
+          id: workspace.id,
+          name: workspace.name,
+          slug: workspace.slug,
+        },
         question: bodyParsed.data.question,
+        answerText,
         interactionId,
         ...result,
       });

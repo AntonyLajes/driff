@@ -3,6 +3,10 @@ import "dotenv/config";
 import { execute as createPullRequestProjector } from "@/changes/project-pull-request.js";
 import { execute as createPushProjector } from "@/changes/project-push.js";
 import { execute as createReleaseProjector } from "@/changes/project-release.js";
+import {
+  execute as createAskAnswerComposer,
+  type AskAnswerComposer,
+} from "@/ask/compose-answer.js";
 import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
@@ -75,6 +79,7 @@ export interface ExecuteInput {
   summarizer?: Summarizer;
   releaseSummarizer?: ReleaseSummarizer;
   pushSummarizer?: PushSummarizer;
+  askAnswerComposer?: AskAnswerComposer;
   destination?: Destination;
   processPrHandler?: JobHandler;
   processReleaseHandler?: JobHandler;
@@ -268,9 +273,18 @@ const buildRuntimeDependencies = async (
       ? { db, jwtSecret: googleOAuth.jwtSecret }
       : undefined;
   const historyImportsMe = workspacesMe;
+  const askAnswerComposer =
+    googleOAuth === undefined
+      ? undefined
+      : (input.askAnswerComposer ??
+        (await createAskAnswerComposer({ apiKey: env.ANTHROPIC_API_KEY })));
   const askMe =
     googleOAuth !== undefined
-      ? { db, jwtSecret: googleOAuth.jwtSecret }
+      ? {
+          db,
+          jwtSecret: googleOAuth.jwtSecret,
+          answerComposer: askAnswerComposer?.compose,
+        }
       : undefined;
   const githubMeBase = buildGithubMeRegistrationInput(env);
   const githubMe =
