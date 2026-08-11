@@ -539,6 +539,7 @@ export const askConversationsTable = pgTable(
       .references(() => usersTable.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     messages: jsonb("messages").$type<unknown[]>().notNull().default([]),
+    sharedAt: timestamp("shared_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

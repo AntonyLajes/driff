@@ -288,6 +288,13 @@
       "when": 1786406970110,
       "tag": "0040_dusty_sunset_bain",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786408067330,
+      "tag": "0041_vengeful_whiplash",
+      "breakpoints": true
     }
   ]
 }

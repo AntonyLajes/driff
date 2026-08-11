@@ -142,6 +142,7 @@ describe("db/schema tables", () => {
     expect(columns.userId).toBeDefined();
     expect(columns.title).toBeDefined();
     expect(columns.messages).toBeDefined();
+    expect(columns.sharedAt).toBeDefined();
     expect(config.foreignKeys.length).toBe(2);
     expect(config.indexes.map((candidate) => candidate.config.name)).toContain(
       "ask_conversations_user_workspace_updated_at_idx",
