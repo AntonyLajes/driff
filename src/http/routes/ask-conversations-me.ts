@@ -176,6 +176,64 @@ export const handler = async (
     },
   );
 
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/ask/conversations/shared/:conversationId",
+    async (request, reply) => {
+      const auth = await requireAccess(request, reply);
+      if (auth === null) return reply;
+      if (auth.params.conversationId === undefined) {
+        return reply.status(400).send({ error: "invalid_ask_conversation" });
+      }
+      const conversation = await store.findShared({
+        id: auth.params.conversationId,
+        workspaceId: auth.access.workspaceId,
+      });
+      return conversation === null
+        ? reply.status(404).send({ error: "ask_conversation_not_found" })
+        : reply.send({ conversation });
+    },
+  );
+
+  instance.post(
+    "/api/me/workspaces/by-slug/:slug/ask/conversations/:conversationId/share",
+    async (request, reply) => {
+      const auth = await requireAccess(request, reply);
+      if (auth === null) return reply;
+      if (auth.params.conversationId === undefined) {
+        return reply.status(400).send({ error: "invalid_ask_conversation" });
+      }
+      const conversation = await store.setShared({
+        id: auth.params.conversationId,
+        workspaceId: auth.access.workspaceId,
+        userId: auth.session.userId,
+        shared: true,
+      });
+      return conversation === null
+        ? reply.status(404).send({ error: "ask_conversation_not_found" })
+        : reply.send({ conversation });
+    },
+  );
+
+  instance.delete(
+    "/api/me/workspaces/by-slug/:slug/ask/conversations/:conversationId/share",
+    async (request, reply) => {
+      const auth = await requireAccess(request, reply);
+      if (auth === null) return reply;
+      if (auth.params.conversationId === undefined) {
+        return reply.status(400).send({ error: "invalid_ask_conversation" });
+      }
+      const conversation = await store.setShared({
+        id: auth.params.conversationId,
+        workspaceId: auth.access.workspaceId,
+        userId: auth.session.userId,
+        shared: false,
+      });
+      return conversation === null
+        ? reply.status(404).send({ error: "ask_conversation_not_found" })
+        : reply.send({ conversation });
+    },
+  );
+
   instance.delete(
     "/api/me/workspaces/by-slug/:slug/ask/conversations/:conversationId",
     async (request, reply) => {
