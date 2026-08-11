@@ -25,6 +25,7 @@ const conversation = {
   messages: [{ id: "1", role: "user" as const, text: "What changed?" }],
   createdAt: NOW,
   updatedAt: NOW,
+  sharedAt: null,
 };
 
 const buildStore = (): AskConversationStore => ({
@@ -35,8 +36,14 @@ const buildStore = (): AskConversationStore => ({
     messages: input.messages,
     createdAt: NOW,
     updatedAt: NOW,
+    sharedAt: null,
   })),
   remove: vi.fn(async () => true),
+  setShared: vi.fn(async ({ shared }) => ({
+    ...conversation,
+    sharedAt: shared ? NOW : null,
+  })),
+  findShared: vi.fn(async () => ({ ...conversation, sharedAt: NOW })),
 });
 
 describe("http/routes/ask-conversations-me", () => {
@@ -141,5 +148,71 @@ describe("http/routes/ask-conversations-me", () => {
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
     });
+  });
+
+  it("should let only the owner enable sharing", async () => {
+    const { server, store } = await setup();
+    const response = await server.inject({
+      method: "POST",
+      url: `/api/me/workspaces/by-slug/ride-pack/ask/conversations/${CONVERSATION_ID}/share`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().conversation.sharedAt).toBe(NOW);
+    expect(store.setShared).toHaveBeenCalledWith({
+      id: CONVERSATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      shared: true,
+    });
+  });
+
+  it("should let only the owner disable sharing", async () => {
+    const { server, store } = await setup();
+    const response = await server.inject({
+      method: "DELETE",
+      url: `/api/me/workspaces/by-slug/ride-pack/ask/conversations/${CONVERSATION_ID}/share`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().conversation.sharedAt).toBeNull();
+    expect(store.setShared).toHaveBeenCalledWith({
+      id: CONVERSATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      shared: false,
+    });
+  });
+
+  it("should open a shared conversation for a member with project access", async () => {
+    const { server, store } = await setup();
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/ask/conversations/shared/${CONVERSATION_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().conversation.sharedAt).toBe(NOW);
+    expect(store.findShared).toHaveBeenCalledWith({
+      id: CONVERSATION_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
+  it("should hide a conversation when sharing is disabled", async () => {
+    const store = buildStore();
+    vi.mocked(store.findShared).mockResolvedValueOnce(null);
+    const { server } = await setup(store);
+    const response = await server.inject({
+      method: "GET",
+      url: `/api/me/workspaces/by-slug/ride-pack/ask/conversations/shared/${CONVERSATION_ID}`,
+      headers: { authorization: `Bearer ${token()}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: "ask_conversation_not_found" });
   });
 });

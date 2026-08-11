@@ -43,6 +43,7 @@ describe("ask/conversation-store", () => {
         messages,
         createdAt: now,
         updatedAt: now,
+        sharedAt: null,
       },
     ]);
     const orderBy = vi.fn(() => ({ limit }));
@@ -62,6 +63,7 @@ describe("ask/conversation-store", () => {
         messages,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
+        sharedAt: null,
       },
     ]);
     expect(limit).toHaveBeenCalledWith(20);
@@ -109,5 +111,59 @@ describe("ask/conversation-store", () => {
     });
 
     expect(removed).toBe(true);
+  });
+
+  it("should update sharing only for a conversation owned in the workspace", async () => {
+    const returning = vi.fn(async () => [
+      {
+        id: CONVERSATION_ID,
+        title: "What changed?",
+        messages,
+        createdAt: now,
+        updatedAt: now,
+        sharedAt: now,
+      },
+    ]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    const db = { update: vi.fn(() => ({ set })) };
+
+    const shared = await execute({ db: db as never }).setShared({
+      id: CONVERSATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      shared: true,
+    });
+
+    expect(shared?.sharedAt).toBe(now.toISOString());
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({ sharedAt: expect.any(Date) }),
+    );
+    expect(returning).toHaveBeenCalledOnce();
+  });
+
+  it("should find only an enabled shared conversation in the workspace", async () => {
+    const limit = vi.fn(async () => [
+      {
+        id: CONVERSATION_ID,
+        title: "What changed?",
+        messages,
+        createdAt: now,
+        updatedAt: now,
+        sharedAt: now,
+      },
+    ]);
+    const where = vi.fn(() => ({ limit }));
+    const from = vi.fn(() => ({ where }));
+    const db = { select: vi.fn(() => ({ from })) };
+
+    const shared = await execute({ db: db as never }).findShared({
+      id: CONVERSATION_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+
+    expect(shared?.id).toBe(CONVERSATION_ID);
+    expect(shared?.sharedAt).toBe(now.toISOString());
+    expect(limit).toHaveBeenCalledWith(1);
   });
 });
