@@ -3,6 +3,7 @@ import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import {
+  askConversationsTable,
   askInteractionsTable,
   changeAreasTable,
   changeContributorsTable,
@@ -131,6 +132,21 @@ describe("db/schema tables", () => {
     expect(config.foreignKeys.length).toBe(1);
     expect(config.indexes.length).toBe(1);
     expect(config.checks.length).toBe(1);
+  });
+
+  it("should store private Ask conversations per user and workspace", () => {
+    const columns = getTableColumns(askConversationsTable);
+    const config = getTableConfig(askConversationsTable);
+
+    expect(columns.workspaceId).toBeDefined();
+    expect(columns.userId).toBeDefined();
+    expect(columns.title).toBeDefined();
+    expect(columns.messages).toBeDefined();
+    expect(config.foreignKeys.length).toBe(2);
+    expect(config.indexes.map((candidate) => candidate.config.name)).toContain(
+      "ask_conversations_user_workspace_updated_at_idx",
+    );
+    expect(config.checks.length).toBe(2);
   });
 
   it("should store the generated-summary language per workspace", () => {

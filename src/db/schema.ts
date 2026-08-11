@@ -521,6 +521,46 @@ export const askInteractionsTable = pgTable(
   }),
 );
 
+/**
+ * Private Ask Driff chat history. Unlike aggregate `ask_interactions`, these
+ * rows intentionally belong to one user and may contain questions and answers.
+ * The bounded JSON document mirrors the chat UI and is validated at the HTTP
+ * boundary before every write.
+ */
+export const askConversationsTable = pgTable(
+  "ask_conversations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    messages: jsonb("messages").$type<unknown[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userWorkspaceUpdatedAtIdx: index(
+      "ask_conversations_user_workspace_updated_at_idx",
+    ).on(table.userId, table.workspaceId, table.updatedAt.desc()),
+    titleLengthCheck: check(
+      "ask_conversations_title_length_check",
+      sql`char_length(${table.title}) BETWEEN 1 AND 72`,
+    ),
+    messagesArrayCheck: check(
+      "ask_conversations_messages_array_check",
+      sql`jsonb_typeof(${table.messages}) = 'array'`,
+    ),
+  }),
+);
+
 export interface HistoryImportFailure {
   sourceKind: "pull_request" | "release" | "commit";
   sourceKey: string;
