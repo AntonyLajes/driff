@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { execute as createComposite } from "@/destinations/composite-destination.js";
-import type { Destination, PRSummary } from "@/destinations/destination.js";
+import type {
+  Destination,
+  PRSummary,
+  PushSummary,
+  ReleaseNotesSummary,
+} from "@/destinations/destination.js";
 
 const prSummary: PRSummary = {
   repo: "acme/app",
@@ -21,6 +26,37 @@ const stub = (pageId: string): Destination => ({
   publishRelease: vi.fn(async () => ({ pageId })),
   publishPush: vi.fn(async () => ({ pageId })),
 });
+
+const releaseSummary: ReleaseNotesSummary = {
+  title: "Version 1.0.0",
+  repo: "acme/app",
+  branch: "main",
+  newVersionKey: "1.0.0+1",
+  previousVersionKey: null,
+  shortVersion: "1.0.0",
+  buildVersion: "1",
+  compareUrl: "https://example.com/compare",
+  prNumbers: [1],
+  changelog: "First release",
+  sections: [],
+};
+
+const pushSummary: PushSummary = {
+  repo: "acme/app",
+  branch: "main",
+  beforeSha: "a".repeat(40),
+  afterSha: "b".repeat(40),
+  pusher: "octocat",
+  pushedAt: new Date("2026-01-02T00:00:00.000Z"),
+  title: "Ship change",
+  summaryUserFacing: "u",
+  summaryTechnical: "t",
+  category: "feature",
+  area: "home",
+  commitCount: 1,
+  prNumbers: [1],
+  compareUrl: "https://example.com/compare",
+};
 
 describe("destinations/composite-destination", () => {
   it("publishes to every child and returns the first page id", async () => {
@@ -79,5 +115,29 @@ describe("destinations/composite-destination", () => {
     });
 
     await expect(composite.publishPR(prSummary)).rejects.toThrow(/All destinations failed/);
+  });
+
+  it("fans release and push summaries through their matching publishers", async () => {
+    const destination = stub("page-a");
+    const composite = createComposite({ children: [{ label: "notion", destination }] });
+
+    await expect(composite.publishRelease(releaseSummary)).resolves.toEqual({ pageId: "page-a" });
+    await expect(composite.publishPush(pushSummary)).resolves.toEqual({ pageId: "page-a" });
+    expect(destination.publishRelease).toHaveBeenCalledWith(releaseSummary);
+    expect(destination.publishPush).toHaveBeenCalledWith(pushSummary);
+  });
+
+  it("uses its safe default logger when a destination fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failing = stub("unused");
+    vi.mocked(failing.publishPush).mockRejectedValueOnce(new Error("down"));
+    const composite = createComposite({ children: [{ label: "notion", destination: failing }] });
+
+    await expect(composite.publishPush(pushSummary)).rejects.toThrow("All destinations failed");
+    expect(warn).toHaveBeenCalledWith(
+      'destination "notion" failed to publishPush:',
+      expect.any(Error),
+    );
+    warn.mockRestore();
   });
 });

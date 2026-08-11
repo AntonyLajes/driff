@@ -7,6 +7,8 @@ import type { Database } from "@/db/client.js";
 import { pullRequestsTable, pushesTable, releasesTable, workspacesTable } from "@/db/schema.js";
 import { reviewTimeSavedMinutes } from "@/lib/review-time.js";
 import { readTeamIdHeader, resolveTeamContext } from "@/teams/team-context.js";
+import type { TeamRole } from "@/teams/team-context.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
 
 export interface MeStatsRegistrationInput {
   db: Database;
@@ -45,7 +47,7 @@ export const handler = async (
   instance: FastifyInstance,
   input: MeStatsRegistrationInput,
 ): Promise<void> => {
-  const loadLinkedWorkspaces = async (teamId: string) => {
+  const loadLinkedWorkspaces = async (teamId: string, userId: string, role: TeamRole) => {
     const workspaces = await input.db
       .select({
         id: workspacesTable.id,
@@ -54,7 +56,12 @@ export const handler = async (
         repoFullName: workspacesTable.repoFullName,
       })
       .from(workspacesTable)
-      .where(eq(workspacesTable.teamId, teamId));
+      .where(
+        and(
+          eq(workspacesTable.teamId, teamId),
+          workspaceVisibilityCondition({ userId, role }),
+        ),
+      );
     const repos = [
       ...new Set(
         workspaces
@@ -87,7 +94,11 @@ export const handler = async (
       return reply.status(403).send({ error: "not_a_team_member" });
     }
 
-    const { workspaces, repos } = await loadLinkedWorkspaces(team.context.teamId);
+    const { workspaces, repos } = await loadLinkedWorkspaces(
+      team.context.teamId,
+      session.userId,
+      team.context.role,
+    );
 
     const currentWeekStart = weekStartMs(Date.now());
     const emptyWeekly = Array.from({ length: WEEKS_SHOWN }, (_, index) => ({
@@ -278,7 +289,11 @@ export const handler = async (
       return reply.status(403).send({ error: "not_a_team_member" });
     }
 
-    const { workspaces, repos } = await loadLinkedWorkspaces(team.context.teamId);
+    const { workspaces, repos } = await loadLinkedWorkspaces(
+      team.context.teamId,
+      session.userId,
+      team.context.role,
+    );
     if (repos.length === 0) {
       return reply.send({ items: [] });
     }
@@ -366,10 +381,14 @@ export const handler = async (
       .orderBy(desc(releasesTable.createdAt))
       .limit(limit);
     for (const row of versionRows) {
+      const build = row.buildVersion.trim();
       pushItem(row.repo, {
         id: row.id,
         type: "version",
-        title: `v${row.shortVersion} (${row.buildVersion})`,
+        title:
+          build.length > 0
+            ? `v${row.shortVersion} (${build})`
+            : `v${row.shortVersion}`,
         timestamp: row.createdAt,
       });
     }

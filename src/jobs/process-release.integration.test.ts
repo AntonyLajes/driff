@@ -5,7 +5,9 @@ const gatherMock = vi.hoisted(() =>
 );
 
 const resolveCompareMock = vi.hoisted(() =>
-  vi.fn(async (inp: { webhookBeforeSha: string }) => inp.webhookBeforeSha.trim()),
+  vi.fn(async (inp: { webhookBeforeSha: string }) =>
+    inp.webhookBeforeSha.trim(),
+  ),
 );
 
 vi.mock("@/sources/github/gather-release-context.js", () => ({
@@ -41,12 +43,25 @@ const releaseSelectRow = (limitResult: unknown) => ({
   }),
 });
 
+const releaseCreatedAt = new Date("2026-08-08T12:00:00.000Z");
+
+const buildInsertChain = (
+  releaseRows: Array<{ id: string; createdAt: Date }> = [
+    { id: "release-source-1", createdAt: releaseCreatedAt },
+  ],
+) => {
+  const returning = vi.fn(async () => releaseRows);
+  const values = vi.fn(() => ({ returning }));
+  const insert = vi.fn(() => ({ values }));
+  return { insert, returning, values };
+};
+
 describe("jobs/process-release integration", () => {
   beforeEach(() => {
     gatherMock.mockReset();
     resolveCompareMock.mockReset();
-    resolveCompareMock.mockImplementation(async (inp: { webhookBeforeSha: string }) =>
-      inp.webhookBeforeSha.trim(),
+    resolveCompareMock.mockImplementation(
+      async (inp: { webhookBeforeSha: string }) => inp.webhookBeforeSha.trim(),
     );
   });
 
@@ -56,16 +71,15 @@ describe("jobs/process-release integration", () => {
       afterVersion: { short: "1", build: "2" },
       previousVersionKey: "1+1",
       newVersionKey: "1+2",
-      compareCommits: [],
-      commitMessages: [],
+      compareCommits: [{ sha: "direct-commit", message: "fix: direct hotfix" }],
+      commitMessages: ["fix: direct hotfix"],
       prNumbers: [],
-      totalCommits: 0,
+      totalCommits: 1,
       compareUrl: "https://c",
-      fileChangeSummary: "—",
+      fileChangeSummary: "modified: package-lock.json\nmodified: src/home.ts",
     });
     const { select } = buildSelectChain([]);
-    const values = vi.fn();
-    const insert = vi.fn(() => ({ values }));
+    const { insert, values } = buildInsertChain();
     const db = { select, insert } as never;
     const publishRelease = vi.fn(async () => ({ pageId: "p1" }));
     const summarizeRelease = vi.fn(async () => ({
@@ -74,6 +88,11 @@ describe("jobs/process-release integration", () => {
       sections: [],
       usage: { model: "claude-sonnet-4-6", inputTokens: 100, outputTokens: 50 },
     }));
+    const project = vi.fn(async () => ({
+      versionId: "version-1",
+      linkedChangeIds: [],
+    }));
+    const historicalReleaseDate = "2026-07-01T12:00:00.000Z";
     const handler = execute({
       db,
       appId: "1",
@@ -85,19 +104,30 @@ describe("jobs/process-release integration", () => {
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
       destination: { publishPR: vi.fn(), publishRelease, publishPush: vi.fn() },
+      canonicalProjection: {
+        workspaceId: "workspace-1",
+        projector: { project },
+      },
+      contentFilter: { excludedPaths: ["package-lock.json"] },
     });
     await handler.execute({
       repo: "o/r",
       beforeSha: "a".repeat(40),
       afterSha: "b".repeat(40),
       branch: "develop",
+      releasedAt: historicalReleaseDate,
     });
     expect(resolveCompareMock).toHaveBeenCalledOnce();
     expect(select).toHaveBeenCalledTimes(2);
     expect(summarizeRelease).toHaveBeenCalledWith(
       expect.objectContaining({
         prContributions: [],
-        standaloneCommitHints: [],
+        standaloneCommitHints: [
+          { sha: "direct-commit", messageLine: "fix: direct hotfix" },
+        ],
+        context: expect.objectContaining({
+          fileChangeSummary: "modified: src/home.ts",
+        }),
       }),
     );
     expect(publishRelease).toHaveBeenCalledOnce();
@@ -107,6 +137,24 @@ describe("jobs/process-release integration", () => {
       expect.objectContaining({
         beforeSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         marketingEraStartSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        createdAt: new Date(historicalReleaseDate),
+      }),
+    );
+    expect(project).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        sourceReleaseId: "release-source-1",
+        versionKey: "1+2",
+        previousVersionKey: "1+1",
+        shortVersion: "1",
+        buildVersion: "2",
+        title: "R",
+        changelog: "What's new.",
+        beforeSha: "a".repeat(40),
+        headSha: "b".repeat(40),
+        compareUrl: "https://c",
+        commitShas: ["direct-commit"],
+        releasedAt: releaseCreatedAt,
       }),
     );
   });
@@ -121,7 +169,10 @@ describe("jobs/process-release integration", () => {
         { sha: "dead", message: "fix typo in label" },
         { sha: "beef", message: "Merge pull request #9 from org/feat" },
       ],
-      commitMessages: ["fix typo in label", "Merge pull request #9 from org/feat"],
+      commitMessages: [
+        "fix typo in label",
+        "Merge pull request #9 from org/feat",
+      ],
       prNumbers: [9],
       totalCommits: 2,
       compareUrl: "https://c",
@@ -144,8 +195,7 @@ describe("jobs/process-release integration", () => {
       })
       .mockReturnValueOnce(releaseSelectRow([]));
 
-    const values = vi.fn();
-    const insert = vi.fn(() => ({ values }));
+    const { insert } = buildInsertChain();
     const publishRelease = vi.fn(async () => ({ pageId: "p99" }));
     const summarizeRelease = vi.fn(async () => ({
       title: "Rel",
@@ -178,6 +228,7 @@ describe("jobs/process-release integration", () => {
     expect(summarizeRelease).toHaveBeenCalledWith({
       repo: "acme/ios",
       branch: "develop",
+      language: "auto",
       context: expect.any(Object),
       prContributions: [
         {
@@ -187,7 +238,9 @@ describe("jobs/process-release integration", () => {
           title: "Welcome tweaks",
         },
       ],
-      standaloneCommitHints: [{ sha: "dead", messageLine: "fix typo in label" }],
+      standaloneCommitHints: [
+        { sha: "dead", messageLine: "fix typo in label" },
+      ],
     });
   });
 
@@ -197,7 +250,9 @@ describe("jobs/process-release integration", () => {
       afterVersion: { short: "1", build: "2" },
       previousVersionKey: "1+1",
       newVersionKey: "1+2",
-      compareCommits: [{ sha: "s1", message: "Merge pull request #9 from a/x" }],
+      compareCommits: [
+        { sha: "s1", message: "Merge pull request #9 from a/x" },
+      ],
       commitMessages: ["Merge pull request #9 from a/x"],
       prNumbers: [9, 9],
       totalCommits: 1,
@@ -221,7 +276,7 @@ describe("jobs/process-release integration", () => {
       })
       .mockReturnValueOnce(releaseSelectRow([]));
 
-    const insert = vi.fn(() => ({ values: vi.fn() }));
+    const { insert } = buildInsertChain();
     const publishRelease = vi.fn(async () => ({ pageId: "pd" }));
     const summarizeRelease = vi.fn(async () => ({
       title: "T",
@@ -253,6 +308,7 @@ describe("jobs/process-release integration", () => {
     expect(summarizeRelease).toHaveBeenCalledWith({
       repo: "o/r",
       branch: "develop",
+      language: "auto",
       context: expect.objectContaining({
         prNumbers: [9],
       }),
@@ -266,7 +322,9 @@ describe("jobs/process-release integration", () => {
       ],
       standaloneCommitHints: [],
     });
-    expect(publishRelease).toHaveBeenCalledWith(expect.objectContaining({ prNumbers: [9] }));
+    expect(publishRelease).toHaveBeenCalledWith(
+      expect.objectContaining({ prNumbers: [9] }),
+    );
   });
 
   it("should skip LLM when release version already stored", async () => {
@@ -339,7 +397,11 @@ describe("jobs/process-release integration", () => {
       expoAppConfigPath: null,
       promptVersion: 1,
       releaseSummarizer: { summarizeRelease, prompt: "p" },
-      destination: { publishPR: vi.fn(), publishRelease: vi.fn(), publishPush: vi.fn() },
+      destination: {
+        publishPR: vi.fn(),
+        publishRelease: vi.fn(),
+        publishPush: vi.fn(),
+      },
     });
     await handler.execute({
       repo: "o/r",
@@ -387,8 +449,7 @@ describe("jobs/process-release integration", () => {
       .fn()
       .mockReturnValueOnce(releaseSelectRow([]))
       .mockReturnValueOnce(releaseSelectRow([]));
-    const values = vi.fn();
-    const insert = vi.fn(() => ({ values }));
+    const { insert, values } = buildInsertChain();
     const db = { select, insert } as never;
     const summarizeRelease = vi.fn(async () => ({
       title: "Wide",

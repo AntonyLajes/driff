@@ -32,6 +32,8 @@ export interface PushContext {
   additions: number | null;
   deletions: number | null;
   changedFiles: number | null;
+  /** Per-file compare metadata used to remove configured noise before summarization. */
+  files?: Array<{ path: string; additions: number; deletions: number }>;
   /** Truncated unified diff for the compare range. */
   diff: string;
 }
@@ -147,6 +149,11 @@ export const execute = async (input: ExecuteInput): Promise<PushContext> => {
     additions,
     deletions,
     changedFiles,
+    files: compare.files?.map((file) => ({
+      path: file.filename,
+      additions: file.additions ?? 0,
+      deletions: file.deletions ?? 0,
+    })),
     diff: truncateDiff(diffResponse.data, diffMaxBytes),
   };
 };

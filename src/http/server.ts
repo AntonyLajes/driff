@@ -1,7 +1,21 @@
 import sensible from "@fastify/sensible";
-import fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import fastify, {
+  type FastifyInstance,
+  type FastifyServerOptions,
+} from "fastify";
 
-import { execute as registerCors, type CorsRegistrationInput } from "@/http/cors.js";
+import {
+  execute as registerCors,
+  type CorsRegistrationInput,
+} from "@/http/cors.js";
+import {
+  handler as registerAskMeRoute,
+  type AskMeRegistrationInput,
+} from "@/http/routes/ask-me.js";
+import {
+  handler as registerAskConversationsMeRoute,
+  type AskConversationsMeRegistrationInput,
+} from "@/http/routes/ask-conversations-me.js";
 import {
   handler as registerAuthGoogleRoute,
   type GoogleOAuthRegistrationInput,
@@ -10,6 +24,10 @@ import {
   handler as registerHealthRoute,
   type HealthRouteInput,
 } from "@/http/routes/health.js";
+import {
+  handler as registerHistoryImportsMeRoute,
+  type HistoryImportsMeRegistrationInput,
+} from "@/http/routes/history-imports-me.js";
 import {
   handler as registerGithubMeRoute,
   type GithubMeRegistrationInput,
@@ -23,9 +41,25 @@ import {
   type MeStatsRegistrationInput,
 } from "@/http/routes/me-stats.js";
 import {
+  handler as registerAiUsageMeRoute,
+  type AiUsageMeRegistrationInput,
+} from "@/http/routes/ai-usage-me.js";
+import {
+  handler as registerProductFunnelMeRoute,
+  type ProductFunnelMeRegistrationInput,
+} from "@/http/routes/product-funnel-me.js";
+import {
+  handler as registerSystemReadinessMeRoute,
+  type SystemReadinessMeRegistrationInput,
+} from "@/http/routes/system-readiness-me.js";
+import {
   handler as registerTeamsMeRoute,
   type TeamsMeRegistrationInput,
 } from "@/http/routes/teams-me.js";
+import {
+  handler as registerTimelineMeRoute,
+  type TimelineMeRegistrationInput,
+} from "@/http/routes/timeline-me.js";
 import {
   handler as registerWorkspacesMeRoute,
   type WorkspacesMeRegistrationInput,
@@ -53,8 +87,22 @@ export interface ExecuteInput {
   workspacesMe?: WorkspacesMeRegistrationInput;
   /** When set, registers `/api/me/stats` and `/api/me/activity` (Bearer session JWT). */
   meStats?: MeStatsRegistrationInput;
+  /** When set, registers team-scoped aggregate AI token usage. */
+  aiUsageMe?: AiUsageMeRegistrationInput;
+  /** When set, registers privacy-preserving first-value funnel aggregates. */
+  productFunnelMe?: ProductFunnelMeRegistrationInput;
+  /** When set, registers aggregate Ask and destination readiness diagnostics. */
+  systemReadinessMe?: SystemReadinessMeRegistrationInput;
   /** When set, registers `/api/me/teams` (Bearer session JWT). */
   teamsMe?: TeamsMeRegistrationInput;
+  /** When set, registers the canonical workspace timeline (Bearer session JWT). */
+  timelineMe?: TimelineMeRegistrationInput;
+  /** When set, registers bounded GitHub history imports and progress reads. */
+  historyImportsMe?: HistoryImportsMeRegistrationInput;
+  /** When set, registers cited canonical-history questions (Bearer session JWT). */
+  askMe?: AskMeRegistrationInput;
+  /** When set, registers private per-user Ask conversation persistence. */
+  askConversationsMe?: AskConversationsMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
   githubMe?: GithubMeRegistrationInput;
   /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
@@ -89,8 +137,29 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     if (input.meStats !== undefined) {
       await registerMeStatsRoute(instance, input.meStats);
     }
+    if (input.aiUsageMe !== undefined) {
+      await registerAiUsageMeRoute(instance, input.aiUsageMe);
+    }
+    if (input.productFunnelMe !== undefined) {
+      await registerProductFunnelMeRoute(instance, input.productFunnelMe);
+    }
+    if (input.systemReadinessMe !== undefined) {
+      await registerSystemReadinessMeRoute(instance, input.systemReadinessMe);
+    }
     if (input.teamsMe !== undefined) {
       await registerTeamsMeRoute(instance, input.teamsMe);
+    }
+    if (input.timelineMe !== undefined) {
+      await registerTimelineMeRoute(instance, input.timelineMe);
+    }
+    if (input.historyImportsMe !== undefined) {
+      await registerHistoryImportsMeRoute(instance, input.historyImportsMe);
+    }
+    if (input.askMe !== undefined) {
+      await registerAskMeRoute(instance, input.askMe);
+    }
+    if (input.askConversationsMe !== undefined) {
+      await registerAskConversationsMeRoute(instance, input.askConversationsMe);
     }
     if (input.githubMe !== undefined) {
       await registerGithubMeRoute(instance, input.githubMe);

@@ -7,11 +7,13 @@ Internal tool that automatically generates release notes and PR documentation fo
 The product is being dogfooded inside a US-based mobile startup, with the goal of eventually being commercialized as a SaaS for mobile-first engineering teams.
 
 **Required stack:**
+
 - Node.js 20+ with TypeScript
 - Postgres (Railway)
 - Hosting: Railway
 
 **Chosen stack (with rationale):**
+
 - HTTP framework: **Fastify** — faster than Express, native TypeScript support, mature plugin ecosystem.
 - ORM: **Drizzle** — type-safe without heavy code generation, SQL-like API, simple migrations. Prisma is a valid alternative but more "magical".
 - Validation: **Zod** — schemas double as TypeScript types.
@@ -29,9 +31,32 @@ The product is being dogfooded inside a US-based mobile startup, with the goal o
 The phased "Phase 1…8" sections further down are the **original build plan** and are partly historical. Where they conflict with this section, **this section wins**. Key facts about how the system actually works today:
 
 **Three summary pipelines, all live and validated end-to-end:**
+
 - `process_pr` — merged PR → AI summary → destinations. Base-branch filter via `workspace_settings.pr_summary_base_branches` (empty/null = any base).
-- `process_release` — push to the configured release branch that touches the version file (iOS plist/pbxproj or Expo `app.json`) → AI changelog → destinations. Config: `release_project_kind` + `release_version_file_path` (+ `release_version_branch`).
-- `process_push` — direct push to a configured branch → AI summary → destinations. Config: `workspace_settings.push_summary_branches`. **Gotcha:** when empty, `buildPushConfig` returns `null` and **no push job is ever enqueued** (it does NOT fall back to the default branch at that layer). **Overlap dedup (implemented):** a push that is really a PR merge or a release version bump is skipped in `process_push` (no duplicate push summary) — see `src/jobs/push-dedup.ts`. Detection is race-free via the sibling `jobs` rows: skip if a `process_release` job shares the push's `afterSha`, or if every PR number the push references (from merge/squash commit messages) has a `process_pr` job. Requiring *all* referenced PRs to be covered fails safe — a push mixing PR merges with un-summarized direct commits is still published.
+- `process_release` — version marker → AI changelog → destinations. `workspace_settings.release_version_strategy` selects `version_file` (push touching the configured file/branch), `git_tag` (SemVer tag push), or `github_release` (published, non-draft GitHub Release with a SemVer tag). Tag strategies resolve the tag commit, compare it with the previous projected version, and keep the tag/Release URL as canonical evidence.
+- `process_push` — direct push to a configured branch → AI summary → destinations. Config: `workspace_settings.push_summary_branches`. **Gotcha:** when empty, `buildPushConfig` returns `null` and **no push job is ever enqueued** (it does NOT fall back to the default branch at that layer). **Overlap dedup (implemented):** a push that is really a PR merge or a release version bump is skipped in `process_push` (no duplicate push summary) — see `src/jobs/push-dedup.ts`. Detection is race-free via the sibling `jobs` rows: skip if a `process_release` job shares the push's `afterSha`, or if every PR number the push references (from merge/squash commit messages) has a `process_pr` job. Requiring _all_ referenced PRs to be covered fails safe — a push mixing PR merges with un-summarized direct commits is still published.
+
+**Per-workspace summary language:** `workspace_settings.summary_language` controls all three pipelines and forced regenerations. Supported values are `auto` (default; follow the dominant source language), `en`, and `pt-BR`. Normalize persisted values through `src/config/summary-language.ts`, pass the resolved value through each job into its summarizer input, and include `outputLanguage` in the untrusted JSON user message. Do not duplicate language-specific pipelines or translate code identifiers, version strings, or product names.
+
+**Granular project access:** every workspace defaults to `member_access = 'all'` for backwards compatibility. Owners/admins always see every workspace in their team; regular members see an `all` workspace or a `restricted` workspace with a matching `workspace_member_access` grant. Apply `workspaceVisibilityCondition` to every member-readable workspace lookup and aggregate (lists, details, Timeline, Ask, summaries, stats, usage, funnel and readiness), returning the same not-found response for inaccessible projects. `GET/PATCH .../by-slug/:slug/access` is manager-only and replaces grants transactionally. Never treat a UI-hidden project as access control or grant access from a stale team role alone.
+
+**Verifiable project deletion:** `DELETE /api/me/workspaces/:workspaceId` delegates to `src/workspaces/delete-workspace-data.ts` and performs the purge in one database transaction. It removes repo/workspace jobs first, raw GitHub webhook payloads, legacy PR/push/release rows, LLM usage metering and finally the workspace; workspace-scoped settings, destinations, secrets, imports, corrections and canonical history cascade through foreign keys. When a new repo-keyed table is introduced, add it to this purge and its tests so the Settings privacy promise remains accurate.
+
+**Privacy-preserving product analytics:** `ask_interactions` records only the workspace, whether an Ask response had linked evidence, optional `helpful`/`unhelpful` feedback and timestamps. It deliberately stores no question, answer, source text, code, contributor or user identity and cascades when the workspace is deleted. Ask recording is best-effort so analytics can never make evidence search unavailable. The Ask response returns an opaque `interactionId`; the team-scoped feedback route updates only that workspace's interaction. `GET /api/me/product-funnel` aggregates connected projects, ready history, Ask adoption, evidence-backed answers and feedback for the acting team. Keep this aggregate project-level and never turn it into individual productivity measurement.
+
+**Private Ask conversation history:** `ask_conversations` stores each user's bounded chat document (`title` plus at most 20 validated user/assistant messages and five answer revisions) for synchronization between browsers. This is product data, not analytics: every read, upsert and delete is scoped by session user, acting team, visible workspace and conversation id. Rows cascade with either the user or workspace. Conversations remain private while `shared_at` is null. Only the owner can enable or disable sharing; a shared conversation is read-only and readable only by authenticated team members who already have access to that workspace. `GET/PUT/DELETE /api/me/workspaces/by-slug/:slug/ask/conversations[/:conversationId]`, `POST/DELETE .../:conversationId/share`, and `GET .../shared/:conversationId` are the only persistence boundaries; never expose a conversation through an unauthenticated token or aggregate question or answer text into productivity metrics, logs or team-visible reports.
+
+**Team AI usage visibility:** `GET /api/me/ai-usage` joins the acting team's linked repositories to the existing best-effort `llm_usage` meter and returns cumulative calls plus input/output/total tokens, including aggregate per-project rows. It intentionally does not calculate currency cost in the backend, because provider prices are external and time-varying, and never attributes usage to an individual. Keep every query scoped through current team membership.
+
+**System readiness diagnostics:** `GET /api/me/system-readiness` aggregates the acting team's canonical searchable changes and connected/enabled workspace destinations. A project is Ask-searchable when it has canonical changes; a destination is connected only when its sealed credential exists and is usable for delivery only when also enabled. Never expose destination secrets, and treat external delivery as optional: Driff's internal history and Ask remain the primary product.
+
+**Webhook reception confirmation:** workspace diagnostics resolve the latest `webhook_events` row whose payload repository matches the linked repository and return `checks.webhookReceived` plus `webhook.{received,lastReceivedAt,eventType}`. A missing first event is a warning, not a fabricated connection success. The JSON lookup is backed by `webhook_events_repo_received_at_idx`; preserve that index if the payload query changes.
+
+**Evidence-based collaboration attribution:** merged PR ingestion reads commit authors, `Co-authored-by` trailers, submitted reviewers and the GitHub merge actor in addition to the PR author. Project these as explicit `change_contributors.role` values (`pr_author`, `commit_author`, `reviewer`, `coauthor`, `merger`; direct pushes use `pusher`) and preserve a source URL only when GitHub provides an account identity. Never persist commit-author or coauthor email addresses. `is_bot` separates automation from people without hiding its contribution. Attribution explains participation; it must never become ownership inference, ranking, productivity scoring or performance evaluation.
+
+**Persistent team administration trail:** migration 0035 adds `team_audit_events`, an append-only record of team creation/rename, invite lifecycle, role changes, removals and voluntary departures. Production team routes record events best-effort through `src/teams/record-audit-event.ts`; an audit write failure is logged but must not fail the administration action. `GET /api/me/teams/:teamId/audit-events` returns the newest events to owners and admins only, with a bounded `limit` of 1–100. Store administrative context only: never add repository content, source code, questions, answers, productivity metrics or destination secrets to this table or its metadata. Actor rows may become null when the user is deleted; event history remains attached to the team and cascades with team deletion.
+
+**Ask regression evaluation:** `npm run ask:evaluate:all` evaluates every `*-golden.json` corpus and is a required CI gate. Reports include factual/citation/refusal quality, per-case and aggregate mean/p95 retrieval latency, and explicit runtime LLM calls/tokens. The command also compares the current stable result shape with `src/ask/fixtures/ask-golden-baseline.json`: removing an approved corpus/case, changing a passing case to failure, or decreasing pass rate/citation precision/refusal accuracy fails CI even if the current threshold still passes. Timings are deliberately excluded from the baseline because shared-runner variance is not a product-quality regression. Approve an intentional new baseline only with `npm run ask:evaluate:all -- --write-baseline=src/ask/fixtures/ask-golden-baseline.json --revision=<approved-revision>` after reviewing the printed delta; `--revision` is mandatory. Retrieval remains deterministic and is what the required golden suite measures. The authenticated Ask route then passes only the retrieved facts plus up to eight transient conversation turns to `src/ask/compose-answer.ts`, which generates natural-language prose without changing the cited result set. Composition failures fall back to structured retrieval, questions/answers are never persisted by Driff analytics, and successful calls are metered in `llm_usage` with job type `ask`.
 
 **Provider-agnostic workspaces (not GitHub-specific anymore):** `workspaces.sourceProvider` ('github'|'gitlab'|'bitbucket') + `repoFullName` + `repoDefaultBranch` (renamed from the old `github_*` columns). Unique `(sourceProvider, repoFullName)` = 1 repo → 1 workspace globally. Per-user OAuth tokens live in `user_source_connections` (provider-keyed). Source layer is abstracted behind `src/sources/registry.ts` (`getSource`); only GitHub is implemented.
 
@@ -39,9 +64,19 @@ The phased "Phase 1…8" sections further down are the **original build plan** a
 
 **Notion auto-provisions its schema** (`src/destinations/notion/notion-schema.ts`): before each publish it resolves the database's data source (Notion-Version 2025-09-03 moved the property schema onto data sources), diffs existing properties against a per-summary spec, and adds missing ones via `dataSources.update`. The specs MUST stay in sync with the `toProperties`/`toReleaseProperties`/`toPushProperties` page payloads.
 
+**Idempotent Notion release publishing:** release databases include a stable `Driff Key` (`github:<repo>:release:<versionKey>`). Before creating a version page, the Notion destination queries the resolved data source by that key; it also adopts legacy pages by exact Repo + Version. Existing pages receive updated properties and a full markdown content replacement, so forced regeneration and retry refresh one page instead of creating duplicates. Keep this stable identity independent of titles or generated prose, and preserve the legacy lookup when evolving the schema.
+
+Owners/admins can also publish an already-generated canonical version explicitly through `POST /api/me/workspaces/by-slug/:slug/destinations/notion/releases/:versionId/publish`. `src/destinations/publish-version.ts` rebuilds the destination payload from stored canonical/legacy release data and therefore performs no GitHub request or new LLM call. The route requires an enabled Notion destination with a configured releases database, decrypts the workspace token only at the boundary, and returns the stable Notion page URL. Keep manual and automatic publishing on the same idempotent destination path.
+
 **Worker resilience (learned the hard way):** the worker (`src/queue/worker.ts`) runs in the same process as the HTTP server (started in `index.ts`). The poll loop **must** wrap `runOnce()` in try/catch and keep polling after a backoff — a single transient error (e.g. a dropped Postgres connection during an idle dequeue) escaping `run()` once left the worker permanently dead **with zero logs** while the server stayed healthy (jobs piled up `pending`, `attempts=0`). It now logs lifecycle + per-job outcomes via an injectable `WorkerLogger` (defaults to console). **Do not** reintroduce a silent `.catch(() => undefined)` around `worker.run()`. **Queue health is exposed at `GET /health/queue`** (`src/queue/queue-health.ts`): returns 200 `ok` / 503 `degraded` with checks for stale pending jobs (worker not consuming), failed jobs in the last 24h, and stuck `running` jobs. Point an external uptime monitor at it — that's the alerting layer (no push/Slack alert yet).
 
 **Usage metering (no enforcement yet):** each successful summarization records token usage in `llm_usage` (`repo`, `job_type`, `model`, `input/output_tokens`) — the summarizers return `usage` (from the Anthropic response) and the jobs call `recordLlmUsage` (best-effort: never fails the job). This feeds future usage-based pricing/tiers (deferred to a pre-prod decision — see the billing-tiers note). The other tier dimensions already exist: projects = `workspaces`, outputs = `workspace_destinations`.
+
+**Driff Lab (V1 P0):** deterministic GitHub scenarios live in `src/lab/fixtures/` and are validated by `src/lab/scenario.ts`. Run `npm run lab:validate -- <scenario.json>` for a side-effect-free contract check. Run `npm run lab:verify -- <scenario.json>` to pass signed events through an in-memory Fastify server using the real webhook handler and assert each event's `expectedJobs`, without network or DB access. Run `npm run lab:replay -- <scenario.json> [target-url] [--run-id=<id>]` to send the same HMAC-signed events sequentially through a running `/webhooks/github` boundary. Omit `--run-id` to test delivery idempotency; provide a kebab-case run ID to derive fresh delivery IDs without destructive database resets. Localhost is allowed by default. A remote target requires both `--confirm-development` and its exact hostname in the CLI-only `DRIFF_LAB_ALLOWED_HOSTS` comma-separated allowlist; never add a production hostname or a production bypass route. Scenarios use schema version `1`, one repository, explicit webhook settings, ordered offsets, unique delivery IDs, raw GitHub payloads, and expected job types. Payload repository names must match the scenario repository. Replay uses `GITHUB_WEBHOOK_SECRET` and never prints it.
+
+**Initial history import (V1 onboarding):** migrations 0026–0027 add `history_imports`, a workspace-scoped progress/checkpoint record for bounded GitHub history imports. `POST /api/me/workspaces/by-slug/:slug/history-imports` enqueues `import_history` (defaults: 12 months, at most 100 items per source; accepted bounds: 1–24 months and 10–200), `GET .../history-imports/latest` exposes progress, and `DELETE .../history-imports/:importId` requests cooperative cancellation. The orchestrator discovers merged PRs, version tags and default-branch commits, then processes them in PR → release → commit order through the regular idempotent `process_pr`, `process_release` and `process_push` pipelines. Generic source keys checkpoint every success/failure so worker retries resume instead of restarting from zero; legacy PR-number checkpoints remain in the API. Historical tags preserve their commit date as the release date. Only one pending/running import may exist per workspace. `partial` means the bounded run completed with item-level failures; `truncated` means a configured source cap was reached. Do not create a parallel summarization path for imports or bypass workspace/team isolation.
+
+**Canonical V1 change graph (additive foundation):** migration 0018 adds `project_versions`, `changes`, `change_evidence`, `product_areas`, `change_areas`, and `change_contributors`; migration 0019 adds the indexed nullable `project_versions.source_release_id` FK so every projected version can navigate back to its legacy release row; migration 0020 adds the indexed self-reference `previous_version_id` for explicit version lineage; migration 0021 adds the canonical version title, changelog, structured sections, and prompt version needed to serve the future timeline without reading legacy release content; migration 0022 adds the explicit `pusher` contributor role for direct pushes; migration 0023 adds composite/partial indexes for cursor-paginated released and unversioned timeline reads. These tables are the future read model for the version timeline and Ask Driff: a version groups user-understandable changes; every change can retain claim-level evidence, product-area links, and collaboration roles. Existing `pull_requests`, `pushes`, and `releases` remain the source records and current production paths. Introduce projections with idempotent dual writes, backfill and compare them against the legacy outputs before switching any API/UI reads; do not remove or bypass the legacy tables during that transition. `src/changes/project-pull-request.ts` projects one PR transactionally; `src/changes/project-push.ts` projects one non-overlapping direct push with compare/commit evidence and explicit pusher attribution; both leave `version_id` untouched. `src/changes/project-release.ts` upserts the canonical version, resolves its explicit predecessor, and assigns only still-unversioned projected changes found by PR number or commit SHA so overlapping/retried releases cannot move historical changes. For backfills, project PRs and direct pushes first, then releases in chronological order. Runtime job handlers enable projectors through optional `canonicalProjection` dependencies immediately after their legacy inserts return source-record IDs; callers that omit these dependencies retain legacy-only behavior for isolated tests/tools. Preserve workspace isolation on every query and never derive individual productivity scores from contributor rows. `GET /api/me/workspaces/by-slug/:slug/timeline` is the first canonical read API: it requires the session JWT and acting-team membership, returns released versions with nested changes/areas/contributors/evidence plus first-page unversioned changes, and uses an opaque `(released_at, id)` cursor (`limit` 1–20) instead of offset pagination. Semantic embeddings/search are deliberately deferred until deterministic relational retrieval is working and measured.
 
 **Webhook gating** is decoupled from Notion: release notes run when a release version source + branch are configured; push summaries when `push_summary_branches` is non-empty; PR summaries whenever a workspace + destination exist. All runtime resolution is strict by `(sourceProvider, repoFullName)` with no env fallback.
 
@@ -61,6 +96,7 @@ Every response that involves changing code, creating files, or proposing impleme
 ```
 
 Example:
+
 ```
 **Phase: 1 — Core PR ingestion**
 **Scope: Implementing the GitHub webhook handler and signature verification**
@@ -81,6 +117,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/). 
 ```
 
 **Allowed types:**
+
 - `feat` — new feature for the user / new capability of the system.
 - `fix` — bug fix.
 - `refactor` — code change that neither fixes a bug nor adds a feature.
@@ -95,6 +132,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/). 
 **Scope** is optional but encouraged. Use the module name (`webhooks`, `notion`, `llm`, `db`, `queue`, etc.).
 
 **Examples:**
+
 ```
 feat(webhooks): add GitHub signature verification
 fix(notion): handle markdown headings longer than 2000 chars
@@ -104,9 +142,10 @@ docs(agents): add phase 4 specification
 ```
 
 **Rules:**
+
 - Description in lowercase, imperative mood ("add" not "added"), no period at the end.
 - Keep the subject line under 72 chars.
-- Use the body to explain *why*, not *what* (the diff shows what).
+- Use the body to explain _why_, not _what_ (the diff shows what).
 - Breaking changes get a `!` after the type/scope and a `BREAKING CHANGE:` footer.
 
 ### Commit granularity (mandatory)
@@ -166,6 +205,11 @@ docs(agents): add phase 4 specification
 docs/
   release-compare-windows.md  # Spec: Git compare windows for build vs marketing-version releases
 src/
+  changes/
+    canonical-id.ts        # Stable IDs shared by idempotent graph projectors
+    project-pull-request.ts # Idempotent PR → canonical graph projection
+    project-push.ts        # Idempotent direct push → canonical graph projection
+    project-release.ts     # Idempotent release → version lineage projection
   config/
     env.ts                  # Env var validation with Zod (secrets + infra)
     workspace-settings.ts   # Resolve strict per-workspace settings (no global fallback)
@@ -180,6 +224,7 @@ src/
     routes/
       webhooks.ts           # POST /webhooks/github
       webhook-release.ts   # push → process_release gating
+      timeline-me.ts       # Authenticated canonical workspace timeline
       health.ts             # GET /health
   lib/
     plist-version.ts        # CFBundle* from XML plist
@@ -208,8 +253,14 @@ src/
     queue.ts                # Enqueue/dequeue via Postgres
     worker.ts               # Worker loop
   jobs/
+  history-imports/
+    history-import-repository.ts    # Persistent progress/checkpoints and cancellation
+    list-merged-pull-requests.ts    # Bounded GitHub App history listing
+    process-history-import.ts       # Resumable import_history orchestrator
     process-pr.ts
     process-release.ts      # iOS version delta → Notion
+  timeline/
+    read-timeline.ts        # Cursor-paginated canonical timeline read model
   index.ts                  # Entry point: HTTP server + worker
 drizzle.config.ts
 package.json
@@ -314,14 +365,14 @@ This is **not** the same integration as the **GitHub App** (`GITHUB_APP_*`) used
 
 **Runtime routes (registered when the GitHub user OAuth env pair + JWT bundle are all set):**
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `POST` | `/api/me/github/oauth/start` | Bearer session JWT | Returns JSON `{ "authorizeUrl" }` — open this URL in the browser to start GitHub OAuth. |
-| `GET` | `/api/me/github/oauth/callback` | _(GitHub redirect)_ | Exchanges `code`, stores sealed tokens in `user_github_accounts`, redirects to **`FRONTEND_URL/workspaces/new/github?github_oauth=success&github_login=...`** (or `github_oauth=exchange_failed`, etc.). |
-| `GET` | `/api/me/github/status` | Bearer | `{ "connected": boolean, "githubLogin"?: string }` |
-| `DELETE` | `/api/me/github/disconnect` | Bearer | **204** — removes stored GitHub tokens for the user. |
-| `GET` | `/api/me/github/repos` | Bearer | Query `page` (default 1), `per_page` (default 30, max 100). Returns `{ repos, page, perPage, hasMore }`. **400** `github_not_connected` if OAuth not completed. |
-| `POST` | `/api/me/github/repo/infer` | Bearer | JSON `{ "fullName": "owner/repo" }` → `{ "inference": { suggestedKind, confidence, defaultBranch, versionFilePath, signals } }`. Uses the user’s GitHub token and the Contents API only (no clone). |
+| Method   | Path                            | Auth                | Purpose                                                                                                                                                                                                  |
+| -------- | ------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/me/github/oauth/start`    | Bearer session JWT  | Returns JSON `{ "authorizeUrl" }` — open this URL in the browser to start GitHub OAuth.                                                                                                                  |
+| `GET`    | `/api/me/github/oauth/callback` | _(GitHub redirect)_ | Exchanges `code`, stores sealed tokens in `user_github_accounts`, redirects to **`FRONTEND_URL/workspaces/new/github?github_oauth=success&github_login=...`** (or `github_oauth=exchange_failed`, etc.). |
+| `GET`    | `/api/me/github/status`         | Bearer              | `{ "connected": boolean, "githubLogin"?: string }`                                                                                                                                                       |
+| `DELETE` | `/api/me/github/disconnect`     | Bearer              | **204** — removes stored GitHub tokens for the user.                                                                                                                                                     |
+| `GET`    | `/api/me/github/repos`          | Bearer              | Query `page` (default 1), `per_page` (default 30, max 100). Returns `{ repos, page, perPage, hasMore }`. **400** `github_not_connected` if OAuth not completed.                                          |
+| `POST`   | `/api/me/github/repo/infer`     | Bearer              | JSON `{ "fullName": "owner/repo" }` → `{ "inference": { suggestedKind, confidence, defaultBranch, versionFilePath, signals } }`. Uses the user’s GitHub token and the Contents API only (no clone).      |
 
 **Scopes requested:** `read:user repo` (see `GITHUB_OAUTH_SCOPES` in `src/http/routes/github-me.ts`). Adjust there if you need a narrower scope later.
 
@@ -340,6 +391,7 @@ INSERT INTO workspace_settings (
   notion_releases_database_id,
   release_project_kind,
   release_version_file_path,
+  release_version_strategy,
   release_version_branch,
   pr_summary_base_branches
 ) VALUES (
@@ -348,12 +400,15 @@ INSERT INTO workspace_settings (
   'your-notion-releases-database-id',
   'ios_plist',
   'ios/App/Info.plist',
+  'version_file',
   'main',
   '["main"]'::jsonb
 );
 ```
 
-**Preferido (onboarding / “adicionar projeto”):** `release_project_kind` + `release_version_file_path` (sempre os dois). Valores de `release_project_kind`: `ios_plist` (Info.plist), `ios_pbx` (`project.pbxproj`), `react_native_expo` (`app.json` / `app.config.*`). Reservados (ainda sem parser): `android_gradle`, `flutter_pubspec`. O merge em `workspace-settings.ts` mapeia isto para os campos internos usados por `gather-release-context`.
+**Estratégia de versão:** `release_version_strategy` aceita `version_file` (default), `git_tag`, ou `github_release`. `version_file` exige `release_project_kind` + `release_version_file_path` e `release_version_branch`. As estratégias de tag não exigem ficheiro/branch; aceitam apenas SemVer (`v1.2.3`, `2.0.0-rc.1`, etc.). `github_release` ignora drafts e responde apenas ao evento `release.published`. A importação histórica lista tags ou Releases conforme a estratégia e preserva a URL canônica.
+
+**Arquivo de versão:** valores de `release_project_kind`: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`, `node_package`, `python_pyproject`, `rust_cargo`, `java_maven`, e `java_gradle`. O merge em `workspace-settings.ts` mapeia o par para os campos internos usados por `gather-release-context`.
 
 **Legado:** ainda podes preencher só `release_info_plist_path`, `release_project_pbxproj_path`, ou `release_expo_app_config_path` (ou envs equivalentes); o boot infere `release_project_kind` + `release_version_file_path` para UI.
 
@@ -367,17 +422,17 @@ Validation: `notion_pr_database_id` must be set in the workspace row. If `notion
 
 The project is divided into phases. Each phase is a coherent, shippable unit of scope. Phases build on each other but each one delivers value on its own — so the project is always "done" at any phase boundary.
 
-| Phase | Name                            | Status      |
-|-------|---------------------------------|-------------|
-| 1     | Core PR ingestion               | Completed   |
-| 2     | Version bump detection          | Completed   |
-| —     | Push summaries (`process_push`) | Completed (added after the original plan) |
-| 3     | Slack digest                    | Planned (destination seam exists; `slack` not implemented) |
-| 4     | Multi-PR thematic threads       | Planned     |
-| 5     | Multi-repo + multi-tenancy      | Completed (provider-agnostic workspaces; 1 repo → 1 workspace) |
+| Phase | Name                            | Status                                                                                   |
+| ----- | ------------------------------- | ---------------------------------------------------------------------------------------- |
+| 1     | Core PR ingestion               | Completed                                                                                |
+| 2     | Version bump detection          | Completed                                                                                |
+| —     | Push summaries (`process_push`) | Completed (added after the original plan)                                                |
+| 3     | Slack digest                    | Planned (destination seam exists; `slack` not implemented)                               |
+| 4     | Multi-PR thematic threads       | Planned                                                                                  |
+| 5     | Multi-repo + multi-tenancy      | Completed (provider-agnostic workspaces; 1 repo → 1 workspace)                           |
 | 6     | Additional sources/destinations | Partial (pluggable registries done; only GitHub source + Notion destination implemented) |
-| 7     | Cost optimization & scaling     | Planned (no per-workspace cost guardrails yet) |
-| 8     | Public dashboard & onboarding   | Partial (operator UI + onboarding exist; no public dashboard) |
+| 7     | Cost optimization & scaling     | Planned (no per-workspace cost guardrails yet)                                           |
+| 8     | Public dashboard & onboarding   | Partial (operator UI + onboarding exist; no public dashboard)                            |
 
 ---
 
@@ -392,7 +447,9 @@ The project is divided into phases. Each phase is a coherent, shippable unit of 
 Schemas in `src/db/schema.ts`. Four tables in Phase 1:
 
 #### `webhook_events`
+
 Raw log of ALL received webhooks. Idempotency + debugging.
+
 - `id` (uuid, PK)
 - `delivery_id` (text, UNIQUE — header `X-GitHub-Delivery`)
 - `event_type` (text — `pull_request`, `push`, etc)
@@ -401,7 +458,9 @@ Raw log of ALL received webhooks. Idempotency + debugging.
 - `processed_at` (timestamp nullable)
 
 #### `pull_requests`
+
 Processed PRs.
+
 - `id` (uuid, PK)
 - `repo` (text — `owner/name`)
 - `pr_number` (int)
@@ -420,7 +479,9 @@ Processed PRs.
 - UNIQUE(`repo`, `pr_number`)
 
 #### `jobs`
+
 Processing queue.
+
 - `id` (uuid, PK)
 - `type` (text — `process_pr` in Phase 1)
 - `payload` (jsonb)
@@ -432,7 +493,9 @@ Processing queue.
 - INDEX on (`status`, `available_at`)
 
 #### `prompts`
+
 Prompt versioning (loaded from file, but history kept in DB).
+
 - `id` (uuid, PK)
 - `name` (text — e.g. `pr-summary`)
 - `version` (int)
@@ -447,6 +510,7 @@ Prompt versioning (loaded from file, but history kept in DB).
 Important to implement from Phase 1 even with a single concrete implementation — Phase 6 will add more.
 
 #### `src/sources/source.ts`
+
 ```typescript
 export interface PullRequestEvent {
   repo: string;
@@ -457,7 +521,7 @@ export interface PullRequestEvent {
   mergedAt: Date;
   headSha: string;
   baseBranch: string;
-  diff: string;        // full diff (mind the size)
+  diff: string; // full diff (mind the size)
   files: Array<{ path: string; additions: number; deletions: number }>;
 }
 
@@ -467,6 +531,7 @@ export interface Source {
 ```
 
 #### `src/destinations/destination.ts`
+
 ```typescript
 export interface PRSummary {
   repo: string;
@@ -476,7 +541,7 @@ export interface PRSummary {
   mergedAt: Date;
   summaryUserFacing: string;
   summaryTechnical: string;
-  category: 'feature' | 'bugfix' | 'refactor' | 'chore' | 'other';
+  category: "feature" | "bugfix" | "refactor" | "chore" | "other";
   area: string | null;
   prUrl: string;
 }
@@ -495,7 +560,7 @@ POST /webhooks/github
   ↓ (verify HMAC signature, check duplicate delivery_id)
 Insert into webhook_events + insert job into jobs (type=process_pr)
   ↓ (return 200 immediately)
-  
+
 Worker (loop)
   ↓
 SELECT pending job FOR UPDATE SKIP LOCKED
@@ -514,6 +579,7 @@ Mark job as done
 ### Implementation steps
 
 #### 1. Initial setup (~30min)
+
 - `npm init -y` and `npm install` deps:
   - prod: `fastify`, `@fastify/sensible`, `pino`, `pino-pretty`, `dotenv`, `zod`, `drizzle-orm`, `postgres`, `@octokit/rest`, `@octokit/webhooks`, `@anthropic-ai/sdk`, `@notionhq/client`, `uuid`
   - dev: `typescript`, `tsx`, `@types/node`, `@types/uuid`, `drizzle-kit`, `eslint`, `prettier`, `vitest`, `@vitest/coverage-v8`
@@ -524,16 +590,19 @@ Mark job as done
 Suggested commit: `chore: initial project setup with typescript and core deps`
 
 #### 2. Config + DB (~30min)
+
 - `src/config/env.ts`: Zod schema parsing `process.env`. Exports typed `env`.
 - `src/db/schema.ts`: the 4 tables described above.
 - `src/db/client.ts`: creates `postgres()` client + `drizzle()`.
 - Run `npm run db:generate` and `npm run db:migrate`.
 
 Suggested commits:
+
 - `feat(config): add env var validation with zod`
 - `feat(db): add initial schema for webhook events, prs, jobs and prompts`
 
 #### 3. HTTP server (~20min)
+
 - `src/http/server.ts`: instantiate Fastify with Pino, register routes.
 - `src/http/routes/health.ts`: `GET /health` returning `{ ok: true }`.
 - `src/index.ts`: imports `server`, calls `server.listen({ port, host: '0.0.0.0' })`.
@@ -542,6 +611,7 @@ Suggested commits:
 Suggested commit: `feat(http): bootstrap fastify server with health endpoint`
 
 #### 4. GitHub App + webhook handler (~1h)
+
 - Create GitHub App at github.com/settings/apps/new:
   - Webhook URL: use `https://smee.io/...` for local dev, swap to Railway later.
   - Webhook secret: generate a random one, copy to `.env`.
@@ -558,10 +628,12 @@ Suggested commit: `feat(http): bootstrap fastify server with health endpoint`
   - Always return 200 unless infrastructure fails (then 500).
 
 Suggested commits:
+
 - `feat(webhooks): add github signature verification`
 - `feat(webhooks): handle pull_request merged events and enqueue jobs`
 
 #### 5. Source: GitHub (~45min)
+
 - `src/sources/github/github-source.ts`: implements `Source`.
 - Authenticate as GitHub App: generate JWT with `appId` + `privateKey`, exchange for installation token, create authenticated Octokit.
 - `fetchPullRequest(repo, prNumber)`:
@@ -573,12 +645,14 @@ Suggested commits:
 Suggested commit: `feat(sources): add github source with pr fetching`
 
 #### 6. LLM: summarizer (~1h)
+
 - `src/llm/prompts/pr-summary.md`: versioned prompt. Suggested structure:
+
   ```
   You are an assistant that generates pull request summaries for a mobile engineering team.
-  
+
   Input: PR title, description, list of changed files, and diff.
-  
+
   Return ONLY a valid JSON object with this shape:
   {
     "title": "...",                    // 1 line, changelog style
@@ -587,19 +661,22 @@ Suggested commit: `feat(sources): add github source with pr fetching`
     "category": "feature|bugfix|refactor|chore|other",
     "area": "..."                      // inferred product area (e.g. login, checkout). May be null.
   }
-  
+
   DO NOT invent user impact for refactors or chores. Be concise.
   ```
+
 - `src/llm/summarizer.ts`:
   - Loads prompt from file at boot.
   - `summarizePR(input)`: builds message with prompt + PR data, calls Claude Sonnet, parses JSON response with Zod.
   - On invalid JSON, retry once. If it fails again, throw (job becomes failed).
 
 Suggested commits:
+
 - `feat(llm): add pr-summary prompt and summarizer`
 - `feat(llm): add zod validation for llm responses with retry`
 
 #### 7. Destination: Notion (~1h)
+
 - Create a Notion database with properties:
   - `Title` (title) — PR title
   - `Repo` (text)
@@ -620,6 +697,7 @@ Suggested commits:
 Suggested commit: `feat(notion): add notion destination with pr page creation`
 
 #### 8. Queue + worker (~45min)
+
 - `src/queue/queue.ts`:
   - `enqueue(type, payload, opts?)`: insert into `jobs`.
   - `dequeue()`: `UPDATE jobs SET status='running' WHERE id = (SELECT id FROM jobs WHERE status='pending' AND available_at <= now() ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`.
@@ -636,11 +714,13 @@ Suggested commit: `feat(notion): add notion destination with pr page creation`
   - Updates `pull_requests.notion_page_id`.
 
 Suggested commits:
+
 - `feat(queue): add postgres-backed job queue with skip-locked dequeue`
 - `feat(queue): add worker loop with exponential backoff retry`
 - `feat(jobs): add process-pr job handler`
 
 #### 9. Wire it all together (~30min)
+
 - `src/index.ts`:
   - Loads env, connects DB.
   - Starts HTTP server.
@@ -650,6 +730,7 @@ Suggested commits:
 Suggested commit: `feat: wire http server and worker into single entry point`
 
 #### 10. Deploy to Railway (~30min)
+
 - `railway init` in the project.
 - Attach Postgres add-on → sets `DATABASE_URL` automatically.
 - Add other env vars in the panel.
@@ -675,10 +756,11 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 ## Phase 2 — Version bump detection (implemented)
 
-**Goal:** When a push to the configured branch updates the app’s visible version (ficheiro definido por `release_project_kind` + `release_version_file_path`, ou caminhos legados plist / pbx / Expo), generate consolidated release notes in a **second Notion database** and persist one row per logical version in `releases`.
+**Goal:** When the configured version marker changes — file bump, SemVer tag, or published GitHub Release — generate consolidated release notes and persist one row per logical version in `releases` plus `project_versions`.
 
 **Behavior:**
-- GitHub `push` to `RELEASE_VERSION_BRANCH` (e.g. `develop`). Enqueue is skipped unless the push likely touched `RELEASE_INFO_PLIST_PATH`, (if set) `RELEASE_PROJECT_PBXPROJ_PATH`, or (if set) the Expo app config path — e.g. a bump that only edits `project.pbxproj` still enqueues when that path is configured. (If the batch has 20 commits — GitHub cap — the handler assumes something may have changed and the job re-checks by comparing SHAs.) Creating tags in GitHub is **out of scope** (CI); Shipnot only reads the API.
+
+- `version_file`: GitHub `push` to the configured branch, gated by the configured version paths. `git_tag`: `push` to `refs/tags/<semver>`. `github_release`: published, non-draft `release` event with a SemVer tag. Driff consumes markers; creating tags/Releases remains the team's CI responsibility.
 - Job `process_release`: read version sources at the push webhook’s `before` / `after` SHAs (`gather-release-context`: Expo path takes precedence over pbx, then plist). The GitHub compare range for commits/PR hints may use a **wider** left edge: build-only bumps anchor to the latest prior `releases.head_sha` for the same `repo`, `branch`, and `short_version` (fallback: optional `RELEASE_COMPARE_ROOT_SHA`, then webhook `before`); marketing bumps use the earliest stored `marketing_era_start_sha` on the old `short_version`, then the latest prior `head_sha` on that line, then the same fallbacks (`docs/release-compare-windows.md`). If `RELEASE_EXPO_APP_CONFIG_PATH` (or DB column) is set, read `expo.version` and native build fields from that file at each SHA; else if `RELEASE_PROJECT_PBXPROJ_PATH` is set, read `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` from the pbx; otherwise read the plist. If the plist only contains `$(...)` placeholders and neither pbx nor Expo path is set, the job fails with a clear config error. The GitHub compare range supplies every commit (`compareCommits`); commits that are **not** merge/squash PR lines are passed as `standaloneCommitHints` to the LLM. For each PR number found in that range, matching rows in `pull_requests` (same `repo`) enrich the input with stored `summary_user_facing` when the PR was processed earlier. The prompt `release-changelog.md` returns user-facing **changelog** copy only (no engineering appendix), stored in `releases.changelog`, with optional sectioned bullets; Notion page body shows **Changelog** + sections. Persist the effective compare base in `releases.before_sha` and the marketing-line era anchor in `releases.marketing_era_start_sha` (first row on a `short_version` sets it; later rows reuse it).
 - Idempotency: `releases` has unique (`repo`, `version_key`).
 
@@ -686,7 +768,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 
 **Notion “Releases” database properties (must match integration):** Title, Repo, Branch, Version, Short Version, Build, Previous Version, URL, PR Numbers (see `notion-destination`).
 
-**Out of scope:** Plist **binary** format, Android versioning **outside** Expo `expo.android.versionCode` in the configured app config, App Store Connect, creating git tags.
+**Out of scope:** Plist **binary** format, App Store Connect, and creating git tags/Releases.
 
 ---
 
@@ -695,6 +777,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 **Goal:** Push real-time and digest notifications to Slack so the team consumes the data without opening Notion.
 
 **Key components to add:**
+
 - New `Destination` implementation: `SlackDestination`.
 - Per-PR notification on merge (optional, off by default — too noisy for some teams).
 - Daily digest (configurable time) summarizing PRs merged in the last 24h, grouped by area.
@@ -711,6 +794,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 **Goal:** Detect that multiple PRs over time belong to the same theme (e.g. "onboarding redesign" spanning 4 PRs over 2 weeks) and consolidate them into a single narrative entry. This is the magic differentiator vs. existing tools.
 
 **Key components to add:**
+
 - New table `themes`: `id`, `name`, `description`, `started_at`, `ended_at`, `status`.
 - New table `theme_prs`: many-to-many linking PRs to themes.
 - Embedding-based clustering: store an embedding per PR (using a cheap model), nightly job clusters recent PRs and proposes themes.
@@ -728,6 +812,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 **Goal:** Move from "hardcoded for one team" to "multi-org SaaS-ready". This is the precondition for commercialization.
 
 **Key components to add:**
+
 - New tables: `organizations`, `users`, `org_members`, `repositories`, `integrations`.
 - All existing tables get an `organization_id` foreign key + indexes.
 - Row-level security via app-layer scoping (every query filtered by org).
@@ -748,6 +833,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 **Destinations to add:** Linear (engineering changelog), Jira (release notes), Confluence (release docs), Microsoft Teams (alternative to Slack), generic webhook (for custom integrations).
 
 **Key components:**
+
 - Each new source implements the `Source` interface — webhook handlers per provider in `src/http/routes/webhooks/<provider>.ts` (kebab-case file names like `gitlab.ts`, `bitbucket.ts`).
 - Each new destination implements the `Destination` interface.
 - Per-org integration config decides which destinations receive which event types.
@@ -759,6 +845,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 **Goal:** Bring per-PR cost down and make the system ready for 10x traffic.
 
 **Key components:**
+
 - Tiered LLM strategy: cheap model (Haiku) for classification + small summaries, big model (Sonnet/Opus) only for consolidated release notes and themes.
 - Caching: hash inputs, skip re-summarization when nothing meaningful changed.
 - Diff chunking strategy: large PRs summarized file-by-file, then meta-summarized.
@@ -773,6 +860,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 **Goal:** External-facing product — self-serve signup, billing, web UI.
 
 **Key components:**
+
 - Web app (separate frontend): Next.js or Remix, hosted on Vercel/Railway.
 - Auth: Clerk or WorkOS for SSO/SAML.
 - Billing: Stripe with per-seat or per-PR pricing.
@@ -784,6 +872,7 @@ Suggested commit: `chore(deploy): add railway configuration`
 ## Done criteria checklist
 
 A phase is done when:
+
 1. All listed components are implemented and deployed.
 2. The "Goal" statement at the top of the phase is verifiably true on real data.
 3. No regressions in previous phases (smoke test: previous phases' done criteria still hold).

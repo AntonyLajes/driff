@@ -148,6 +148,25 @@ describe("http/server execute", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it("should return 401 for timeline without bearer when timeline api is enabled", async () => {
+    const server = execute({
+      logger: false,
+      timelineMe: {
+        db: {} as never,
+        jwtSecret: "x".repeat(32),
+      },
+    });
+    servers.push(server);
+
+    await server.ready();
+    const response = await server.inject({
+      method: "GET",
+      url: "/api/me/workspaces/by-slug/ride-pack/timeline",
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
   it("should redirect to Google OAuth when google oauth input is provided", async () => {
     const server = execute({
       logger: false,

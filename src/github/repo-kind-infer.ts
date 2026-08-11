@@ -1,4 +1,5 @@
 import type { Octokit } from "@octokit/rest";
+import { parseVersionMarkerFile } from "@/lib/version-marker-file.js";
 
 export type InferenceConfidence = "high" | "medium" | "low";
 
@@ -10,7 +11,10 @@ export interface RepoKindInference {
   signals: string[];
 }
 
-const decodeFileContent = (encoding: string, content: string): string | null => {
+const decodeFileContent = (
+  encoding: string,
+  content: string,
+): string | null => {
   if (encoding !== "base64") {
     return null;
   }
@@ -45,7 +49,8 @@ export const inferRepoKind = async (
   const { owner, repo } = parseOwnerRepo(fullName.trim());
 
   const { data: meta } = await octokit.rest.repos.get({ owner, repo });
-  const defaultBranch = typeof meta.default_branch === "string" ? meta.default_branch : null;
+  const defaultBranch =
+    typeof meta.default_branch === "string" ? meta.default_branch : null;
   signals.push(`github:${meta.full_name}`);
 
   const root = await octokit.rest.repos.getContent({ owner, repo, path: "" });
@@ -68,8 +73,16 @@ export const inferRepoKind = async (
 
   const readTextFile = async (path: string): Promise<string | null> => {
     try {
-      const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
-      if (!("content" in data) || typeof data.content !== "string" || typeof data.encoding !== "string") {
+      const { data } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path,
+      });
+      if (
+        !("content" in data) ||
+        typeof data.content !== "string" ||
+        typeof data.encoding !== "string"
+      ) {
         return null;
       }
       return decodeFileContent(data.encoding, data.content);
@@ -86,6 +99,28 @@ export const inferRepoKind = async (
       versionFilePath: "pubspec.yaml",
       signals: [...signals, "file:pubspec.yaml"],
     };
+  }
+
+  const textMarkerCandidates = [
+    { file: "pyproject.toml", kind: "python_pyproject" },
+    { file: "Cargo.toml", kind: "rust_cargo" },
+    { file: "pom.xml", kind: "java_maven" },
+    { file: "build.gradle", kind: "java_gradle" },
+    { file: "build.gradle.kts", kind: "java_gradle" },
+  ] as const;
+  for (const candidate of textMarkerCandidates) {
+    if (!fileNames.has(candidate.file)) continue;
+    const raw = await readTextFile(candidate.file);
+    if (raw && parseVersionMarkerFile(candidate.kind, raw) !== null) {
+      return {
+        suggestedKind: candidate.kind,
+        confidence: "high",
+        defaultBranch,
+        versionFilePath: candidate.file,
+        signals: [...signals, `file:${candidate.file}`, "field:version"],
+      };
+    }
+    signals.push(`${candidate.file}_version_missing`);
   }
 
   const expoConfigCandidates = [
@@ -121,22 +156,52 @@ export const inferRepoKind = async (
             confidence: "low",
             defaultBranch,
             versionFilePath: null,
-            signals: [...signals, "dependency:expo", "missing_expo_config_file"],
+            signals: [
+              ...signals,
+              "dependency:expo",
+              "missing_expo_config_file",
+            ],
           };
         }
         if (deps["react-native"] !== undefined && dirNames.has("android")) {
-          const gradlePath = "android/app/build.gradle";
-          try {
-            await octokit.rest.repos.getContent({ owner, repo, path: gradlePath });
+          const gradlePaths = [
+            "android/app/build.gradle",
+            "android/app/build.gradle.kts",
+          ] as const;
+          for (const gradlePath of gradlePaths) {
+            try {
+              await octokit.rest.repos.getContent({
+                owner,
+                repo,
+                path: gradlePath,
+              });
+              return {
+                suggestedKind: "android_gradle",
+                confidence: "low",
+                defaultBranch,
+                versionFilePath: gradlePath,
+                signals: [
+                  ...signals,
+                  "dependency:react-native",
+                  `file:${gradlePath}`,
+                ],
+              };
+            } catch {
+              continue;
+            }
+          }
+          signals.push("react_native_no_android_gradle");
+        }
+        if (typeof (pkg as { version?: unknown }).version === "string") {
+          const version = (pkg as { version: string }).version.trim();
+          if (version.length > 0) {
             return {
-              suggestedKind: "android_gradle",
-              confidence: "low",
+              suggestedKind: "node_package",
+              confidence: "high",
               defaultBranch,
-              versionFilePath: gradlePath,
-              signals: [...signals, "dependency:react-native", `file:${gradlePath}`],
+              versionFilePath: "package.json",
+              signals: [...signals, "file:package.json", "field:version"],
             };
-          } catch {
-            signals.push("react_native_no_android_gradle");
           }
         }
       } catch {
@@ -147,10 +212,20 @@ export const inferRepoKind = async (
 
   if (dirNames.has("ios")) {
     try {
-      const iosRoot = await octokit.rest.repos.getContent({ owner, repo, path: "ios" });
+      const iosRoot = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path: "ios",
+      });
       if (Array.isArray(iosRoot.data)) {
-        const directPlist = iosRoot.data.find((e) => e.type === "file" && e.name === "Info.plist");
-        if (directPlist && "path" in directPlist && typeof directPlist.path === "string") {
+        const directPlist = iosRoot.data.find(
+          (e) => e.type === "file" && e.name === "Info.plist",
+        );
+        if (
+          directPlist &&
+          "path" in directPlist &&
+          typeof directPlist.path === "string"
+        ) {
           return {
             suggestedKind: "ios_plist",
             confidence: "medium",
@@ -160,7 +235,11 @@ export const inferRepoKind = async (
           };
         }
         const firstSub = iosRoot.data.find((e) => e.type === "dir");
-        if (firstSub && "name" in firstSub && typeof firstSub.name === "string") {
+        if (
+          firstSub &&
+          "name" in firstSub &&
+          typeof firstSub.name === "string"
+        ) {
           const subPath = `ios/${firstSub.name}/Info.plist`;
           try {
             await octokit.rest.repos.getContent({ owner, repo, path: subPath });
@@ -184,7 +263,11 @@ export const inferRepoKind = async (
   const xcodeprojDir = root.data.find(
     (e) => e.type === "dir" && String(e.name).endsWith(".xcodeproj"),
   );
-  if (xcodeprojDir && "name" in xcodeprojDir && typeof xcodeprojDir.name === "string") {
+  if (
+    xcodeprojDir &&
+    "name" in xcodeprojDir &&
+    typeof xcodeprojDir.name === "string"
+  ) {
     const rel = `${xcodeprojDir.name}/project.pbxproj`;
     try {
       await octokit.rest.repos.getContent({ owner, repo, path: rel });
@@ -201,19 +284,25 @@ export const inferRepoKind = async (
   }
 
   if (dirNames.has("android")) {
-    const gradlePath = "android/app/build.gradle";
-    try {
-      await octokit.rest.repos.getContent({ owner, repo, path: gradlePath });
-      return {
-        suggestedKind: "android_gradle",
-        confidence: "medium",
-        defaultBranch,
-        versionFilePath: gradlePath,
-        signals: [...signals, `file:${gradlePath}`],
-      };
-    } catch {
-      signals.push("android_gradle_missing");
+    const gradlePaths = [
+      "android/app/build.gradle",
+      "android/app/build.gradle.kts",
+    ] as const;
+    for (const gradlePath of gradlePaths) {
+      try {
+        await octokit.rest.repos.getContent({ owner, repo, path: gradlePath });
+        return {
+          suggestedKind: "android_gradle",
+          confidence: "medium",
+          defaultBranch,
+          versionFilePath: gradlePath,
+          signals: [...signals, `file:${gradlePath}`],
+        };
+      } catch {
+        continue;
+      }
     }
+    signals.push("android_gradle_missing");
   }
 
   return {

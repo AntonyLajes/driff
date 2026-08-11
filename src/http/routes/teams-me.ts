@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { and, asc, count, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
@@ -9,9 +9,12 @@ import type { Database } from "@/db/client.js";
 import { isUniqueViolation } from "@/db/pg-error.js";
 import {
   teamInvitesTable,
+  teamAuditEventsTable,
   teamMembersTable,
   teamsTable,
   usersTable,
+  workspaceMemberAccessTable,
+  workspacesTable,
 } from "@/db/schema.js";
 import { sendInviteEmail } from "@/email/send-invite-email.js";
 import { slugifyWorkspaceName } from "@/lib/workspace-slug.js";
@@ -23,6 +26,10 @@ import {
   type TeamContext,
   type TeamRole,
 } from "@/teams/team-context.js";
+import type {
+  TeamAuditEventInput,
+  TeamAuditRecorder,
+} from "@/teams/record-audit-event.js";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,8 +45,7 @@ const inviteBodySchema = z.object({
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-const randomSlugSuffix = (): string =>
-  Math.random().toString(36).slice(2, 8);
+const randomSlugSuffix = (): string => Math.random().toString(36).slice(2, 8);
 
 export interface TeamsMeRegistrationInput {
   db: Database;
@@ -49,6 +55,8 @@ export interface TeamsMeRegistrationInput {
   resendFrom?: string;
   /** Web app origin for the accept link (e.g. https://app.driff.dev). */
   frontendUrl?: string;
+  /** Production supplies the persistent recorder; tests may omit it. */
+  auditRecorder?: TeamAuditRecorder;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -64,10 +72,24 @@ export const handler = async (
   instance: FastifyInstance,
   input: TeamsMeRegistrationInput,
 ): Promise<void> => {
+  const recordAudit = async (
+    request: { log: { warn: (value: unknown, message: string) => void } },
+    event: TeamAuditEventInput,
+  ): Promise<void> => {
+    if (input.auditRecorder === undefined) return;
+    try {
+      await input.auditRecorder(event);
+    } catch (error) {
+      request.log.warn({ error, event }, "team_audit_record_failed");
+    }
+  };
+
   instance.get("/api/me/teams", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -160,7 +182,9 @@ export const handler = async (
   instance.get("/api/me/teams/:teamId/members", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -203,7 +227,9 @@ export const handler = async (
   instance.get("/api/me/teams/:teamId/invites", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -223,7 +249,10 @@ export const handler = async (
       })
       .from(teamInvitesTable)
       .where(
-        and(eq(teamInvitesTable.teamId, teamId), isNull(teamInvitesTable.acceptedAt)),
+        and(
+          eq(teamInvitesTable.teamId, teamId),
+          isNull(teamInvitesTable.acceptedAt),
+        ),
       )
       .orderBy(asc(teamInvitesTable.createdAt));
 
@@ -233,6 +262,59 @@ export const handler = async (
         email: row.email,
         role: row.role as TeamRole,
         expiresAt: row.expiresAt.toISOString(),
+        createdAt: row.createdAt.toISOString(),
+      })),
+    });
+  });
+
+  instance.get("/api/me/teams/:teamId/audit-events", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const { teamId } = request.params as { teamId: string };
+    const role = await requireMembership(reply, session.userId, teamId);
+    if (role === null) return reply;
+    if (!canManageMembers(role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const parsed = z
+      .object({ limit: z.coerce.number().int().min(1).max(100).default(30) })
+      .safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_query" });
+    }
+    const rows = await input.db
+      .select({
+        id: teamAuditEventsTable.id,
+        action: teamAuditEventsTable.action,
+        actorUserId: teamAuditEventsTable.actorUserId,
+        actorName: usersTable.name,
+        actorEmail: usersTable.email,
+        targetType: teamAuditEventsTable.targetType,
+        targetId: teamAuditEventsTable.targetId,
+        targetLabel: teamAuditEventsTable.targetLabel,
+        metadata: teamAuditEventsTable.metadata,
+        createdAt: teamAuditEventsTable.createdAt,
+      })
+      .from(teamAuditEventsTable)
+      .leftJoin(usersTable, eq(usersTable.id, teamAuditEventsTable.actorUserId))
+      .where(eq(teamAuditEventsTable.teamId, teamId))
+      .orderBy(
+        desc(teamAuditEventsTable.createdAt),
+        desc(teamAuditEventsTable.id),
+      )
+      .limit(parsed.data.limit);
+
+    return reply.send({
+      events: rows.map((row) => ({
+        ...row,
         createdAt: row.createdAt.toISOString(),
       })),
     });
@@ -261,7 +343,9 @@ export const handler = async (
   instance.post("/api/me/teams/:teamId/invites", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -298,7 +382,10 @@ export const handler = async (
       .select({ email: teamInvitesTable.email })
       .from(teamInvitesTable)
       .where(
-        and(eq(teamInvitesTable.teamId, teamId), isNull(teamInvitesTable.acceptedAt)),
+        and(
+          eq(teamInvitesTable.teamId, teamId),
+          isNull(teamInvitesTable.acceptedAt),
+        ),
       );
 
     if (memberEmails.length + pendingInvites.length >= team.maxMembers) {
@@ -342,6 +429,15 @@ export const handler = async (
       role: parsed.data.role,
       token: inviteToken,
     });
+    await recordAudit(request, {
+      teamId,
+      actorUserId: session.userId,
+      action: "invite_created",
+      targetType: "invite",
+      targetId: invite.id,
+      targetLabel: invite.email,
+      metadata: { role: invite.role },
+    });
 
     return reply.status(201).send({
       invite: {
@@ -356,44 +452,77 @@ export const handler = async (
     });
   });
 
-  instance.delete("/api/me/teams/:teamId/invites/:inviteId", async (request, reply) => {
-    const token = readBearerToken(request.headers.authorization);
-    if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
-    }
-    const session = verifySessionJwt(token, input.jwtSecret);
-    if (session === null) {
-      return reply.status(401).send({ error: "invalid_session" });
-    }
-    const { teamId, inviteId } = request.params as { teamId: string; inviteId: string };
-    const role = await requireMembership(reply, session.userId, teamId);
-    if (role === null) return reply;
-    if (!canManageMembers(role)) {
-      return reply.status(403).send({ error: "insufficient_role" });
-    }
-    if (!uuidPattern.test(inviteId)) {
-      return reply.status(400).send({ error: "invalid_invite" });
-    }
-    await input.db
-      .delete(teamInvitesTable)
-      .where(
-        and(eq(teamInvitesTable.id, inviteId), eq(teamInvitesTable.teamId, teamId)),
-      );
-    return reply.status(204).send();
-  });
+  instance.delete(
+    "/api/me/teams/:teamId/invites/:inviteId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+      const { teamId, inviteId } = request.params as {
+        teamId: string;
+        inviteId: string;
+      };
+      const role = await requireMembership(reply, session.userId, teamId);
+      if (role === null) return reply;
+      if (!canManageMembers(role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      if (!uuidPattern.test(inviteId)) {
+        return reply.status(400).send({ error: "invalid_invite" });
+      }
+      const revoked = await input.db
+        .delete(teamInvitesTable)
+        .where(
+          and(
+            eq(teamInvitesTable.id, inviteId),
+            eq(teamInvitesTable.teamId, teamId),
+          ),
+        )
+        .returning({
+          id: teamInvitesTable.id,
+          email: teamInvitesTable.email,
+          role: teamInvitesTable.role,
+        });
+      const invite = revoked[0];
+      if (invite !== undefined) {
+        await recordAudit(request, {
+          teamId,
+          actorUserId: session.userId,
+          action: "invite_revoked",
+          targetType: "invite",
+          targetId: invite.id,
+          targetLabel: invite.email,
+          metadata: { role: invite.role },
+        });
+      }
+      return reply.status(204).send();
+    },
+  );
 
   instance.post(
     "/api/me/teams/:teamId/invites/:inviteId/resend",
     async (request, reply) => {
       const token = readBearerToken(request.headers.authorization);
       if (token === null) {
-        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
       }
       const session = verifySessionJwt(token, input.jwtSecret);
       if (session === null) {
         return reply.status(401).send({ error: "invalid_session" });
       }
-      const { teamId, inviteId } = request.params as { teamId: string; inviteId: string };
+      const { teamId, inviteId } = request.params as {
+        teamId: string;
+        inviteId: string;
+      };
       const role = await requireMembership(reply, session.userId, teamId);
       if (role === null) return reply;
       if (!canManageMembers(role)) {
@@ -429,6 +558,15 @@ export const handler = async (
         inviterName: session.email,
         role: invite.role,
         token: invite.tokenValue,
+      });
+      await recordAudit(request, {
+        teamId,
+        actorUserId: session.userId,
+        action: "invite_resent",
+        targetType: "invite",
+        targetId: inviteId,
+        targetLabel: invite.email,
+        metadata: { role: invite.role, emailSent: emailResult.sent },
       });
       return reply.send({
         acceptUrl: acceptUrl(invite.tokenValue),
@@ -470,7 +608,9 @@ export const handler = async (
   instance.post("/api/invites/:token/accept", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -505,20 +645,38 @@ export const handler = async (
 
     await input.db
       .insert(teamMembersTable)
-      .values({ teamId: invite.teamId, userId: session.userId, role: invite.role })
+      .values({
+        teamId: invite.teamId,
+        userId: session.userId,
+        role: invite.role,
+      })
       .onConflictDoNothing();
     await input.db
       .update(teamInvitesTable)
       .set({ acceptedAt: new Date() })
       .where(eq(teamInvitesTable.id, invite.id));
+    await recordAudit(request, {
+      teamId: invite.teamId,
+      actorUserId: session.userId,
+      action: "invite_accepted",
+      targetType: "member",
+      targetId: session.userId,
+      targetLabel: session.email,
+      metadata: { role: invite.role, inviteId: invite.id },
+    });
 
     return reply.send({ teamId: invite.teamId });
   });
 
   const loadMembership = async (teamId: string, targetUserId: string) => {
     const rows = await input.db
-      .select({ role: teamMembersTable.role })
+      .select({
+        role: teamMembersTable.role,
+        name: usersTable.name,
+        email: usersTable.email,
+      })
       .from(teamMembersTable)
+      .innerJoin(usersTable, eq(usersTable.id, teamMembersTable.userId))
       .where(
         and(
           eq(teamMembersTable.teamId, teamId),
@@ -529,88 +687,140 @@ export const handler = async (
     return rows[0];
   };
 
-  instance.patch("/api/me/teams/:teamId/members/:userId", async (request, reply) => {
-    const token = readBearerToken(request.headers.authorization);
-    if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
-    }
-    const session = verifySessionJwt(token, input.jwtSecret);
-    if (session === null) {
-      return reply.status(401).send({ error: "invalid_session" });
-    }
-    const { teamId, userId: targetId } = request.params as {
-      teamId: string;
-      userId: string;
-    };
-    const role = await requireMembership(reply, session.userId, teamId);
-    if (role === null) return reply;
-    // Promoting/demoting (the only roles touch admin) is owner-only.
-    if (!canManageAdmins(role)) {
-      return reply.status(403).send({ error: "insufficient_role" });
-    }
-    const parsed = z
-      .object({ role: z.enum(["admin", "member"]) })
-      .safeParse(request.body);
-    if (!parsed.success) {
-      return reply.status(400).send({ error: "invalid_body" });
-    }
-    const target = await loadMembership(teamId, targetId);
-    if (target === undefined) {
-      return reply.status(404).send({ error: "member_not_found" });
-    }
-    if (target.role === "owner") {
-      return reply.status(403).send({ error: "cannot_change_owner" });
-    }
+  const revokeWorkspaceGrants = async (teamId: string, targetUserId: string) => {
     await input.db
-      .update(teamMembersTable)
-      .set({ role: parsed.data.role })
+      .delete(workspaceMemberAccessTable)
       .where(
-        and(eq(teamMembersTable.teamId, teamId), eq(teamMembersTable.userId, targetId)),
+        and(
+          eq(workspaceMemberAccessTable.userId, targetUserId),
+          sql`EXISTS (
+            SELECT 1 FROM ${workspacesTable}
+            WHERE ${workspacesTable.id} = ${workspaceMemberAccessTable.workspaceId}
+              AND ${workspacesTable.teamId} = ${teamId}
+          )`,
+        ),
       );
-    return reply.send({ userId: targetId, role: parsed.data.role });
-  });
+  };
 
-  instance.delete("/api/me/teams/:teamId/members/:userId", async (request, reply) => {
-    const token = readBearerToken(request.headers.authorization);
-    if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
-    }
-    const session = verifySessionJwt(token, input.jwtSecret);
-    if (session === null) {
-      return reply.status(401).send({ error: "invalid_session" });
-    }
-    const { teamId, userId: targetId } = request.params as {
-      teamId: string;
-      userId: string;
-    };
-    const role = await requireMembership(reply, session.userId, teamId);
-    if (role === null) return reply;
-    if (!canManageMembers(role)) {
-      return reply.status(403).send({ error: "insufficient_role" });
-    }
-    const target = await loadMembership(teamId, targetId);
-    if (target === undefined) {
-      return reply.status(404).send({ error: "member_not_found" });
-    }
-    if (target.role === "owner") {
-      return reply.status(403).send({ error: "cannot_remove_owner" });
-    }
-    // Admins manage members only; removing another admin is owner-only.
-    if (target.role === "admin" && !canManageAdmins(role)) {
-      return reply.status(403).send({ error: "insufficient_role" });
-    }
-    await input.db
-      .delete(teamMembersTable)
-      .where(
-        and(eq(teamMembersTable.teamId, teamId), eq(teamMembersTable.userId, targetId)),
-      );
-    return reply.status(204).send();
-  });
+  instance.patch(
+    "/api/me/teams/:teamId/members/:userId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+      const { teamId, userId: targetId } = request.params as {
+        teamId: string;
+        userId: string;
+      };
+      const role = await requireMembership(reply, session.userId, teamId);
+      if (role === null) return reply;
+      // Promoting/demoting (the only roles touch admin) is owner-only.
+      if (!canManageAdmins(role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      const parsed = z
+        .object({ role: z.enum(["admin", "member"]) })
+        .safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({ error: "invalid_body" });
+      }
+      const target = await loadMembership(teamId, targetId);
+      if (target === undefined) {
+        return reply.status(404).send({ error: "member_not_found" });
+      }
+      if (target.role === "owner") {
+        return reply.status(403).send({ error: "cannot_change_owner" });
+      }
+      await input.db
+        .update(teamMembersTable)
+        .set({ role: parsed.data.role })
+        .where(
+          and(
+            eq(teamMembersTable.teamId, teamId),
+            eq(teamMembersTable.userId, targetId),
+          ),
+        );
+      await recordAudit(request, {
+        teamId,
+        actorUserId: session.userId,
+        action: "member_role_changed",
+      targetType: "member",
+      targetId,
+      targetLabel: target.name ?? target.email,
+      metadata: { fromRole: target.role, toRole: parsed.data.role },
+      });
+      return reply.send({ userId: targetId, role: parsed.data.role });
+    },
+  );
+
+  instance.delete(
+    "/api/me/teams/:teamId/members/:userId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply
+          .status(401)
+          .send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+      const { teamId, userId: targetId } = request.params as {
+        teamId: string;
+        userId: string;
+      };
+      const role = await requireMembership(reply, session.userId, teamId);
+      if (role === null) return reply;
+      if (!canManageMembers(role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      const target = await loadMembership(teamId, targetId);
+      if (target === undefined) {
+        return reply.status(404).send({ error: "member_not_found" });
+      }
+      if (target.role === "owner") {
+        return reply.status(403).send({ error: "cannot_remove_owner" });
+      }
+      // Admins manage members only; removing another admin is owner-only.
+      if (target.role === "admin" && !canManageAdmins(role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      await revokeWorkspaceGrants(teamId, targetId);
+      await input.db
+        .delete(teamMembersTable)
+        .where(
+          and(
+            eq(teamMembersTable.teamId, teamId),
+            eq(teamMembersTable.userId, targetId),
+          ),
+        );
+      await recordAudit(request, {
+        teamId,
+        actorUserId: session.userId,
+        action: "member_removed",
+      targetType: "member",
+      targetId,
+      targetLabel: target.name ?? target.email,
+      metadata: { role: target.role },
+      });
+      return reply.status(204).send();
+    },
+  );
 
   instance.post("/api/me/teams/:teamId/leave", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -627,12 +837,16 @@ export const handler = async (
         .select({ value: count() })
         .from(teamMembersTable)
         .where(
-          and(eq(teamMembersTable.teamId, teamId), eq(teamMembersTable.role, "owner")),
+          and(
+            eq(teamMembersTable.teamId, teamId),
+            eq(teamMembersTable.role, "owner"),
+          ),
         );
       if ((owners?.value ?? 0) <= 1) {
         return reply.status(409).send({ error: "last_owner" });
       }
     }
+    await revokeWorkspaceGrants(teamId, session.userId);
     await input.db
       .delete(teamMembersTable)
       .where(
@@ -641,13 +855,24 @@ export const handler = async (
           eq(teamMembersTable.userId, session.userId),
         ),
       );
+    await recordAudit(request, {
+      teamId,
+      actorUserId: session.userId,
+      action: "member_left",
+      targetType: "member",
+      targetId: session.userId,
+      targetLabel: session.email,
+      metadata: { role: ctx.role },
+    });
     return reply.status(204).send();
   });
 
   instance.patch("/api/me/teams/:teamId", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -667,18 +892,33 @@ export const handler = async (
       .update(teamsTable)
       .set({ name: parsed.data.name.trim(), updatedAt: new Date() })
       .where(eq(teamsTable.id, teamId))
-      .returning({ id: teamsTable.id, name: teamsTable.name, slug: teamsTable.slug });
+      .returning({
+        id: teamsTable.id,
+        name: teamsTable.name,
+        slug: teamsTable.slug,
+      });
     const team = updated[0];
     if (team === undefined) {
       return reply.status(404).send({ error: "team_not_found" });
     }
+    await recordAudit(request, {
+      teamId,
+      actorUserId: session.userId,
+      action: "team_renamed",
+      targetType: "team",
+      targetId: team.id,
+      targetLabel: team.name,
+      metadata: { name: team.name },
+    });
     return reply.send({ team });
   });
 
   instance.delete("/api/me/teams/:teamId", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -698,7 +938,9 @@ export const handler = async (
   instance.post("/api/me/teams", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) {
-      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      return reply
+        .status(401)
+        .send({ error: "missing_or_invalid_authorization" });
     }
     const session = verifySessionJwt(token, input.jwtSecret);
     if (session === null) {
@@ -714,7 +956,8 @@ export const handler = async (
 
     // teams.slug is globally unique; retry with a random suffix on collision.
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const slug = attempt === 0 ? baseSlug : `${baseSlug}-${randomSlugSuffix()}`;
+      const slug =
+        attempt === 0 ? baseSlug : `${baseSlug}-${randomSlugSuffix()}`;
       try {
         const inserted = await input.db
           .insert(teamsTable)
@@ -734,6 +977,15 @@ export const handler = async (
         await input.db
           .insert(teamMembersTable)
           .values({ teamId: team.id, userId: session.userId, role: "owner" });
+        await recordAudit(request, {
+          teamId: team.id,
+          actorUserId: session.userId,
+          action: "team_created",
+          targetType: "team",
+          targetId: team.id,
+          targetLabel: team.name,
+          metadata: { slug: team.slug },
+        });
         return reply.status(201).send({
           team: {
             id: team.id,

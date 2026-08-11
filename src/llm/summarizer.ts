@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { execute as loadEnv } from "@/config/env.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
 import { extractUsage, type TokenUsage } from "@/llm/usage.js";
 import type { PullRequestEvent } from "@/sources/source.js";
 
@@ -51,6 +52,7 @@ export interface AnthropicClientLike {
 
 export interface SummarizePullRequestInput {
   pullRequest: PullRequestEvent;
+  language?: SummaryLanguage;
 }
 
 export interface Summarizer {
@@ -98,7 +100,10 @@ const parseSummary = (text: string): PRSummary => {
   return prSummarySchema.parse(parsed);
 };
 
-const buildUserMessage = (pullRequest: PullRequestEvent): string => {
+const buildUserMessage = (
+  pullRequest: PullRequestEvent,
+  language: SummaryLanguage,
+): string => {
   return JSON.stringify(
     {
       repo: pullRequest.repo,
@@ -111,6 +116,7 @@ const buildUserMessage = (pullRequest: PullRequestEvent): string => {
       baseBranch: pullRequest.baseBranch,
       files: pullRequest.files,
       diff: pullRequest.diff,
+      outputLanguage: language,
     },
     null,
     2,
@@ -156,8 +162,8 @@ export const execute = async (input: ExecuteInput = {}): Promise<Summarizer> => 
 
   return {
     prompt,
-    summarizePR: async ({ pullRequest }) => {
-      const userMessage = buildUserMessage(pullRequest);
+    summarizePR: async ({ pullRequest, language = "auto" }) => {
+      const userMessage = buildUserMessage(pullRequest, language);
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
         const response = await anthropic.messages.create({

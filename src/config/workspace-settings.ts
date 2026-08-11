@@ -8,12 +8,27 @@ import {
 } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import { workspaceSettingsTable, workspacesTable } from "@/db/schema.js";
+import {
+  cleanHistoryFilterValues,
+  DEFAULT_HISTORY_EXCLUDED_PATHS,
+} from "@/config/history-content-filter.js";
+import {
+  execute as parseSummaryLanguage,
+  type SummaryLanguage,
+} from "@/config/summary-language.js";
+import {
+  parseReleaseVersionStrategy,
+  type ReleaseVersionStrategy,
+} from "@/config/release-version-strategy.js";
 
 export interface MergedWorkspaceSettings {
   /** Id of the workspace this config belongs to (used to load output destinations). */
   workspaceId: string;
   prSummaryBaseBranches: string[] | null;
   pushSummaryBranches: string[] | null;
+  historyExcludedPaths: string[];
+  historyExcludedActors: string[];
+  summaryLanguage: SummaryLanguage;
   /** Repo default branch from the linked workspace; used as push-summary branch fallback. */
   repoDefaultBranch: string | null;
   releaseInfoPlistPath: string | null;
@@ -22,6 +37,7 @@ export interface MergedWorkspaceSettings {
   releaseProjectPbxprojPath: string | null;
   releaseExpoAppConfigPath: string | null;
   releaseCompareRootSha: string | null;
+  releaseVersionStrategy: ReleaseVersionStrategy;
   /**
    * Modelo unificado para onboarding: tipo de app + um único ficheiro de versão.
    * Preenchido a partir de `release_project_kind` + `release_version_file_path` ou inferido dos campos legados.
@@ -32,10 +48,8 @@ export interface MergedWorkspaceSettings {
 
 /** True when the workspace has a release version source configured (release notes can run). */
 export const hasReleaseVersionSource = (merged: MergedWorkspaceSettings): boolean =>
-  Boolean(merged.releaseProjectKind) &&
-  (Boolean(merged.releaseInfoPlistPath?.trim()) ||
-    Boolean(merged.releaseProjectPbxprojPath?.trim()) ||
-    Boolean(merged.releaseExpoAppConfigPath?.trim()));
+  merged.releaseVersionStrategy !== "version_file" ||
+  (Boolean(merged.releaseProjectKind) && Boolean(merged.releaseVersionFilePath?.trim()));
 
 const firstNonBlank = (...candidates: ReadonlyArray<string | null | undefined>): string | null => {
   for (const raw of candidates) {
@@ -51,6 +65,9 @@ const emptyMergedSettings = (workspaceId: string): MergedWorkspaceSettings => ({
   workspaceId,
   prSummaryBaseBranches: null,
   pushSummaryBranches: null,
+  historyExcludedPaths: [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+  historyExcludedActors: [],
+  summaryLanguage: "auto",
   repoDefaultBranch: null,
   releaseInfoPlistPath: null,
   releaseVersionBranch: null,
@@ -58,6 +75,7 @@ const emptyMergedSettings = (workspaceId: string): MergedWorkspaceSettings => ({
   releaseProjectPbxprojPath: null,
   releaseExpoAppConfigPath: null,
   releaseCompareRootSha: null,
+  releaseVersionStrategy: "version_file",
   releaseProjectKind: null,
   releaseVersionFilePath: null,
 });
@@ -69,16 +87,19 @@ export const mergeWorkspaceSettingsRow = (
   const releaseVersionBranch = firstNonBlank(row.releaseVersionBranch);
   const releaseMonitoredRepo = firstNonBlank(row.releaseMonitoredRepo);
   const releaseCompareRootSha = firstNonBlank(row.releaseCompareRootSha);
+  const releaseVersionStrategy = parseReleaseVersionStrategy(
+    row.releaseVersionStrategy,
+  );
 
   const unifiedKindRaw = firstNonBlank(row.releaseProjectKind);
   const unifiedPathRaw = firstNonBlank(row.releaseVersionFilePath);
 
-  if (unifiedKindRaw && !unifiedPathRaw) {
+  if (releaseVersionStrategy === "version_file" && unifiedKindRaw && !unifiedPathRaw) {
     throw new Error(
       "Workspace: `release_project_kind` is set but `release_version_file_path` is missing.",
     );
   }
-  if (!unifiedKindRaw && unifiedPathRaw) {
+  if (releaseVersionStrategy === "version_file" && !unifiedKindRaw && unifiedPathRaw) {
     throw new Error(
       "Workspace: `release_version_file_path` is set but `release_project_kind` is missing.",
     );
@@ -95,7 +116,7 @@ export const mergeWorkspaceSettingsRow = (
     const kind = parseReleaseProjectKind(unifiedKindRaw);
     if (!isSupportedReleaseProjectKind(kind)) {
       throw new Error(
-        `Workspace: release_project_kind "${kind}" is not supported yet. Use ios_plist, ios_pbx, or react_native_expo.`,
+        `Workspace: release_project_kind "${kind}" is not supported yet. Use ios_plist, ios_pbx, react_native_expo, or node_package.`,
       );
     }
     const applied = applyReleaseKindAndFilePath(kind, unifiedPathRaw);
@@ -128,11 +149,18 @@ export const mergeWorkspaceSettingsRow = (
 
   const prSummaryBaseBranches = cleanBranchList(row.prSummaryBaseBranches);
   const pushSummaryBranches = cleanBranchList(row.pushSummaryBranches);
+  const historyExcludedPaths =
+    cleanHistoryFilterValues(row.historyExcludedPaths) ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS];
+  const historyExcludedActors = cleanHistoryFilterValues(row.historyExcludedActors) ?? [];
+  const summaryLanguage = parseSummaryLanguage(row.summaryLanguage);
 
   return {
     workspaceId: row.workspaceId ?? "",
     prSummaryBaseBranches,
     pushSummaryBranches,
+    historyExcludedPaths,
+    historyExcludedActors,
+    summaryLanguage,
     repoDefaultBranch: null,
     releaseInfoPlistPath,
     releaseVersionBranch,
@@ -140,6 +168,7 @@ export const mergeWorkspaceSettingsRow = (
     releaseProjectPbxprojPath,
     releaseExpoAppConfigPath,
     releaseCompareRootSha,
+    releaseVersionStrategy,
     releaseProjectKind,
     releaseVersionFilePath,
   };

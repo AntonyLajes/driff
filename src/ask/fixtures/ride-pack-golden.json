@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "id": "ride-pack-cited-history",
+  "name": "Ride Pack cited history baseline",
+  "workspaceId": "00000000-0000-4000-8000-000000000001",
+  "evaluatedAt": "2026-08-08T20:00:00.000Z",
+  "history": {
+    "versions": [
+      {
+        "id": "version-1-3-4",
+        "displayVersion": "1.3.4",
+        "normalizedVersion": "1.3.4+6",
+        "buildVersion": "6",
+        "title": "Version 1.3.4 (Build 6)",
+        "changelog": "Improves touch feedback on the Home screen.",
+        "sections": [],
+        "sourceUrl": "https://github.com/AntonyLajes/ride-pack/compare/1.3.3...1.3.4",
+        "previousVersionId": "version-1-3-3",
+        "beforeSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "releasedAt": "2026-08-08T13:00:00.000Z",
+        "changes": [
+          {
+            "id": "change-home-actions",
+            "title": "Improve touch feedback on Home quick action buttons",
+            "summaryExecutive": "Home quick action buttons are easier to tap and feel more responsive.",
+            "summaryTechnical": "Adds a larger hit area and native Android ripple feedback.",
+            "category": "feature",
+            "confidence": 95,
+            "firstOccurredAt": "2026-08-08T12:00:00.000Z",
+            "lastOccurredAt": "2026-08-08T12:00:00.000Z",
+            "areas": [
+              {
+                "id": "area-home",
+                "name": "Home",
+                "slug": "home",
+                "confidence": 95,
+                "source": "ai"
+              }
+            ],
+            "contributors": [
+              {
+                "externalIdentity": "github:AntonyLajes",
+                "displayName": "AntonyLajes",
+                "role": "pr_author",
+                "sourceUrl": "https://github.com/AntonyLajes"
+              }
+            ],
+            "evidence": [
+              {
+                "id": "evidence-pr-16",
+                "kind": "pull_request",
+                "sourceKey": "github:AntonyLajes/ride-pack:pull_request:16",
+                "externalId": "16",
+                "url": "https://github.com/AntonyLajes/ride-pack/pull/16",
+                "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "path": null,
+                "occurredAt": "2026-08-08T12:00:00.000Z",
+                "metadata": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "version-1-3-3",
+        "displayVersion": "1.3.3",
+        "normalizedVersion": "1.3.3+5",
+        "buildVersion": "5",
+        "title": "Version 1.3.3 (Build 5)",
+        "changelog": "Internal version preparation.",
+        "sections": [],
+        "sourceUrl": "https://github.com/AntonyLajes/ride-pack/compare/1.3.2...1.3.3",
+        "previousVersionId": null,
+        "beforeSha": "cccccccccccccccccccccccccccccccccccccccc",
+        "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+        "releasedAt": "2026-08-08T11:00:00.000Z",
+        "changes": []
+      }
+    ],
+    "inDevelopment": [
+      {
+        "id": "change-fuel-stops",
+        "title": "Estimate fuel stops and surface them on ride cards",
+        "summaryExecutive": "Ride cards show how many fuel stops to expect on longer routes.",
+        "summaryTechnical": "Calculates stops from route distance and motorcycle range.",
+        "category": "feature",
+        "confidence": 94,
+        "firstOccurredAt": "2026-06-06T12:00:00.000Z",
+        "lastOccurredAt": "2026-06-06T12:00:00.000Z",
+        "areas": [
+          {
+            "id": "area-rides",
+            "name": "rides",
+            "slug": "rides",
+            "confidence": 95,
+            "source": "ai"
+          }
+        ],
+        "contributors": [
+          {
+            "externalIdentity": "github:AntonyLajes",
+            "displayName": "AntonyLajes",
+            "role": "pr_author",
+            "sourceUrl": "https://github.com/AntonyLajes"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "evidence-pr-15",
+            "kind": "pull_request",
+            "sourceKey": "github:AntonyLajes/ride-pack:pull_request:15",
+            "externalId": "15",
+            "url": "https://github.com/AntonyLajes/ride-pack/pull/15",
+            "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "path": null,
+            "occurredAt": "2026-06-06T12:00:00.000Z",
+            "metadata": null
+          }
+        ]
+      }
+    ]
+  },
+  "questions": [
+    {
+      "id": "version-134-pt",
+      "question": "O que mudou na versão 1.3.4?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "1.3.4",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "version-133-empty",
+      "question": "What changed in version 1.3.3?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "1.3.3"
+      }
+    },
+    {
+      "id": "version-missing",
+      "question": "O que mudou na versão 9.9.9?",
+      "expected": { "status": "no_evidence", "mode": "change" }
+    },
+    {
+      "id": "home-actions-pt",
+      "question": "Quem alterou os botões de ação rápida da tela inicial?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "home-actions-en",
+      "question": "Who changed the Home quick action buttons?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"]
+      }
+    },
+    {
+      "id": "latest-feature-natural-pt",
+      "question": "Qual a ultima feature feita no app e por quem?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "first-feature-natural-pt",
+      "question": "Qual a primeira feature feita no app e por quem?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-fuel-stops"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/15"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "fuel-stops-pt",
+      "question": "Quando adicionamos as paradas de combustível?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-fuel-stops"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/15"]
+      }
+    },
+    {
+      "id": "fuel-stops-en",
+      "question": "When did fuel stops appear on ride cards?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-fuel-stops"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/15"]
+      }
+    },
+    {
+      "id": "unknown-checkout",
+      "question": "Who changed the payment checkout?",
+      "expected": { "status": "no_evidence", "mode": "change" }
+    },
+    {
+      "id": "team-this-week-pt",
+      "question": "O que o time fez esta semana?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "contributor-last-30-days-pt",
+      "question": "O que Antony fez nos últimos 30 dias?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["change-home-actions"],
+        "evidenceUrls": ["https://github.com/AntonyLajes/ride-pack/pull/16"],
+        "contributors": ["AntonyLajes"]
+      }
+    },
+    {
+      "id": "contributor-version-pt",
+      "question": "O que Antony fez na versão 1.3.4?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "1.3.4",
+        "changeIds": ["change-home-actions"],
+        "contributors": ["AntonyLajes"]
+      }
+    }
+  ],
+  "thresholds": {
+    "passRate": 1,
+    "citationPrecision": 1,
+    "refusalAccuracy": 1
+  }
+}

@@ -1,0 +1,4 @@
+ALTER TABLE "team_audit_events" DROP CONSTRAINT "team_audit_events_action_check";--> statement-breakpoint
+ALTER TABLE "team_audit_events" DROP CONSTRAINT "team_audit_events_target_type_check";--> statement-breakpoint
+ALTER TABLE "team_audit_events" ADD CONSTRAINT "team_audit_events_action_check" CHECK ("team_audit_events"."action" IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left', 'workspace_access_changed'));--> statement-breakpoint
+ALTER TABLE "team_audit_events" ADD CONSTRAINT "team_audit_events_target_type_check" CHECK ("team_audit_events"."target_type" IN ('team', 'invite', 'member', 'workspace'));

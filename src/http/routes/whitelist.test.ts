@@ -35,6 +35,9 @@ describe("http/routes/whitelist", () => {
     teamSize: "1–5",
     role: "Founder / CTO",
     githubOrg: "github.com/superhealth",
+    releaseFrequency: "weekly",
+    mainPain: "finding-when",
+    messageVariant: "engineering-memory",
   };
 
   const register = async (returningRows: Array<{ id: string }>) => {
@@ -79,6 +82,9 @@ describe("http/routes/whitelist", () => {
         teamSize: "1–5",
         role: "Founder / CTO",
         githubOrg: "github.com/superhealth",
+        releaseFrequency: "weekly",
+        mainPain: "finding-when",
+        messageVariant: "engineering-memory",
       }),
     );
     expect(sendWhitelistEmailMock).toHaveBeenCalledTimes(1);
@@ -108,7 +114,14 @@ describe("http/routes/whitelist", () => {
       payload: { name: "Solo", email: "solo@dev.io", team: "Solo Co", githubOrg: "" },
     });
     expect(deps.values).toHaveBeenCalledWith(
-      expect.objectContaining({ teamSize: null, role: null, githubOrg: null }),
+      expect.objectContaining({
+        teamSize: null,
+        role: null,
+        githubOrg: null,
+        releaseFrequency: null,
+        mainPain: null,
+        messageVariant: null,
+      }),
     );
   });
 

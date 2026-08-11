@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "id": "expo-three-version-history",
+  "name": "Expo three-version history",
+  "description": "A deterministic GitHub history with a feature PR, a direct fix, and an Expo version bump.",
+  "repository": {
+    "provider": "github",
+    "fullName": "driff-lab/mobile-app",
+    "defaultBranch": "main"
+  },
+  "webhookSettings": {
+    "prSummaryBaseBranches": ["main"],
+    "release": {
+      "branch": "main",
+      "versionWatchPaths": ["app.json"]
+    },
+    "push": {
+      "branches": ["main"]
+    }
+  },
+  "events": [
+    {
+      "deliveryId": "lab-expo-pr-101",
+      "eventType": "pull_request",
+      "offsetMs": 0,
+      "expectedJobs": ["process_pr"],
+      "payload": {
+        "action": "closed",
+        "repository": {
+          "full_name": "driff-lab/mobile-app"
+        },
+        "pull_request": {
+          "merged": true,
+          "number": 101,
+          "base": {
+            "ref": "main"
+          }
+        }
+      }
+    },
+    {
+      "deliveryId": "lab-expo-push-fix-login",
+      "eventType": "push",
+      "offsetMs": 1000,
+      "expectedJobs": ["process_push"],
+      "payload": {
+        "ref": "refs/heads/main",
+        "before": "1111111111111111111111111111111111111111",
+        "after": "2222222222222222222222222222222222222222",
+        "repository": {
+          "full_name": "driff-lab/mobile-app"
+        },
+        "pusher": {
+          "name": "antony"
+        },
+        "head_commit": {
+          "timestamp": "2026-08-08T12:00:00.000Z"
+        },
+        "commits": [
+          {
+            "modified": ["src/features/login/use-session.ts"]
+          }
+        ]
+      }
+    },
+    {
+      "deliveryId": "lab-expo-release-1-2-0",
+      "eventType": "push",
+      "offsetMs": 2000,
+      "expectedJobs": ["process_release", "process_push"],
+      "payload": {
+        "ref": "refs/heads/main",
+        "before": "2222222222222222222222222222222222222222",
+        "after": "3333333333333333333333333333333333333333",
+        "repository": {
+          "full_name": "driff-lab/mobile-app"
+        },
+        "pusher": {
+          "name": "release-bot"
+        },
+        "head_commit": {
+          "timestamp": "2026-08-08T12:15:00.000Z"
+        },
+        "commits": [
+          {
+            "modified": ["app.json"]
+          }
+        ]
+      }
+    }
+  ]
+}

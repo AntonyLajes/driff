@@ -1,0 +1,1 @@
+ALTER TABLE "workspace_settings" ADD COLUMN "summary_language" text DEFAULT 'auto' NOT NULL;

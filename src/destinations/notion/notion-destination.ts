@@ -9,6 +9,7 @@ import type {
 import { execute as buildBlocks } from "@/destinations/notion/blocks.js";
 import { execute as buildPushBlocks } from "@/destinations/notion/push-blocks.js";
 import { execute as buildReleaseBlocks } from "@/destinations/notion/release-blocks.js";
+import { toMarkdown as buildReleaseMarkdown } from "@/destinations/notion/release-blocks.js";
 import {
   ensureDatabaseProperties,
   type NotionSchemaClient,
@@ -22,8 +23,13 @@ interface NotionCreatePageResult {
 }
 
 interface NotionClientLike extends NotionSchemaClient {
+  dataSources?: NotionSchemaClient["dataSources"] & {
+    query?: (input: unknown) => Promise<unknown>;
+  };
   pages: {
     create: (input: unknown) => Promise<NotionCreatePageResult>;
+    update?: (input: unknown) => Promise<unknown>;
+    updateMarkdown?: (input: unknown) => Promise<unknown>;
   };
 }
 
@@ -50,7 +56,9 @@ const getNotionClientFactory = (
 const getToken = (input: ExecuteInput): string => {
   const tokenFromInput = input.token?.trim();
   if (!tokenFromInput) {
-    throw new Error("Notion token is not configured; pass token from the workspace destination.");
+    throw new Error(
+      "Notion token is not configured; pass token from the workspace destination.",
+    );
   }
   return tokenFromInput;
 };
@@ -110,7 +118,10 @@ const toPushProperties = (summary: PushSummary): Record<string, unknown> => {
       rich_text: [
         {
           type: "text",
-          text: { content: summary.prNumbers.length > 0 ? summary.prNumbers.join(", ") : "—" },
+          text: {
+            content:
+              summary.prNumbers.length > 0 ? summary.prNumbers.join(", ") : "—",
+          },
         },
       ],
     },
@@ -120,8 +131,18 @@ const toPushProperties = (summary: PushSummary): Record<string, unknown> => {
   };
 };
 
-const toReleaseProperties = (summary: ReleaseNotesSummary): Record<string, unknown> => {
+const toReleaseProperties = (
+  summary: ReleaseNotesSummary,
+): Record<string, unknown> => {
   return {
+    "Driff Key": {
+      rich_text: [
+        {
+          type: "text",
+          text: { content: releaseDriffKey(summary) },
+        },
+      ],
+    },
     Title: {
       title: [{ type: "text", text: { content: summary.title } }],
     },
@@ -155,11 +176,62 @@ const toReleaseProperties = (summary: ReleaseNotesSummary): Record<string, unkno
       rich_text: [
         {
           type: "text",
-          text: { content: summary.prNumbers.length > 0 ? summary.prNumbers.join(", ") : "—" },
+          text: {
+            content:
+              summary.prNumbers.length > 0 ? summary.prNumbers.join(", ") : "—",
+          },
         },
       ],
     },
   };
+};
+
+const releaseDriffKey = (summary: ReleaseNotesSummary): string =>
+  `github:${summary.repo}:release:${summary.newVersionKey}`;
+
+const firstPageId = (result: unknown): string | null => {
+  const rows = (result as { results?: Array<{ id?: unknown }> } | null)
+    ?.results;
+  const id = Array.isArray(rows) ? rows[0]?.id : undefined;
+  return typeof id === "string" && id.length > 0 ? id : null;
+};
+
+const findExistingReleasePage = async (input: {
+  notion: NotionClientLike;
+  dataSourceId: string | null;
+  summary: ReleaseNotesSummary;
+}): Promise<string | null> => {
+  const query = input.notion.dataSources?.query;
+  if (input.dataSourceId === null || query === undefined) return null;
+
+  const byKey = await query({
+    data_source_id: input.dataSourceId,
+    filter: {
+      property: "Driff Key",
+      rich_text: { equals: releaseDriffKey(input.summary) },
+    },
+    page_size: 1,
+    result_type: "page",
+  });
+  const keyMatch = firstPageId(byKey);
+  if (keyMatch !== null) return keyMatch;
+
+  // Adopt release pages created before Driff Key existed instead of duplicating them.
+  const legacy = await query({
+    data_source_id: input.dataSourceId,
+    filter: {
+      and: [
+        { property: "Repo", rich_text: { equals: input.summary.repo } },
+        {
+          property: "Version",
+          rich_text: { equals: input.summary.newVersionKey },
+        },
+      ],
+    },
+    page_size: 1,
+    result_type: "page",
+  });
+  return firstPageId(legacy);
 };
 
 const toProperties = (summary: PRSummary): Record<string, unknown> => {
@@ -201,9 +273,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishPR: async (summary) => {
       const databaseId = getPrDatabaseId(input);
       if (!databaseId) {
-        throw new Error(
-          "Notion PR database id is not configured; set the PR database on the Notion destination.",
-        );
+        return { pageId: "" };
       }
       await ensureDatabaseProperties(notion, databaseId, PR_PROPERTY_SPEC);
       const createInput = {
@@ -218,14 +288,38 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishRelease: async (summary) => {
       const releasesId = getReleasesDatabaseId(input);
       if (!releasesId) {
-        throw new Error(
-          "Notion releases database id is not configured; pass releasesDatabaseId from workspace settings.",
-        );
+        return { pageId: "" };
       }
-      await ensureDatabaseProperties(notion, releasesId, RELEASE_PROPERTY_SPEC);
+      const dataSourceId = await ensureDatabaseProperties(
+        notion,
+        releasesId,
+        RELEASE_PROPERTY_SPEC,
+      );
+      const properties = toReleaseProperties(summary);
+      const existingPageId = await findExistingReleasePage({
+        notion,
+        dataSourceId,
+        summary,
+      });
+      if (
+        existingPageId !== null &&
+        notion.pages.update !== undefined &&
+        notion.pages.updateMarkdown !== undefined
+      ) {
+        await notion.pages.update({ page_id: existingPageId, properties });
+        await notion.pages.updateMarkdown({
+          page_id: existingPageId,
+          type: "replace_content",
+          replace_content: {
+            new_str: buildReleaseMarkdown(summary),
+            allow_deleting_content: true,
+          },
+        });
+        return { pageId: existingPageId };
+      }
       const createInput = {
         parent: { database_id: releasesId },
-        properties: toReleaseProperties(summary),
+        properties,
         children: buildReleaseBlocks(summary),
       };
       const response = await notion.pages.create(createInput);
@@ -235,9 +329,7 @@ export const execute = (input: ExecuteInput = {}): Destination => {
     publishPush: async (summary) => {
       const pushesId = getPushesDatabaseId(input);
       if (!pushesId) {
-        throw new Error(
-          "Notion pushes database id is not configured; pass pushesDatabaseId from workspace settings.",
-        );
+        return { pageId: "" };
       }
       await ensureDatabaseProperties(notion, pushesId, PUSH_PROPERTY_SPEC);
       const createInput = {

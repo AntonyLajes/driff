@@ -1,0 +1,1 @@
+ALTER TABLE "ask_conversations" ADD COLUMN "shared_at" timestamp with time zone;

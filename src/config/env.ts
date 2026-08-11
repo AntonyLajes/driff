@@ -67,7 +67,7 @@ const envFieldsSchema = z.object({
    */
   RELEASE_EXPO_APP_CONFIG_PATH: z.string().min(1).optional(),
   /**
-   * Modelo unificado (preferido): `ios_plist` | `ios_pbx` | `react_native_expo` | `android_gradle` | `flutter_pubspec`.
+   * Modelo unificado (preferido): `ios_plist` | `ios_pbx` | `react_native_expo` | `node_package` | `android_gradle` | `flutter_pubspec`.
    * Exige `RELEASE_VERSION_FILE_PATH` na mesma origem (env ou DB).
    */
   RELEASE_PROJECT_KIND: z.string().min(1).optional(),

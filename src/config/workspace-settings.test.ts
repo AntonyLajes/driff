@@ -23,6 +23,7 @@ const row = (
     releaseCompareRootSha: null,
     prSummaryBaseBranches: null,
     pushSummaryBranches: null,
+    summaryLanguage: "auto",
     createdAt: new Date(),
     updatedAt: new Date(),
     ...partial,
@@ -38,6 +39,13 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
     );
     expect(merged.releaseProjectKind).toBe("react_native_expo");
     expect(merged.releaseVersionFilePath).toBe("app.json");
+    expect(merged.summaryLanguage).toBe("auto");
+  });
+
+  it("should preserve a configured summary output language", () => {
+    const merged = mergeWorkspaceSettingsRow(row({ summaryLanguage: "pt-BR" }));
+
+    expect(merged.summaryLanguage).toBe("pt-BR");
   });
 
   it("should prefer DB unified columns over legacy columns", () => {
@@ -63,12 +71,12 @@ describe("config/workspace-settings mergeWorkspaceSettings", () => {
     ).toThrow(/release_version_file_path/);
   });
 
-  it("should throw for unsupported release_project_kind", () => {
+  it("should throw for an unknown release_project_kind", () => {
     expect(() =>
       mergeWorkspaceSettingsRow(
-        row({ releaseProjectKind: "android_gradle", releaseVersionFilePath: "app/build.gradle" }),
+        row({ releaseProjectKind: "future_unknown", releaseVersionFilePath: "VERSION" }),
       ),
-    ).toThrow(/not supported yet/);
+    ).toThrow(/Invalid option/);
   });
 });
 

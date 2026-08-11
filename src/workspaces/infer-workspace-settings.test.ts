@@ -21,7 +21,7 @@ describe("mapInferenceToReleasePatch", () => {
 
   it("should skip unsupported kinds", () => {
     const mapped = mapInferenceToReleasePatch({
-      suggestedKind: "flutter_pubspec",
+      suggestedKind: "future_unknown",
       confidence: "high",
       defaultBranch: "main",
       versionFilePath: "pubspec.yaml",

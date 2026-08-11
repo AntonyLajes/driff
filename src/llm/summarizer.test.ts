@@ -53,6 +53,7 @@ describe("llm/summarizer execute", () => {
 
     const summary = await summarizer.summarizePR({
       pullRequest: buildPullRequest(),
+      language: "pt-BR",
     });
 
     expect(summary).toEqual({
@@ -64,6 +65,9 @@ describe("llm/summarizer execute", () => {
       usage: { model: "claude-sonnet-4-6", inputTokens: 1200, outputTokens: 300 },
     });
     expect(anthropic.create).toHaveBeenCalledOnce();
+    expect(anthropic.create.mock.calls[0]?.[0]?.messages[0]?.content).toContain(
+      '"outputLanguage": "pt-BR"',
+    );
   });
 
   it("should retry once when first response is invalid json", async () => {

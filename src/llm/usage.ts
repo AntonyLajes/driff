@@ -22,7 +22,7 @@ export const extractUsage = (response: AnthropicUsageLike, model: string): Token
 export interface RecordLlmUsageInput {
   db: Database;
   repo: string;
-  jobType: "process_pr" | "process_release" | "process_push";
+  jobType: "process_pr" | "process_release" | "process_push" | "ask";
   usage: TokenUsage | null | undefined;
 }
 

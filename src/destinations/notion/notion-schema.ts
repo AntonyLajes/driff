@@ -40,6 +40,7 @@ export const PR_PROPERTY_SPEC: NotionPropertySpec = {
 };
 
 export const RELEASE_PROPERTY_SPEC: NotionPropertySpec = {
+  "Driff Key": TEXT,
   Repo: TEXT,
   Branch: TEXT,
   Version: TEXT,
@@ -77,13 +78,15 @@ export interface NotionSchemaClient {
 }
 
 const resolveDataSourceId = (database: unknown): string | null => {
-  const sources = (database as { data_sources?: Array<{ id?: string }> } | null)?.data_sources;
+  const sources = (database as { data_sources?: Array<{ id?: string }> } | null)
+    ?.data_sources;
   const id = Array.isArray(sources) ? sources[0]?.id : undefined;
   return typeof id === "string" && id.length > 0 ? id : null;
 };
 
 const existingPropertyNames = (dataSource: unknown): Set<string> => {
-  const props = (dataSource as { properties?: Record<string, unknown> } | null)?.properties;
+  const props = (dataSource as { properties?: Record<string, unknown> } | null)
+    ?.properties;
   return new Set(props && typeof props === "object" ? Object.keys(props) : []);
 };
 
@@ -96,18 +99,24 @@ export const ensureDatabaseProperties = async (
   notion: NotionSchemaClient,
   databaseId: string,
   spec: NotionPropertySpec,
-): Promise<void> => {
-  if (!notion.databases?.retrieve || !notion.dataSources?.retrieve || !notion.dataSources?.update) {
-    return;
+): Promise<string | null> => {
+  if (
+    !notion.databases?.retrieve ||
+    !notion.dataSources?.retrieve ||
+    !notion.dataSources?.update
+  ) {
+    return null;
   }
 
   const database = await notion.databases.retrieve({ database_id: databaseId });
   const dataSourceId = resolveDataSourceId(database);
   if (dataSourceId === null) {
-    return;
+    return null;
   }
 
-  const dataSource = await notion.dataSources.retrieve({ data_source_id: dataSourceId });
+  const dataSource = await notion.dataSources.retrieve({
+    data_source_id: dataSourceId,
+  });
   const existing = existingPropertyNames(dataSource);
 
   const missing: Record<string, unknown> = {};
@@ -118,8 +127,12 @@ export const ensureDatabaseProperties = async (
   }
 
   if (Object.keys(missing).length === 0) {
-    return;
+    return dataSourceId;
   }
 
-  await notion.dataSources.update({ data_source_id: dataSourceId, properties: missing });
+  await notion.dataSources.update({
+    data_source_id: dataSourceId,
+    properties: missing,
+  });
+  return dataSourceId;
 };

@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -28,6 +30,10 @@ export const webhookEventsTable = pgTable(
   (table) => ({
     deliveryIdUnique: unique("webhook_events_delivery_id_unique").on(
       table.deliveryId,
+    ),
+    repoReceivedAtIndex: index("webhook_events_repo_received_at_idx").on(
+      sql`(${table.payload} -> 'repository' ->> 'full_name')`,
+      table.receivedAt.desc(),
     ),
   }),
 );
@@ -178,7 +184,7 @@ export const pushesTable = pgTable(
 /**
  * Per-summary LLM token usage (metering only — no enforcement yet). Feeds future
  * usage-based pricing/tiers; see the billing-tiers project note. One row per
- * successful summarization (PR / release / push).
+ * successful generation (PR / release / push / Ask response).
  */
 export const llmUsageTable = pgTable(
   "llm_usage",
@@ -189,10 +195,15 @@ export const llmUsageTable = pgTable(
     model: text("model").notNull(),
     inputTokens: integer("input_tokens").notNull(),
     outputTokens: integer("output_tokens").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
-    repoCreatedAtIndex: index("llm_usage_repo_created_at_idx").on(table.repo, table.createdAt),
+    repoCreatedAtIndex: index("llm_usage_repo_created_at_idx").on(
+      table.repo,
+      table.createdAt,
+    ),
   }),
 );
 
@@ -233,8 +244,12 @@ export const teamsTable = pgTable(
     isPersonal: boolean("is_personal").default(false).notNull(),
     /** Member cap enforced on invites; provisional value until billing lands. */
     maxMembers: integer("max_members").default(25).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     slugUnique: unique("teams_slug_unique").on(table.slug),
@@ -252,7 +267,9 @@ export const teamMembersTable = pgTable(
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.teamId, table.userId] }),
@@ -271,16 +288,60 @@ export const teamInvitesTable = pgTable(
     email: text("email").notNull(),
     role: text("role").notNull(),
     token: text("token").notNull(),
-    invitedByUserId: uuid("invited_by_user_id").references(() => usersTable.id, {
-      onDelete: "set null",
-    }),
+    invitedByUserId: uuid("invited_by_user_id").references(
+      () => usersTable.id,
+      {
+        onDelete: "set null",
+      },
+    ),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     tokenUnique: unique("team_invites_token_unique").on(table.token),
     teamIdIdx: index("team_invites_team_id_idx").on(table.teamId),
+  }),
+);
+
+/** Team administration audit trail. Contains no repository or source-code data. */
+export const teamAuditEventsTable = pgTable(
+  "team_audit_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teamsTable.id, { onDelete: "cascade" }),
+    actorUserId: uuid("actor_user_id").references(() => usersTable.id, {
+      onDelete: "set null",
+    }),
+    action: text("action").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id"),
+    targetLabel: text("target_label"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    teamCreatedAtIdx: index("team_audit_events_team_created_at_idx").on(
+      table.teamId,
+      table.createdAt.desc(),
+    ),
+    actionCheck: check(
+      "team_audit_events_action_check",
+      sql`${table.action} IN ('team_created', 'team_renamed', 'invite_created', 'invite_resent', 'invite_revoked', 'invite_accepted', 'member_role_changed', 'member_removed', 'member_left', 'workspace_access_changed', 'workspace_retention_changed')`,
+    ),
+    targetTypeCheck: check(
+      "team_audit_events_target_type_check",
+      sql`${table.targetType} IN ('team', 'invite', 'member', 'workspace')`,
+    ),
   }),
 );
 
@@ -304,8 +365,12 @@ export const userSourceConnectionsTable = pgTable(
     externalAccountId: text("external_account_id"),
     /** Provider-side login/handle (e.g. GitHub login). */
     externalLogin: text("external_login"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.userId, table.provider] }),
@@ -343,17 +408,235 @@ export const workspacesTable = pgTable(
     repoFullName: text("repo_full_name"),
     /** Default branch from the source provider metadata (optional cache). */
     repoDefaultBranch: text("repo_default_branch"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    /** `all` lets every team member read it; `restricted` requires an explicit member grant. */
+    memberAccess: text("member_access").notNull().default("all"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
-    teamSlugUnique: unique("workspaces_team_id_slug_unique").on(table.teamId, table.slug),
+    teamSlugUnique: unique("workspaces_team_id_slug_unique").on(
+      table.teamId,
+      table.slug,
+    ),
     teamIdIdx: index("workspaces_team_id_idx").on(table.teamId),
     userIdIdx: index("workspaces_user_id_idx").on(table.userId),
     // One workspace per linked repo, globally per provider (webhook routing is repo-keyed).
     providerRepoUnique: uniqueIndex("workspaces_provider_repo_unique")
       .on(table.sourceProvider, table.repoFullName)
       .where(sql`${table.repoFullName} IS NOT NULL`),
+    memberAccessCheck: check(
+      "workspaces_member_access_check",
+      sql`${table.memberAccess} IN ('all', 'restricted')`,
+    ),
+  }),
+);
+
+/** Explicit read grants used only when a workspace's member access is restricted. */
+export const workspaceMemberAccessTable = pgTable(
+  "workspace_member_access",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    grantedByUserId: uuid("granted_by_user_id").references(
+      () => usersTable.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.userId] }),
+    userIdIdx: index("workspace_member_access_user_id_idx").on(table.userId),
+  }),
+);
+
+/** Immutable audit trail for human corrections made to generated summaries. */
+export const summaryCorrectionsTable = pgTable(
+  "summary_corrections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    sourceRecordType: text("source_record_type").notNull(),
+    sourceRecordId: uuid("source_record_id").notNull(),
+    editedByUserId: uuid("edited_by_user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    beforeUserFacing: text("before_user_facing"),
+    beforeTechnical: text("before_technical"),
+    afterUserFacing: text("after_user_facing").notNull(),
+    afterTechnical: text("after_technical"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    recordCreatedAtIdx: index("summary_corrections_record_created_at_idx").on(
+      table.sourceRecordType,
+      table.sourceRecordId,
+      table.createdAt,
+    ),
+    workspaceCreatedAtIdx: index(
+      "summary_corrections_workspace_created_at_idx",
+    ).on(table.workspaceId, table.createdAt),
+  }),
+);
+
+/**
+ * Privacy-preserving Ask Driff product analytics. Deliberately stores no
+ * question, answer, source text, code, contributor or user identity.
+ */
+export const askInteractionsTable = pgTable(
+  "ask_interactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    hadEvidence: boolean("had_evidence").notNull(),
+    feedback: text("feedback"),
+    feedbackAt: timestamp("feedback_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceCreatedAtIdx: index(
+      "ask_interactions_workspace_created_at_idx",
+    ).on(table.workspaceId, table.createdAt),
+    feedbackCheck: check(
+      "ask_interactions_feedback_check",
+      sql`${table.feedback} IS NULL OR ${table.feedback} IN ('helpful', 'unhelpful')`,
+    ),
+  }),
+);
+
+/**
+ * Private Ask Driff chat history. Unlike aggregate `ask_interactions`, these
+ * rows intentionally belong to one user and may contain questions and answers.
+ * The bounded JSON document mirrors the chat UI and is validated at the HTTP
+ * boundary before every write.
+ */
+export const askConversationsTable = pgTable(
+  "ask_conversations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    messages: jsonb("messages").$type<unknown[]>().notNull().default([]),
+    sharedAt: timestamp("shared_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userWorkspaceUpdatedAtIdx: index(
+      "ask_conversations_user_workspace_updated_at_idx",
+    ).on(table.userId, table.workspaceId, table.updatedAt.desc()),
+    titleLengthCheck: check(
+      "ask_conversations_title_length_check",
+      sql`char_length(${table.title}) BETWEEN 1 AND 72`,
+    ),
+    messagesArrayCheck: check(
+      "ask_conversations_messages_array_check",
+      sql`jsonb_typeof(${table.messages}) = 'array'`,
+    ),
+  }),
+);
+
+export interface HistoryImportFailure {
+  sourceKind: "pull_request" | "release" | "commit";
+  sourceKey: string;
+  message: string;
+  /** Kept while old clients still expose PR-specific progress. */
+  prNumber?: number;
+}
+
+/**
+ * Bounded, resumable imports used to give a newly linked workspace immediate value.
+ * The import orchestrator reuses the regular process_pr pipeline and checkpoints each
+ * completed PR so a worker retry never starts the whole window from zero.
+ */
+export const historyImportsTable = pgTable(
+  "history_imports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    requestedByUserId: uuid("requested_by_user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    periodMonths: integer("period_months").notNull().default(12),
+    maxPullRequests: integer("max_pull_requests").notNull().default(100),
+    totalItems: integer("total_items").notNull().default(0),
+    processedItems: integer("processed_items").notNull().default(0),
+    failedItems: integer("failed_items").notNull().default(0),
+    completedPrNumbers: jsonb("completed_pr_numbers")
+      .$type<number[]>()
+      .notNull()
+      .default([]),
+    completedSourceKeys: jsonb("completed_source_keys")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    failures: jsonb("failures")
+      .$type<HistoryImportFailure[]>()
+      .notNull()
+      .default([]),
+    truncated: boolean("truncated").notNull().default(false),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    lastError: text("last_error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceCreatedAtIdx: index("history_imports_workspace_created_at_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    activeWorkspaceUnique: uniqueIndex(
+      "history_imports_active_workspace_unique",
+    )
+      .on(table.workspaceId)
+      .where(sql`${table.status} IN ('pending', 'running')`),
+    statusCheck: check(
+      "history_imports_status_check",
+      sql`${table.status} IN ('pending', 'running', 'completed', 'partial', 'failed', 'cancelled')`,
+    ),
+    periodMonthsCheck: check(
+      "history_imports_period_months_check",
+      sql`${table.periodMonths} BETWEEN 1 AND 24`,
+    ),
+    maxPullRequestsCheck: check(
+      "history_imports_max_pull_requests_check",
+      sql`${table.maxPullRequests} BETWEEN 10 AND 200`,
+    ),
   }),
 );
 
@@ -365,10 +648,16 @@ export const workspaceSettingsTable = pgTable(
   "workspace_settings",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    workspaceId: uuid("workspace_id").references(() => workspacesTable.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => workspacesTable.id, {
+      onDelete: "cascade",
+    }),
     releaseInfoPlistPath: text("release_info_plist_path"),
     releaseVersionBranch: text("release_version_branch"),
     releaseMonitoredRepo: text("release_monitored_repo"),
+    /** Canonical version marker: repository file, SemVer Git tag, or published GitHub Release. */
+    releaseVersionStrategy: text("release_version_strategy")
+      .default("version_file")
+      .notNull(),
     /**
      * Tipo de projeto para releases: `ios_plist`, `ios_pbx`, `react_native_expo`, `android_gradle`, `flutter_pubspec`.
      * Usar em conjunto com `release_version_file_path` (um único ficheiro onde a versão muda).
@@ -391,13 +680,386 @@ export const workspaceSettingsTable = pgTable(
      * default branch (`workspaces.repo_default_branch`).
      */
     pushSummaryBranches: jsonb("push_summary_branches").$type<string[]>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    /** Paths/globs omitted before history is summarized. Empty explicitly disables defaults. */
+    historyExcludedPaths: jsonb("history_excluded_paths").$type<string[]>(),
+    /** GitHub actor logins omitted before history is summarized. */
+    historyExcludedActors: jsonb("history_excluded_actors").$type<string[]>(),
+    /** Output language for generated summaries: auto, en, or pt-BR. */
+    summaryLanguage: text("summary_language").default("auto").notNull(),
+    /** Optional retention window for raw webhook payloads and finished job records. */
+    sourceDataRetentionDays: integer("source_data_retention_days"),
+    retentionLastRunAt: timestamp("retention_last_run_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
     workspaceIdUniqueWhenSet: uniqueIndex("workspace_settings_workspace_id_key")
       .on(table.workspaceId)
       .where(sql`${table.workspaceId} IS NOT NULL`),
+    releaseVersionStrategyCheck: check(
+      "workspace_settings_release_version_strategy_check",
+      sql`${table.releaseVersionStrategy} IN ('version_file', 'git_tag', 'github_release')`,
+    ),
+    sourceDataRetentionDaysCheck: check(
+      "workspace_settings_source_data_retention_days_check",
+      sql`${table.sourceDataRetentionDays} IS NULL OR ${table.sourceDataRetentionDays} IN (30, 90, 180, 365)`,
+    ),
+  }),
+);
+
+/**
+ * Canonical project versions used by the V1 timeline. Existing `releases` rows remain
+ * source records until projection parity is proven.
+ */
+export const projectVersionsTable = pgTable(
+  "project_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    displayVersion: text("display_version").notNull(),
+    normalizedVersion: text("normalized_version").notNull(),
+    buildVersion: text("build_version"),
+    title: text("title"),
+    changelog: text("changelog"),
+    sections:
+      jsonb("sections").$type<Array<{ label: string; items: string[] }>>(),
+    promptVersion: integer("prompt_version"),
+    status: text("status").notNull(),
+    strategy: text("strategy").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    sourceUrl: text("source_url"),
+    sourceReleaseId: uuid("source_release_id").references(
+      () => releasesTable.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    previousVersionId: uuid("previous_version_id"),
+    beforeSha: text("before_sha"),
+    headSha: text("head_sha"),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceSourceUnique: unique(
+      "project_versions_workspace_strategy_source_unique",
+    ).on(table.workspaceId, table.strategy, table.sourceRef),
+    workspaceTimelineIdx: index("project_versions_workspace_timeline_idx").on(
+      table.workspaceId,
+      table.status,
+      table.releasedAt,
+      table.id,
+    ),
+    sourceReleaseIdIdx: index("project_versions_source_release_id_idx").on(
+      table.sourceReleaseId,
+    ),
+    previousVersionIdIdx: index("project_versions_previous_version_id_idx").on(
+      table.previousVersionId,
+    ),
+    previousVersionFk: foreignKey({
+      columns: [table.previousVersionId],
+      foreignColumns: [table.id],
+      name: "project_versions_previous_version_id_fk",
+    }).onDelete("set null"),
+    statusCheck: check(
+      "project_versions_status_check",
+      sql`${table.status} IN ('released', 'in_development')`,
+    ),
+    strategyCheck: check(
+      "project_versions_strategy_check",
+      sql`${table.strategy} IN ('github_release', 'git_tag', 'version_file')`,
+    ),
+  }),
+);
+
+/** User-understandable units of change projected from PR, push, and release source records. */
+export const changesTable = pgTable(
+  "changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id").references(() => projectVersionsTable.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(),
+    summaryExecutive: text("summary_executive"),
+    summaryTechnical: text("summary_technical"),
+    category: text("category").notNull(),
+    confidence: integer("confidence"),
+    firstOccurredAt: timestamp("first_occurred_at", {
+      withTimezone: true,
+    }).notNull(),
+    lastOccurredAt: timestamp("last_occurred_at", {
+      withTimezone: true,
+    }).notNull(),
+    promptVersion: integer("prompt_version"),
+    correctedAt: timestamp("corrected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceLastOccurredAtIdx: index(
+      "changes_workspace_last_occurred_at_idx",
+    ).on(table.workspaceId, table.lastOccurredAt),
+    workspaceUnversionedTimelineIdx: index(
+      "changes_workspace_unversioned_timeline_idx",
+    )
+      .on(table.workspaceId, table.lastOccurredAt, table.id)
+      .where(sql`${table.versionId} IS NULL`),
+    versionIdIdx: index("changes_version_id_idx").on(table.versionId),
+    categoryCheck: check(
+      "changes_category_check",
+      sql`${table.category} IN ('feature', 'bugfix', 'refactor', 'chore', 'other')`,
+    ),
+    confidenceCheck: check(
+      "changes_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+    occurrenceOrderCheck: check(
+      "changes_occurrence_order_check",
+      sql`${table.lastOccurredAt} >= ${table.firstOccurredAt}`,
+    ),
+  }),
+);
+
+/** Stable, workspace-owned identity for a feature or product-area evolution. */
+export const changeLineagesTable = pgTable(
+  "change_lineages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"),
+    source: text("source").notNull(),
+    confidence: integer("confidence"),
+    mergedIntoLineageId: uuid("merged_into_lineage_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceKeyUnique: unique("change_lineages_workspace_key_unique").on(
+      table.workspaceId,
+      table.key,
+    ),
+    workspaceStatusUpdatedIdx: index(
+      "change_lineages_workspace_status_updated_idx",
+    ).on(table.workspaceId, table.status, table.updatedAt),
+    mergedIntoLineageIdIdx: index(
+      "change_lineages_merged_into_lineage_id_idx",
+    ).on(table.mergedIntoLineageId),
+    mergedIntoLineageFk: foreignKey({
+      columns: [table.mergedIntoLineageId],
+      foreignColumns: [table.id],
+      name: "change_lineages_merged_into_lineage_id_fk",
+    }).onDelete("set null"),
+    statusCheck: check(
+      "change_lineages_status_check",
+      sql`${table.status} IN ('active', 'removed', 'merged')`,
+    ),
+    sourceCheck: check(
+      "change_lineages_source_check",
+      sql`${table.source} IN ('rule', 'ai', 'human')`,
+    ),
+    confidenceCheck: check(
+      "change_lineages_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+    mergedTargetCheck: check(
+      "change_lineages_merged_target_check",
+      sql`(${table.status} = 'merged' AND ${table.mergedIntoLineageId} IS NOT NULL) OR (${table.status} <> 'merged' AND ${table.mergedIntoLineageId} IS NULL)`,
+    ),
+  }),
+);
+
+/** Ordered, evidence-backed membership of canonical changes in a lineage. */
+export const changeLineageEntriesTable = pgTable(
+  "change_lineage_entries",
+  {
+    lineageId: uuid("lineage_id")
+      .notNull()
+      .references(() => changeLineagesTable.id, { onDelete: "cascade" }),
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    relationType: text("relation_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    source: text("source").notNull(),
+    confidence: integer("confidence"),
+    correctedAt: timestamp("corrected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.lineageId, table.changeId] }),
+    lineageTimelineIdx: index("change_lineage_entries_lineage_timeline_idx").on(
+      table.lineageId,
+      table.occurredAt,
+      table.changeId,
+    ),
+    changeIdIdx: index("change_lineage_entries_change_id_idx").on(
+      table.changeId,
+    ),
+    relationTypeCheck: check(
+      "change_lineage_entries_relation_type_check",
+      sql`${table.relationType} IN ('introduced', 'modified', 'fixed', 'removed', 'restored', 'other')`,
+    ),
+    sourceCheck: check(
+      "change_lineage_entries_source_check",
+      sql`${table.source} IN ('rule', 'ai', 'human')`,
+    ),
+    confidenceCheck: check(
+      "change_lineage_entries_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+  }),
+);
+
+/** Claim-level provenance for a canonical change. */
+export const changeEvidenceTable = pgTable(
+  "change_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    sourceKey: text("source_key").notNull(),
+    externalId: text("external_id"),
+    url: text("url"),
+    sha: text("sha"),
+    path: text("path"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    sourceRecordType: text("source_record_type"),
+    sourceRecordId: uuid("source_record_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    changeSourceUnique: unique("change_evidence_change_source_unique").on(
+      table.changeId,
+      table.sourceKey,
+    ),
+    sourceKeyIdx: index("change_evidence_source_key_idx").on(table.sourceKey),
+    sourceRecordIdx: index("change_evidence_source_record_idx")
+      .on(table.sourceRecordType, table.sourceRecordId)
+      .where(sql`${table.sourceRecordId} IS NOT NULL`),
+    kindCheck: check(
+      "change_evidence_kind_check",
+      sql`${table.kind} IN ('pull_request', 'commit', 'file', 'compare', 'release', 'version_marker')`,
+    ),
+  }),
+);
+
+/** Stable workspace-owned product areas and their matching/exclusion rules. */
+export const productAreasTable = pgTable(
+  "product_areas",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspacesTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    rules: jsonb("rules").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    workspaceSlugUnique: unique("product_areas_workspace_slug_unique").on(
+      table.workspaceId,
+      table.slug,
+    ),
+  }),
+);
+
+/** Many-to-many relation between canonical changes and stable product areas. */
+export const changeAreasTable = pgTable(
+  "change_areas",
+  {
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => productAreasTable.id, { onDelete: "cascade" }),
+    confidence: integer("confidence"),
+    source: text("source").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.changeId, table.areaId] }),
+    areaIdIdx: index("change_areas_area_id_idx").on(table.areaId),
+    sourceCheck: check(
+      "change_areas_source_check",
+      sql`${table.source} IN ('rule', 'ai', 'human')`,
+    ),
+    confidenceCheck: check(
+      "change_areas_confidence_check",
+      sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 100)`,
+    ),
+  }),
+);
+
+/** Attribution with explicit collaboration roles; never a productivity score source. */
+export const changeContributorsTable = pgTable(
+  "change_contributors",
+  {
+    changeId: uuid("change_id")
+      .notNull()
+      .references(() => changesTable.id, { onDelete: "cascade" }),
+    externalIdentity: text("external_identity").notNull(),
+    displayName: text("display_name"),
+    role: text("role").notNull(),
+    sourceUrl: text("source_url"),
+    isBot: boolean("is_bot").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.changeId, table.externalIdentity, table.role],
+    }),
+    externalIdentityIdx: index("change_contributors_external_identity_idx").on(
+      table.externalIdentity,
+    ),
+    roleCheck: check(
+      "change_contributors_role_check",
+      sql`${table.role} IN ('pr_author', 'commit_author', 'pusher', 'reviewer', 'coauthor', 'merger')`,
+    ),
   }),
 );
 
@@ -425,15 +1087,20 @@ export const workspaceDestinationsTable = pgTable(
     secretCiphertext: text("secret_ciphertext"),
     /** Provider-side account id (e.g. Notion workspace id). */
     externalAccountId: text("external_account_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => ({
-    workspaceTypeUnique: unique("workspace_destinations_workspace_id_type_unique").on(
+    workspaceTypeUnique: unique(
+      "workspace_destinations_workspace_id_type_unique",
+    ).on(table.workspaceId, table.type),
+    workspaceIdIdx: index("workspace_destinations_workspace_id_idx").on(
       table.workspaceId,
-      table.type,
     ),
-    workspaceIdIdx: index("workspace_destinations_workspace_id_idx").on(table.workspaceId),
   }),
 );
 
@@ -473,6 +1140,12 @@ export const whitelistSignupsTable = pgTable(
     role: text("role"),
     /** Optional GitHub org link the lead provided. */
     githubOrg: text("github_org"),
+    /** Self-reported release cadence used to qualify design partners. */
+    releaseFrequency: text("release_frequency"),
+    /** Primary historical-change pain selected on the public landing page. */
+    mainPain: text("main_pain"),
+    /** Landing positioning variant shown when this conversion happened. */
+    messageVariant: text("message_variant"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

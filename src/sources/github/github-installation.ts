@@ -7,7 +7,10 @@ export interface RequestResult<TData> {
 }
 
 export interface OctokitLike {
-  request: <TData>(route: string, parameters?: Record<string, unknown>) => Promise<RequestResult<TData>>;
+  request: <TData>(
+    route: string,
+    parameters?: Record<string, unknown>,
+  ) => Promise<RequestResult<TData>>;
   pulls: {
     get: (parameters: {
       owner: string;
@@ -70,10 +73,14 @@ const createAppJwt = (appId: string, privateKey: string): string => {
   return `${unsignedToken}.${signature}`;
 };
 
-export const parseRepoCoordinates = (repo: string): { owner: string; repo: string } => {
+export const parseRepoCoordinates = (
+  repo: string,
+): { owner: string; repo: string } => {
   const [owner, repository] = repo.split("/");
   if (!owner || !repository) {
-    throw new Error(`Invalid repository format "${repo}". Expected "owner/name".`);
+    throw new Error(
+      `Invalid repository format "${repo}". Expected "owner/name".`,
+    );
   }
 
   return { owner, repo: repository };
@@ -104,22 +111,26 @@ export const getInstallationOctokit = async (
   const appJwt = createAppJwt(input.appId, input.privateKey);
   const appOctokit = createOctokit(appJwt);
 
-  const installationResponse = await appOctokit.request<RepositoryInstallationResponse>(
-    "GET /repos/{owner}/{repo}/installation",
-    {
-      owner,
-      repo: repository,
-    },
-  );
+  const installationResponse =
+    await appOctokit.request<RepositoryInstallationResponse>(
+      "GET /repos/{owner}/{repo}/installation",
+      {
+        owner,
+        repo: repository,
+      },
+    );
 
-  const installationTokenResponse = await appOctokit.request<InstallationTokenResponse>(
-    "POST /app/installations/{installation_id}/access_tokens",
-    {
-      installation_id: installationResponse.data.id,
-    },
-  );
+  const installationTokenResponse =
+    await appOctokit.request<InstallationTokenResponse>(
+      "POST /app/installations/{installation_id}/access_tokens",
+      {
+        installation_id: installationResponse.data.id,
+      },
+    );
 
-  const installationOctokit = createOctokit(installationTokenResponse.data.token);
+  const installationOctokit = createOctokit(
+    installationTokenResponse.data.token,
+  );
 
   return {
     octokit: installationOctokit,

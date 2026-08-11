@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "id": "ride-pack-live-replay",
+  "name": "Ride Pack live replay",
+  "description": "Replays an existing merged feature and direct fix against the connected Ride Pack workspace without creating new commits.",
+  "repository": {
+    "provider": "github",
+    "fullName": "AntonyLajes/ride-pack",
+    "defaultBranch": "main"
+  },
+  "webhookSettings": {
+    "prSummaryBaseBranches": ["main"],
+    "release": {
+      "branch": "main",
+      "versionWatchPaths": ["app.json"]
+    },
+    "push": {
+      "branches": ["main"]
+    }
+  },
+  "events": [
+    {
+      "deliveryId": "lab-ride-pack-pr-14",
+      "eventType": "pull_request",
+      "offsetMs": 0,
+      "expectedJobs": ["process_pr"],
+      "payload": {
+        "action": "closed",
+        "repository": {
+          "full_name": "AntonyLajes/ride-pack"
+        },
+        "pull_request": {
+          "merged": true,
+          "number": 14,
+          "base": {
+            "ref": "main"
+          }
+        }
+      }
+    },
+    {
+      "deliveryId": "lab-ride-pack-push-zero-eta",
+      "eventType": "push",
+      "offsetMs": 1000,
+      "expectedJobs": ["process_push"],
+      "payload": {
+        "ref": "refs/heads/main",
+        "before": "db6e5cedc13fdc775bcd2bcd220915407b5940da",
+        "after": "711c745d24891c93261893be54152252180f7179",
+        "repository": {
+          "full_name": "AntonyLajes/ride-pack"
+        },
+        "pusher": {
+          "name": "AntonyLajes"
+        },
+        "head_commit": {
+          "timestamp": "2026-06-06T18:56:25.000Z"
+        },
+        "commits": [
+          {
+            "modified": ["src/features/rides/utils/ride-eta.ts"]
+          }
+        ]
+      }
+    }
+  ]
+}

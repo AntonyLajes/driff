@@ -1,0 +1,3 @@
+ALTER TABLE "project_versions" ADD COLUMN "previous_version_id" uuid;--> statement-breakpoint
+ALTER TABLE "project_versions" ADD CONSTRAINT "project_versions_previous_version_id_fk" FOREIGN KEY ("previous_version_id") REFERENCES "public"."project_versions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "project_versions_previous_version_id_idx" ON "project_versions" USING btree ("previous_version_id");

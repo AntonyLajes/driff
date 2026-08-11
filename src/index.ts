@@ -1,5 +1,12 @@
 import "dotenv/config";
 
+import { execute as createPullRequestProjector } from "@/changes/project-pull-request.js";
+import { execute as createPushProjector } from "@/changes/project-push.js";
+import { execute as createReleaseProjector } from "@/changes/project-release.js";
+import {
+  execute as createAskAnswerComposer,
+  type AskAnswerComposer,
+} from "@/ask/compose-answer.js";
 import { execute as loadEnv, type Env } from "@/config/env.js";
 import { collectVersionWatchPaths } from "@/config/release-project-kind.js";
 import {
@@ -8,6 +15,8 @@ import {
   type MergedWorkspaceSettings,
 } from "@/config/workspace-settings.js";
 import { loadWorkspaceDestination } from "@/destinations/load-workspace-destinations.js";
+import { internalDestination } from "@/destinations/internal-destination.js";
+import { execute as createOptionalDestination } from "@/destinations/optional-destination.js";
 import { execute as createDbClient } from "@/db/client.js";
 import type { CorsRegistrationInput } from "@/http/cors.js";
 import { buildGoogleOAuthRegistrationInput } from "@/http/routes/auth-google.js";
@@ -15,22 +24,37 @@ import { buildGithubMeRegistrationInput } from "@/http/routes/github-me.js";
 import { buildDestinationsMeRegistrationInput } from "@/http/routes/destinations-me.js";
 import { buildWhitelistRegistrationInput } from "@/http/routes/whitelist.js";
 import { buildEarlyAccessRegistrationInput } from "@/http/routes/early-access.js";
+import { execute as createHistoryImportRepository } from "@/history-imports/history-import-repository.js";
+import { execute as createHistoryImportJob } from "@/history-imports/process-history-import.js";
+import { execute as createMergedPullRequestLister } from "@/history-imports/list-merged-pull-requests.js";
+import { execute as createRepositoryHistoryLister } from "@/history-imports/list-repository-history.js";
 import { execute as createServer } from "@/http/server.js";
 import { execute as createWebhookDependencies } from "@/http/routes/webhooks-dependencies.js";
 import type { HandlerInput as WebhookHandlerInput } from "@/http/routes/webhooks.js";
 import { execute as createProcessPrJob } from "@/jobs/process-pr.js";
 import { execute as createProcessReleaseJob } from "@/jobs/process-release.js";
 import { execute as createProcessPushJob } from "@/jobs/process-push.js";
-import { execute as createReleaseSummarizer, type ReleaseSummarizer } from "@/llm/release-summarizer.js";
-import { execute as createPushSummarizer, type PushSummarizer } from "@/llm/push-summarizer.js";
-import { execute as createSummarizer, type Summarizer } from "@/llm/summarizer.js";
+import {
+  execute as createReleaseSummarizer,
+  type ReleaseSummarizer,
+} from "@/llm/release-summarizer.js";
+import {
+  execute as createPushSummarizer,
+  type PushSummarizer,
+} from "@/llm/push-summarizer.js";
+import {
+  execute as createSummarizer,
+  type Summarizer,
+} from "@/llm/summarizer.js";
 import { execute as createQueue, type QueueAdapter } from "@/queue/queue.js";
+import { execute as createTeamAuditRecorder } from "@/teams/record-audit-event.js";
 import { execute as createWorker, type WorkerAdapter } from "@/queue/worker.js";
 import { execute as createGithubSource } from "@/sources/github/github-source.js";
 import type { Source } from "@/sources/source.js";
 import type { Destination } from "@/destinations/destination.js";
 import type { Database } from "@/db/client.js";
 import type { JobHandler } from "@/queue/worker.js";
+import { createWorkspaceRetentionJob } from "@/retention/workspace-retention.js";
 
 export interface ServerLike {
   listen: (options: { port: number; host: string }) => Promise<string>;
@@ -55,10 +79,12 @@ export interface ExecuteInput {
   summarizer?: Summarizer;
   releaseSummarizer?: ReleaseSummarizer;
   pushSummarizer?: PushSummarizer;
+  askAnswerComposer?: AskAnswerComposer;
   destination?: Destination;
   processPrHandler?: JobHandler;
   processReleaseHandler?: JobHandler;
   processPushHandler?: JobHandler;
+  processHistoryImportHandler?: JobHandler;
   promptVersion?: number;
   releasePromptVersion?: number;
   pushPromptVersion?: number;
@@ -81,15 +107,27 @@ const buildReleaseConfig = (
 ): import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null => {
   // Release notes run when a version source + branch are configured (input config),
   // regardless of which output destination publishes them.
-  if (!hasReleaseVersionSource(workspace) || !workspace.releaseVersionBranch?.trim()) {
+  if (!hasReleaseVersionSource(workspace)) {
+    return null;
+  }
+  const branch =
+    workspace.releaseVersionBranch?.trim() ||
+    workspace.repoDefaultBranch?.trim() ||
+    "main";
+  if (
+    workspace.releaseVersionStrategy === "version_file" &&
+    !workspace.releaseVersionBranch?.trim()
+  ) {
     return null;
   }
   return {
-    branch: workspace.releaseVersionBranch,
+    branch,
+    strategy: workspace.releaseVersionStrategy,
     versionWatchPaths: collectVersionWatchPaths(
       workspace.releaseInfoPlistPath,
       workspace.releaseProjectPbxprojPath,
       workspace.releaseExpoAppConfigPath,
+      workspace.releaseVersionFilePath,
     ),
     monitoredRepo: workspace.releaseMonitoredRepo ?? null,
   };
@@ -125,12 +163,18 @@ const buildWebhookInput = (
   env: Env,
   webhookSecret: string,
   prSummaryBaseBranches: string[] | null,
-  releaseConfig: import("@/http/routes/webhook-release.js").ReleaseWebhookConfig | null,
+  releaseConfig:
+    | import("@/http/routes/webhook-release.js").ReleaseWebhookConfig
+    | null,
   db: Database,
 ): WebhookHandlerInput => {
   const resolveWebhookSettings = async (repoFullName: string) => {
     // GitHub is the only provider with a webhook ingress today.
-    const merged = await resolveWorkspaceSettingsForRepo(db, "github", repoFullName);
+    const merged = await resolveWorkspaceSettingsForRepo(
+      db,
+      "github",
+      repoFullName,
+    );
     if (merged === null) {
       return null;
     }
@@ -144,10 +188,18 @@ const buildWebhookInput = (
   if (input.webhook) {
     return {
       ...input.webhook,
-      resolveWebhookSettings: input.webhook.resolveWebhookSettings ?? resolveWebhookSettings,
-      prSummaryBaseBranches: input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
-      releaseConfig: input.webhook.releaseConfig !== undefined ? input.webhook.releaseConfig : releaseConfig,
-      pushConfig: input.webhook.pushConfig !== undefined ? input.webhook.pushConfig : null,
+      resolveWebhookSettings:
+        input.webhook.resolveWebhookSettings ?? resolveWebhookSettings,
+      prSummaryBaseBranches:
+        input.webhook.prSummaryBaseBranches ?? prSummaryBaseBranches,
+      releaseConfig:
+        input.webhook.releaseConfig !== undefined
+          ? input.webhook.releaseConfig
+          : releaseConfig,
+      pushConfig:
+        input.webhook.pushConfig !== undefined
+          ? input.webhook.pushConfig
+          : null,
     };
   }
 
@@ -161,10 +213,15 @@ const buildWebhookInput = (
   };
 };
 
-const readRepoFromJobPayload = (payload: Record<string, unknown>, jobType: string): string => {
+const readRepoFromJobPayload = (
+  payload: Record<string, unknown>,
+  jobType: string,
+): string => {
   const repoRaw = payload.repo;
   if (typeof repoRaw !== "string" || repoRaw.trim().length === 0) {
-    throw new Error(`Invalid ${jobType} payload: repo must be a non-empty string.`);
+    throw new Error(
+      `Invalid ${jobType} payload: repo must be a non-empty string.`,
+    );
   }
   return repoRaw.trim();
 };
@@ -174,16 +231,19 @@ const createDestinationForWorkspace = async (
   jwtSecret: string,
   workspace: MergedWorkspaceSettings,
 ): Promise<Destination> => {
-  const destination = await loadWorkspaceDestination(db, workspace.workspaceId, jwtSecret);
-  if (destination === null) {
-    throw new Error(
-      `No enabled output destination configured for workspace "${workspace.workspaceId}".`,
-    );
-  }
-  return destination;
+  const destination = await loadWorkspaceDestination(
+    db,
+    workspace.workspaceId,
+    jwtSecret,
+  );
+  return destination === null
+    ? internalDestination
+    : createOptionalDestination({ destination });
 };
 
-const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDependencies> => {
+const buildRuntimeDependencies = async (
+  input: ExecuteInput,
+): Promise<RuntimeDependencies> => {
   const env = loadEnv();
   const dbBundle =
     input.db && input.dbClient
@@ -201,13 +261,40 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
   );
   const googleOAuth = buildGoogleOAuthRegistrationInput(env, db);
   const workspacesMe =
-    googleOAuth !== undefined ? { db, jwtSecret: googleOAuth.jwtSecret } : undefined;
+    googleOAuth !== undefined
+      ? {
+          db,
+          jwtSecret: googleOAuth.jwtSecret,
+          auditRecorder: createTeamAuditRecorder({ db }),
+        }
+      : undefined;
+  const timelineMe =
+    googleOAuth !== undefined
+      ? { db, jwtSecret: googleOAuth.jwtSecret }
+      : undefined;
+  const historyImportsMe = workspacesMe;
+  const askAnswerComposer =
+    googleOAuth === undefined
+      ? undefined
+      : (input.askAnswerComposer ??
+        (await createAskAnswerComposer({ apiKey: env.ANTHROPIC_API_KEY })));
+  const askMe =
+    googleOAuth !== undefined
+      ? {
+          db,
+          jwtSecret: googleOAuth.jwtSecret,
+          answerComposer: askAnswerComposer?.compose,
+          answerStreamer: askAnswerComposer?.stream,
+        }
+      : undefined;
   const githubMeBase = buildGithubMeRegistrationInput(env);
   const githubMe =
     githubMeBase !== undefined ? { ...githubMeBase, db } : undefined;
   const destinationsMeBase = buildDestinationsMeRegistrationInput(env);
   const destinationsMe =
-    destinationsMeBase !== undefined ? { ...destinationsMeBase, db } : undefined;
+    destinationsMeBase !== undefined
+      ? { ...destinationsMeBase, db }
+      : undefined;
   const server =
     input.server ??
     createServer({
@@ -215,7 +302,14 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       cors: input.cors ?? buildCorsFromEnv(env),
       googleOAuth,
       workspacesMe,
+      timelineMe,
+      historyImportsMe,
+      askMe,
+      askConversationsMe: workspacesMe,
       meStats: workspacesMe,
+      aiUsageMe: workspacesMe,
+      productFunnelMe: workspacesMe,
+      systemReadinessMe: workspacesMe,
       teamsMe:
         workspacesMe !== undefined
           ? {
@@ -223,6 +317,7 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
               resendApiKey: env.RESEND_API_KEY,
               resendFrom: env.RESEND_FROM,
               frontendUrl: env.FRONTEND_URL,
+              auditRecorder: createTeamAuditRecorder({ db }),
             }
           : undefined,
       githubMe,
@@ -243,7 +338,9 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
         appId: env.GITHUB_APP_ID,
         privateKey: env.GITHUB_APP_PRIVATE_KEY,
       });
-    const summarizer = input.summarizer ?? (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
+    const summarizer =
+      input.summarizer ??
+      (await createSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
     const releaseSummarizer =
       input.releaseSummarizer ??
       (await createReleaseSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
@@ -251,80 +348,154 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
       input.pushSummarizer ??
       (await createPushSummarizer({ apiKey: env.ANTHROPIC_API_KEY }));
 
-    const resolveWorkspaceOrThrow = async (repo: string): Promise<MergedWorkspaceSettings> => {
+    const resolveWorkspaceOrThrow = async (
+      repo: string,
+    ): Promise<MergedWorkspaceSettings> => {
       // GitHub is the only provider with a job pipeline today.
-      const workspace = await resolveWorkspaceSettingsForRepo(db, "github", repo);
+      const workspace = await resolveWorkspaceSettingsForRepo(
+        db,
+        "github",
+        repo,
+      );
       if (workspace === null) {
-        throw new Error(`Workspace settings not configured for repository "${repo}".`);
+        throw new Error(
+          `Workspace settings not configured for repository "${repo}".`,
+        );
       }
       return workspace;
     };
 
-    const processPrHandler =
-      input.processPrHandler ??
-      {
-        execute: async (payload: Record<string, unknown>) => {
-          const repo = readRepoFromJobPayload(payload, "process_pr");
-          const workspace = await resolveWorkspaceOrThrow(repo);
-          const destination =
-            input.destination ??
-            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
-          const handler = createProcessPrJob({
+    const processPrHandler = input.processPrHandler ?? {
+      execute: async (payload: Record<string, unknown>) => {
+        const repo = readRepoFromJobPayload(payload, "process_pr");
+        const workspace = await resolveWorkspaceOrThrow(repo);
+        const destination =
+          input.destination ??
+          (await createDestinationForWorkspace(
             db,
-            source,
-            summarizer,
-            destination,
-            promptVersion: input.promptVersion ?? 1,
-          });
-          await handler.execute(payload);
-        },
-      };
+            env.AUTH_JWT_SECRET ?? "",
+            workspace,
+          ));
+        const handler = createProcessPrJob({
+          db,
+          source,
+          summarizer,
+          destination,
+          canonicalProjection: {
+            projector: createPullRequestProjector({ db }),
+            workspaceId: workspace.workspaceId,
+          },
+          contentFilter: {
+            excludedPaths: workspace.historyExcludedPaths,
+            excludedActors: workspace.historyExcludedActors,
+          },
+          promptVersion: input.promptVersion ?? 1,
+          summaryLanguage: workspace.summaryLanguage,
+        });
+        await handler.execute(payload);
+      },
+    };
 
-    const processReleaseHandler =
-      input.processReleaseHandler ??
-      {
-        execute: async (payload: Record<string, unknown>) => {
-          const repo = readRepoFromJobPayload(payload, "process_release");
-          const workspace = await resolveWorkspaceOrThrow(repo);
-          const destination =
-            input.destination ??
-            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
-          const handler = createProcessReleaseJob({
+    const processReleaseHandler = input.processReleaseHandler ?? {
+      execute: async (payload: Record<string, unknown>) => {
+        const repo = readRepoFromJobPayload(payload, "process_release");
+        const workspace = await resolveWorkspaceOrThrow(repo);
+        const destination =
+          input.destination ??
+          (await createDestinationForWorkspace(
             db,
+            env.AUTH_JWT_SECRET ?? "",
+            workspace,
+          ));
+        const handler = createProcessReleaseJob({
+          db,
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+          infoPlistPath: workspace.releaseInfoPlistPath ?? "",
+          projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
+          expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
+          releaseProjectKind: workspace.releaseProjectKind,
+          releaseVersionFilePath: workspace.releaseVersionFilePath,
+          releaseVersionStrategy: workspace.releaseVersionStrategy,
+          releaseCompareRootSha: workspace.releaseCompareRootSha,
+          releaseSummarizer,
+          destination,
+          canonicalProjection: {
+            projector: createReleaseProjector({ db }),
+            workspaceId: workspace.workspaceId,
+          },
+          contentFilter: {
+            excludedPaths: workspace.historyExcludedPaths,
+          },
+          promptVersion: input.releasePromptVersion ?? 1,
+          summaryLanguage: workspace.summaryLanguage,
+        });
+        await handler.execute(payload);
+      },
+    };
+
+    const processPushHandler = input.processPushHandler ?? {
+      execute: async (payload: Record<string, unknown>) => {
+        const repo = readRepoFromJobPayload(payload, "process_push");
+        const workspace = await resolveWorkspaceOrThrow(repo);
+        const destination =
+          input.destination ??
+          (await createDestinationForWorkspace(
+            db,
+            env.AUTH_JWT_SECRET ?? "",
+            workspace,
+          ));
+        const handler = createProcessPushJob({
+          db,
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+          pushSummarizer,
+          destination,
+          canonicalProjection: {
+            projector: createPushProjector({ db }),
+            workspaceId: workspace.workspaceId,
+          },
+          contentFilter: {
+            excludedPaths: workspace.historyExcludedPaths,
+            excludedActors: workspace.historyExcludedActors,
+          },
+          promptVersion: input.pushPromptVersion ?? 1,
+          summaryLanguage: workspace.summaryLanguage,
+        });
+        await handler.execute(payload);
+      },
+    };
+
+    const processHistoryImportHandler =
+      input.processHistoryImportHandler ??
+      createHistoryImportJob({
+        repository: createHistoryImportRepository({ db }),
+        listMergedPullRequests: createMergedPullRequestLister({
+          appId: env.GITHUB_APP_ID,
+          privateKey: env.GITHUB_APP_PRIVATE_KEY,
+        }).list,
+        listRepositoryHistory: async (request) => {
+          const workspace = await resolveWorkspaceOrThrow(request.repo);
+          return createRepositoryHistoryLister({
             appId: env.GITHUB_APP_ID,
             privateKey: env.GITHUB_APP_PRIVATE_KEY,
-            infoPlistPath: workspace.releaseInfoPlistPath ?? "",
-            projectPbxprojPath: workspace.releaseProjectPbxprojPath ?? null,
-            expoAppConfigPath: workspace.releaseExpoAppConfigPath ?? null,
-            releaseCompareRootSha: workspace.releaseCompareRootSha,
-            releaseSummarizer,
-            destination,
-            promptVersion: input.releasePromptVersion ?? 1,
+          }).list({
+            ...request,
+            versionStrategy: workspace.releaseVersionStrategy,
           });
-          await handler.execute(payload);
         },
-      };
-
-    const processPushHandler =
-      input.processPushHandler ??
-      {
-        execute: async (payload: Record<string, unknown>) => {
-          const repo = readRepoFromJobPayload(payload, "process_push");
-          const workspace = await resolveWorkspaceOrThrow(repo);
-          const destination =
-            input.destination ??
-            (await createDestinationForWorkspace(db, env.AUTH_JWT_SECRET ?? "", workspace));
-          const handler = createProcessPushJob({
-            db,
-            appId: env.GITHUB_APP_ID,
-            privateKey: env.GITHUB_APP_PRIVATE_KEY,
-            pushSummarizer,
-            destination,
-            promptVersion: input.pushPromptVersion ?? 1,
-          });
-          await handler.execute(payload);
+        processPullRequest: async (payload) => {
+          await processPrHandler.execute(payload);
         },
-      };
+        processRelease: async (payload) => {
+          const workspace = await resolveWorkspaceOrThrow(payload.repo);
+          if (!hasReleaseVersionSource(workspace)) return;
+          await processReleaseHandler.execute(payload);
+        },
+        processPush: async (payload) => {
+          await processPushHandler.execute(payload);
+        },
+      });
 
     return createWorker({
       queue,
@@ -332,6 +503,8 @@ const buildRuntimeDependencies = async (input: ExecuteInput): Promise<RuntimeDep
         process_pr: processPrHandler,
         process_release: processReleaseHandler,
         process_push: processPushHandler,
+        import_history: processHistoryImportHandler,
+        apply_retention: createWorkspaceRetentionJob({ db }),
       },
     });
   })();
@@ -354,7 +527,12 @@ const registerShutdownSignals = (shutdown: () => Promise<void>): void => {
 
 export const execute = async (
   input: ExecuteInput = {},
-): Promise<{ address: string; server: ServerLike; worker: WorkerAdapter; shutdown: () => Promise<void> }> => {
+): Promise<{
+  address: string;
+  server: ServerLike;
+  worker: WorkerAdapter;
+  shutdown: () => Promise<void>;
+}> => {
   const env = loadEnv();
   const runtime = await buildRuntimeDependencies(input);
   const workerRunPromise =

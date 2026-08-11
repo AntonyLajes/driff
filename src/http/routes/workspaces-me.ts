@@ -5,6 +5,9 @@ import { and, count, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { verifySessionJwt } from "@/auth/session-jwt.js";
+import { DEFAULT_HISTORY_EXCLUDED_PATHS } from "@/config/history-content-filter.js";
+import { summaryLanguageSchema } from "@/config/summary-language.js";
+import { releaseVersionStrategySchema } from "@/config/release-version-strategy.js";
 import {
   applyReleaseKindAndFilePath,
   isSupportedReleaseProjectKind,
@@ -12,11 +15,19 @@ import {
 } from "@/config/release-project-kind.js";
 import type { Database } from "@/db/client.js";
 import {
+  changeEvidenceTable,
   jobsTable,
+  changeAreasTable,
+  productAreasTable,
   pullRequestsTable,
   pushesTable,
   releasesTable,
+  summaryCorrectionsTable,
+  teamMembersTable,
+  usersTable,
+  webhookEventsTable,
   workspaceDestinationsTable,
+  workspaceMemberAccessTable,
   workspaceSettingsTable,
   workspacesTable,
 } from "@/db/schema.js";
@@ -30,11 +41,20 @@ import {
   readTeamIdHeader,
   resolveTeamContext,
 } from "@/teams/team-context.js";
+import type { TeamAuditRecorder } from "@/teams/record-audit-event.js";
 import { inferAndApplyWorkspaceSettings } from "@/workspaces/infer-workspace-settings.js";
+import { execute as deleteWorkspaceData } from "@/workspaces/delete-workspace-data.js";
+import { workspaceVisibilityCondition } from "@/workspaces/member-access.js";
+import {
+  loadWorkspaceRetentionPreview,
+  scheduleWorkspaceRetention,
+  sourceDataRetentionDaysSchema,
+} from "@/retention/workspace-retention.js";
 
 export interface WorkspacesMeRegistrationInput {
   db: Database;
   jwtSecret: string;
+  auditRecorder?: TeamAuditRecorder;
 }
 
 const readBearerToken = (authorization: string | undefined): string | null => {
@@ -94,9 +114,25 @@ const workspaceRowSelect = {
   workspaceKind: workspacesTable.workspaceKind,
   repoFullName: workspacesTable.repoFullName,
   repoDefaultBranch: workspacesTable.repoDefaultBranch,
+  memberAccess: workspacesTable.memberAccess,
   createdAt: workspacesTable.createdAt,
   updatedAt: workspacesTable.updatedAt,
 };
+
+const patchWorkspaceAccessBodySchema = z
+  .object({
+    mode: z.enum(["all", "restricted"]),
+    memberUserIds: z.array(z.string().uuid()).max(100).default([]),
+  })
+  .strict();
+
+const patchWorkspaceRetentionBodySchema = z
+  .object({ retentionDays: z.union([sourceDataRetentionDaysSchema, z.null()]) })
+  .strict();
+
+const workspaceRetentionQuerySchema = z.object({
+  retentionDays: z.enum(["30", "90", "180", "365", "forever"]).optional(),
+});
 
 const patchWorkspaceSettingsBodySchema = z
   .object({
@@ -105,8 +141,16 @@ const patchWorkspaceSettingsBodySchema = z
       .union([z.array(z.string().min(1).max(255)).max(50), z.null()])
       .optional(),
     releaseProjectKind: z.union([releaseProjectKindSchema, z.null()]).optional(),
+    releaseVersionStrategy: releaseVersionStrategySchema.optional(),
     releaseVersionFilePath: z.union([z.string().max(512), z.null()]).optional(),
     releaseVersionBranch: z.union([z.string().max(255), z.null()]).optional(),
+    historyExcludedPaths: z
+      .union([z.array(z.string().min(1).max(512)).max(100), z.null()])
+      .optional(),
+    historyExcludedActors: z
+      .union([z.array(z.string().min(1).max(255)).max(100), z.null()])
+      .optional(),
+    summaryLanguage: summaryLanguageSchema.optional(),
   })
   .refine((body) => Object.keys(body).length > 0, { message: "empty_patch" })
   .superRefine((body, ctx) => {
@@ -151,6 +195,17 @@ const patchWorkspaceSettingsBodySchema = z
     }
   });
 
+const patchSummaryBodySchema = z
+  .object({
+    summaryUserFacing: z.string().trim().min(1).max(20_000),
+    summaryTechnical: z.string().trim().max(20_000).nullable().optional(),
+  })
+  .strict();
+
+const patchProductAreaBodySchema = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+
 const repoContentsQuerySchema = z.object({
   path: z.string().max(2048).optional().default(""),
   ref: z.string().min(1).max(255).optional(),
@@ -185,7 +240,13 @@ const loadWorkspaceForMember = async (
   const rows = await db
     .select(workspaceRowSelect)
     .from(workspacesTable)
-    .where(and(eq(workspacesTable.teamId, team.teamId), eq(workspacesTable.slug, slug)))
+    .where(
+      and(
+        eq(workspacesTable.teamId, team.teamId),
+        eq(workspacesTable.slug, slug),
+        workspaceVisibilityCondition({ userId, role: team.role }),
+      ),
+    )
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
@@ -204,10 +265,15 @@ const buildWorkspaceDiagnostics = (input: {
   repoFullName: string | null;
   repoDefaultBranch: string | null;
   hasEnabledDestination: boolean;
+  latestWebhook?: {
+    eventType: string;
+    receivedAt: Date;
+  } | null;
   settings:
     | {
         pushSummaryBranches?: string[] | null;
         releaseProjectKind: string | null;
+        releaseVersionStrategy: string | null;
         releaseVersionFilePath: string | null;
         releaseVersionBranch: string | null;
       }
@@ -217,14 +283,18 @@ const buildWorkspaceDiagnostics = (input: {
   const defaultBranch = input.repoDefaultBranch?.trim() || "main";
   const settings = input.settings;
   const destinationConnected = input.hasEnabledDestination;
+  const webhookReceived = input.latestWebhook !== null && input.latestWebhook !== undefined;
 
+  const releaseStrategy = settings?.releaseVersionStrategy ?? "version_file";
   const releaseKind = settings?.releaseProjectKind?.trim() ?? "";
   const releasePath = settings?.releaseVersionFilePath?.trim() ?? "";
   const releaseBranch = settings?.releaseVersionBranch?.trim() ?? "";
   const pushBranches = (settings?.pushSummaryBranches ?? [])
     .map((b) => b.trim())
     .filter((b) => b.length > 0);
-  const releaseSourceConfigured = releaseKind.length > 0 && releasePath.length > 0;
+  const releaseSourceConfigured =
+    releaseStrategy !== "version_file" ||
+    (releaseKind.length > 0 && releasePath.length > 0);
 
   const issues: WorkspaceDiagnosticsIssue[] = [];
 
@@ -242,7 +312,14 @@ const buildWorkspaceDiagnostics = (input: {
       message: "Connect an output destination (e.g. Notion) to publish summaries.",
     });
   }
-  if (releaseSourceConfigured && !releaseBranch) {
+  if (repo.length > 0 && !webhookReceived) {
+    issues.push({
+      code: "github_webhook_not_received",
+      severity: "warning",
+      message: "Waiting for the first GitHub event for this repository.",
+    });
+  }
+  if (releaseStrategy === "version_file" && releaseSourceConfigured && !releaseBranch) {
     issues.push({
       code: "release_branch_missing",
       severity: "error",
@@ -253,13 +330,15 @@ const buildWorkspaceDiagnostics = (input: {
     issues.push({
       code: "release_version_source_missing",
       severity: "warning",
-      message: "Set a release version source (project kind + file) to enable version summaries.",
+      message: "Set a release version source to enable version summaries.",
     });
   }
 
   const prSummaryReady = repo.length > 0 && destinationConnected;
   const releaseSummaryReady =
-    prSummaryReady && releaseSourceConfigured && releaseBranch.length > 0;
+    prSummaryReady &&
+    releaseSourceConfigured &&
+    (releaseStrategy !== "version_file" || releaseBranch.length > 0);
   const pushSummaryReady = repo.length > 0 && destinationConnected && pushBranches.length > 0;
 
   return {
@@ -273,6 +352,7 @@ const buildWorkspaceDiagnostics = (input: {
     checks: {
       repoLinked: repo.length > 0,
       destinationConnected,
+      webhookReceived,
       prSummaryReady,
       releaseSummaryReady,
       pushSummaryReady,
@@ -281,6 +361,11 @@ const buildWorkspaceDiagnostics = (input: {
       prBaseBranches: [defaultBranch],
       releaseBranch: defaultBranch,
       pushBranches: [defaultBranch],
+    },
+    webhook: {
+      received: webhookReceived,
+      lastReceivedAt: input.latestWebhook?.receivedAt.toISOString() ?? null,
+      eventType: input.latestWebhook?.eventType ?? null,
     },
     issues,
   };
@@ -298,6 +383,26 @@ const hasEnabledDestination = async (db: Database, workspaceId: string): Promise
     )
     .limit(1);
   return rows.length > 0;
+};
+
+const findLatestWebhookForRepo = async (
+  db: Database,
+  repoFullName: string | null,
+): Promise<{ eventType: string; receivedAt: Date } | null> => {
+  const repo = repoFullName?.trim();
+  if (!repo) return null;
+  const rows = await db
+    .select({
+      eventType: webhookEventsTable.eventType,
+      receivedAt: webhookEventsTable.receivedAt,
+    })
+    .from(webhookEventsTable)
+    .where(
+      sql`${webhookEventsTable.payload} -> 'repository' ->> 'full_name' = ${repo}`,
+    )
+    .orderBy(desc(webhookEventsTable.receivedAt))
+    .limit(1);
+  return rows[0] ?? null;
 };
 
 export const handler = async (
@@ -329,10 +434,293 @@ export const handler = async (
     const rows = await input.db
       .select(workspaceRowSelect)
       .from(workspacesTable)
-      .where(eq(workspacesTable.teamId, team.context.teamId))
+      .where(
+        and(
+          eq(workspacesTable.teamId, team.context.teamId),
+          workspaceVisibilityCondition({ userId: session.userId, role: team.context.role }),
+        ),
+      )
       .orderBy(desc(workspacesTable.createdAt));
 
     return reply.send({ workspaces: [...rows] });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/access", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+
+    const [members, grantRows] = await Promise.all([
+      input.db
+        .select({
+          userId: teamMembersTable.userId,
+          name: usersTable.name,
+          email: usersTable.email,
+          picture: usersTable.picture,
+        })
+        .from(teamMembersTable)
+        .innerJoin(usersTable, eq(usersTable.id, teamMembersTable.userId))
+        .where(
+          and(
+            eq(teamMembersTable.teamId, loaded.team.teamId),
+            eq(teamMembersTable.role, "member"),
+          ),
+        )
+        .orderBy(usersTable.name, usersTable.email),
+      input.db
+        .select({ userId: workspaceMemberAccessTable.userId })
+        .from(workspaceMemberAccessTable)
+        .where(eq(workspaceMemberAccessTable.workspaceId, loaded.workspace.id)),
+    ]);
+    const granted = new Set(grantRows.map((row) => row.userId));
+    return reply.send({
+      access: {
+        mode: loaded.workspace.memberAccess,
+        members: members.map((member) => ({
+          ...member,
+          hasAccess: granted.has(member.userId),
+        })),
+      },
+    });
+  });
+
+  instance.patch("/api/me/workspaces/by-slug/:slug/access", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) {
+      return reply.status(401).send({ error: "invalid_session" });
+    }
+    const parsed = patchWorkspaceAccessBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: "invalid_body" });
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+
+    const requestedIds = [...new Set(parsed.data.memberUserIds)];
+    const memberRows = await input.db
+      .select({ userId: teamMembersTable.userId })
+      .from(teamMembersTable)
+      .where(
+        and(
+          eq(teamMembersTable.teamId, loaded.team.teamId),
+          eq(teamMembersTable.role, "member"),
+        ),
+      );
+    const validIds = new Set(memberRows.map((row) => row.userId));
+    if (requestedIds.some((userId) => !validIds.has(userId))) {
+      return reply.status(400).send({ error: "invalid_workspace_access_members" });
+    }
+
+    await input.db.transaction(async (tx) => {
+      await tx
+        .update(workspacesTable)
+        .set({ memberAccess: parsed.data.mode, updatedAt: new Date() })
+        .where(eq(workspacesTable.id, loaded.workspace.id));
+      await tx
+        .delete(workspaceMemberAccessTable)
+        .where(eq(workspaceMemberAccessTable.workspaceId, loaded.workspace.id));
+      if (parsed.data.mode === "restricted" && requestedIds.length > 0) {
+        await tx.insert(workspaceMemberAccessTable).values(
+          requestedIds.map((userId) => ({
+            workspaceId: loaded.workspace.id,
+            userId,
+            grantedByUserId: session.userId,
+          })),
+        );
+      }
+    });
+    if (input.auditRecorder !== undefined) {
+      try {
+        await input.auditRecorder({
+          teamId: loaded.team.teamId,
+          actorUserId: session.userId,
+          action: "workspace_access_changed",
+          targetType: "workspace",
+          targetId: loaded.workspace.id,
+          targetLabel: loaded.workspace.name,
+          metadata: {
+            mode: parsed.data.mode,
+            grantedMembers: parsed.data.mode === "restricted" ? requestedIds.length : 0,
+          },
+        });
+      } catch (error) {
+        request.log.warn({ err: error }, "Failed to record workspace access audit event");
+      }
+    }
+    return reply.send({
+      access: {
+        mode: parsed.data.mode,
+        memberUserIds: parsed.data.mode === "restricted" ? requestedIds : [],
+      },
+    });
+  });
+
+  instance.get("/api/me/workspaces/by-slug/:slug/retention", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) return reply.status(401).send({ error: "invalid_session" });
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+    const parsedQuery = workspaceRetentionQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) return reply.status(400).send({ error: "invalid_query" });
+    const rows = await input.db
+      .select({
+        retentionDays: workspaceSettingsTable.sourceDataRetentionDays,
+        lastRunAt: workspaceSettingsTable.retentionLastRunAt,
+      })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, loaded.workspace.id))
+      .limit(1);
+    const row = rows[0];
+    const parsedDays = sourceDataRetentionDaysSchema.safeParse(row?.retentionDays);
+    const retentionDays = parsedDays.success ? parsedDays.data : null;
+    const previewRetentionDays =
+      parsedQuery.data.retentionDays === undefined
+        ? retentionDays
+        : parsedQuery.data.retentionDays === "forever"
+          ? null
+          : sourceDataRetentionDaysSchema.parse(Number(parsedQuery.data.retentionDays));
+    const preview = await loadWorkspaceRetentionPreview({
+      db: input.db,
+      workspaceId: loaded.workspace.id,
+      repoFullName: loaded.workspace.repoFullName,
+      retentionDays: previewRetentionDays,
+    });
+    return reply.send({
+      retention: {
+        retentionDays,
+        lastRunAt: row?.lastRunAt ?? null,
+        preview,
+      },
+    });
+  });
+
+  instance.patch("/api/me/workspaces/by-slug/:slug/retention", async (request, reply) => {
+    const token = readBearerToken(request.headers.authorization);
+    if (token === null) {
+      return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+    }
+    const session = verifySessionJwt(token, input.jwtSecret);
+    if (session === null) return reply.status(401).send({ error: "invalid_session" });
+    const parsed = patchWorkspaceRetentionBodySchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: "invalid_body" });
+    const params = request.params as { slug?: string };
+    const loaded = await loadWorkspaceForMember(
+      input.db,
+      session.userId,
+      readTeamIdHeader(request.headers),
+      params.slug ?? "",
+    );
+    if (loaded.kind === "invalid_team") return reply.status(400).send({ error: "invalid_team" });
+    if (loaded.kind === "not_a_member") return reply.status(403).send({ error: "not_a_team_member" });
+    if (loaded.kind === "invalid_slug") return reply.status(400).send({ error: "invalid_slug" });
+    if (loaded.kind === "not_found") return reply.status(404).send({ error: "workspace_not_found" });
+    if (!canWriteWorkspaces(loaded.team.role)) {
+      return reply.status(403).send({ error: "insufficient_role" });
+    }
+
+    const now = new Date();
+    const existing = await input.db
+      .select({ id: workspaceSettingsTable.id })
+      .from(workspaceSettingsTable)
+      .where(eq(workspaceSettingsTable.workspaceId, loaded.workspace.id))
+      .limit(1);
+    if (existing[0] === undefined) {
+      await input.db.insert(workspaceSettingsTable).values({
+        workspaceId: loaded.workspace.id,
+        sourceDataRetentionDays: parsed.data.retentionDays,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await input.db
+        .update(workspaceSettingsTable)
+        .set({ sourceDataRetentionDays: parsed.data.retentionDays, updatedAt: now })
+        .where(eq(workspaceSettingsTable.id, existing[0].id));
+    }
+    await scheduleWorkspaceRetention({
+      db: input.db,
+      workspaceId: loaded.workspace.id,
+      retentionDays: parsed.data.retentionDays,
+      availableAt: now,
+    });
+    const preview = await loadWorkspaceRetentionPreview({
+      db: input.db,
+      workspaceId: loaded.workspace.id,
+      repoFullName: loaded.workspace.repoFullName,
+      retentionDays: parsed.data.retentionDays,
+      now,
+    });
+    if (input.auditRecorder !== undefined) {
+      try {
+        await input.auditRecorder({
+          teamId: loaded.team.teamId,
+          actorUserId: session.userId,
+          action: "workspace_retention_changed",
+          targetType: "workspace",
+          targetId: loaded.workspace.id,
+          targetLabel: loaded.workspace.name,
+          metadata: { retentionDays: parsed.data.retentionDays },
+        });
+      } catch (error) {
+        request.log.warn({ err: error }, "Failed to record workspace retention audit event");
+      }
+    }
+    return reply.send({
+      retention: {
+        retentionDays: parsed.data.retentionDays,
+        lastRunAt: null,
+        preview,
+      },
+    });
   });
 
   instance.get("/api/me/workspaces/by-slug/:slug/summary", async (request, reply) => {
@@ -440,6 +828,14 @@ export const handler = async (
   const previewOf = (text: string | null, max = 280): string | null => {
     if (text === null) return null;
     return text.length > max ? `${text.slice(0, max)}…` : text;
+  };
+  const wasDelivered = (pageId: string | null): boolean =>
+    Boolean(pageId?.trim());
+  const versionTitle = (shortVersion: string, buildVersion: string): string => {
+    const build = buildVersion.trim();
+    return build.length > 0
+      ? `Version ${shortVersion} (${build})`
+      : `Version ${shortVersion}`;
   };
 
   instance.get("/api/me/workspaces/by-slug/:slug/summaries", async (request, reply) => {
@@ -576,7 +972,7 @@ export const handler = async (
           prNumber: r.prNumber,
           commitCount: null,
           shortVersion: null,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
         });
       }
     }
@@ -628,7 +1024,7 @@ export const handler = async (
           prNumber: null,
           commitCount: r.commitCount,
           shortVersion: null,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
         });
       }
     }
@@ -665,7 +1061,7 @@ export const handler = async (
         items.push({
           id: r.id,
           type: "version",
-          title: `Version ${r.shortVersion} (${r.buildVersion})`,
+          title: versionTitle(r.shortVersion, r.buildVersion),
           timestamp: r.createdAt,
           author: null,
           branch: r.branch,
@@ -676,7 +1072,7 @@ export const handler = async (
           prNumber: null,
           commitCount: null,
           shortVersion: r.shortVersion,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
         });
       }
     }
@@ -775,6 +1171,55 @@ export const handler = async (
         prNumbers: null as number[] | null,
         sections: null as Record<string, unknown> | null,
       };
+      const loadEvidence = async (sourceRecordType: string) =>
+        input.db
+          .select({
+            id: changeEvidenceTable.id,
+            kind: changeEvidenceTable.kind,
+            externalId: changeEvidenceTable.externalId,
+            url: changeEvidenceTable.url,
+            sha: changeEvidenceTable.sha,
+            path: changeEvidenceTable.path,
+            occurredAt: changeEvidenceTable.occurredAt,
+          })
+          .from(changeEvidenceTable)
+          .where(
+            and(
+              eq(changeEvidenceTable.sourceRecordType, sourceRecordType),
+              eq(changeEvidenceTable.sourceRecordId, id),
+            ),
+          )
+          .orderBy(desc(changeEvidenceTable.occurredAt), desc(changeEvidenceTable.id));
+      const loadLatestCorrection = async (sourceRecordType: string) => {
+        const rows = await input.db
+          .select({
+            correctedAt: summaryCorrectionsTable.createdAt,
+            correctedByUserId: summaryCorrectionsTable.editedByUserId,
+            correctedByName: usersTable.name,
+            correctedByEmail: usersTable.email,
+          })
+          .from(summaryCorrectionsTable)
+          .innerJoin(usersTable, eq(usersTable.id, summaryCorrectionsTable.editedByUserId))
+          .where(
+            and(
+              eq(summaryCorrectionsTable.sourceRecordType, sourceRecordType),
+              eq(summaryCorrectionsTable.sourceRecordId, id),
+            ),
+          )
+          .orderBy(desc(summaryCorrectionsTable.createdAt))
+          .limit(1);
+        const correction = rows[0];
+        return correction === undefined
+          ? null
+          : {
+              correctedAt: correction.correctedAt.toISOString(),
+              correctedBy: {
+                id: correction.correctedByUserId,
+                name: correction.correctedByName,
+                email: correction.correctedByEmail,
+              },
+            };
+      };
 
       if (type === "pr") {
         const rows = await input.db
@@ -802,6 +1247,10 @@ export const handler = async (
         if (r === undefined) {
           return reply.status(404).send({ error: "summary_not_found" });
         }
+        const [evidence, correction] = await Promise.all([
+          loadEvidence("pull_requests"),
+          loadLatestCorrection("pull_requests"),
+        ]);
         return reply.send({
           summary: {
             ...base,
@@ -818,9 +1267,14 @@ export const handler = async (
             additions: r.additions,
             deletions: r.deletions,
             changedFiles: r.changedFiles,
-            delivered: r.notionPageId !== null,
+            delivered: wasDelivered(r.notionPageId),
             prNumber: r.prNumber,
             headSha: r.headSha,
+            evidence: evidence.map((item) => ({
+              ...item,
+              occurredAt: item.occurredAt.toISOString(),
+            })),
+            correction,
           },
         });
       }
@@ -852,6 +1306,10 @@ export const handler = async (
         if (r === undefined) {
           return reply.status(404).send({ error: "summary_not_found" });
         }
+        const [evidence, correction] = await Promise.all([
+          loadEvidence("pushes"),
+          loadLatestCorrection("pushes"),
+        ]);
         return reply.send({
           summary: {
             ...base,
@@ -868,10 +1326,15 @@ export const handler = async (
             additions: r.additions,
             deletions: r.deletions,
             changedFiles: r.changedFiles,
-            delivered: r.notionPageId !== null,
+            delivered: wasDelivered(r.notionPageId),
             commitCount: r.commitCount,
             compareUrl: r.compareUrl,
             prNumbers: r.prNumbers,
+            evidence: evidence.map((item) => ({
+              ...item,
+              occurredAt: item.occurredAt.toISOString(),
+            })),
+            correction,
           },
         });
       }
@@ -896,12 +1359,16 @@ export const handler = async (
       if (r === undefined) {
         return reply.status(404).send({ error: "summary_not_found" });
       }
+      const [evidence, correction] = await Promise.all([
+        loadEvidence("releases"),
+        loadLatestCorrection("releases"),
+      ]);
       return reply.send({
         summary: {
           ...base,
           id: r.id,
           type: "version",
-          title: `Version ${r.shortVersion} (${r.buildVersion})`,
+          title: versionTitle(r.shortVersion, r.buildVersion),
           timestamp: r.createdAt.toISOString(),
           author: null,
           branch: r.branch,
@@ -912,14 +1379,282 @@ export const handler = async (
           additions: null,
           deletions: null,
           changedFiles: null,
-          delivered: r.notionPageId !== null,
+          delivered: wasDelivered(r.notionPageId),
           shortVersion: r.shortVersion,
-          buildVersion: r.buildVersion,
+          buildVersion: r.buildVersion.trim() || null,
           headSha: r.headSha,
           prNumbers: r.prNumbers,
           sections: r.sections ?? null,
+          evidence: evidence.map((item) => ({
+            ...item,
+            occurredAt: item.occurredAt.toISOString(),
+          })),
+          correction,
         },
       });
+    },
+  );
+
+  instance.patch(
+    "/api/me/workspaces/by-slug/:slug/summaries/:type/:id",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; type?: string; id?: string };
+      const type = params.type ?? "";
+      const id = params.id ?? "";
+      if (!isSummaryType(type) || !uuidPattern.test(id)) {
+        return reply.status(400).send({ error: "invalid_summary_reference" });
+      }
+      const parsedBody = patchSummaryBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.status(400).send({ error: "invalid_body" });
+      }
+
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(loaded.team.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+      const repo = loaded.workspace.repoFullName?.trim();
+      if (!repo) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+
+      const now = new Date();
+      const body = parsedBody.data;
+      let beforeUserFacing: string | null;
+      let beforeTechnical: string | null;
+      let sourceRecordType: string;
+      let updated: Array<{ id: string }>;
+      if (type === "pr") {
+        const current = await input.db
+          .select({
+            summaryUserFacing: pullRequestsTable.summaryUserFacing,
+            summaryTechnical: pullRequestsTable.summaryTechnical,
+          })
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .limit(1);
+        if (current[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        beforeUserFacing = current[0].summaryUserFacing;
+        beforeTechnical = current[0].summaryTechnical;
+        sourceRecordType = "pull_requests";
+        updated = await input.db
+          .update(pullRequestsTable)
+          .set({
+            summaryUserFacing: body.summaryUserFacing,
+            summaryTechnical: body.summaryTechnical,
+            updatedAt: now,
+          })
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .returning({ id: pullRequestsTable.id });
+      } else if (type === "push") {
+        const current = await input.db
+          .select({
+            summaryUserFacing: pushesTable.summaryUserFacing,
+            summaryTechnical: pushesTable.summaryTechnical,
+          })
+          .from(pushesTable)
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .limit(1);
+        if (current[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        beforeUserFacing = current[0].summaryUserFacing;
+        beforeTechnical = current[0].summaryTechnical;
+        sourceRecordType = "pushes";
+        updated = await input.db
+          .update(pushesTable)
+          .set({
+            summaryUserFacing: body.summaryUserFacing,
+            summaryTechnical: body.summaryTechnical,
+            updatedAt: now,
+          })
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .returning({ id: pushesTable.id });
+      } else {
+        const current = await input.db
+          .select({ changelog: releasesTable.changelog })
+          .from(releasesTable)
+          .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+          .limit(1);
+        if (current[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        beforeUserFacing = current[0].changelog;
+        beforeTechnical = null;
+        sourceRecordType = "releases";
+        updated = await input.db
+          .update(releasesTable)
+          .set({ changelog: body.summaryUserFacing, updatedAt: now })
+          .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+          .returning({ id: releasesTable.id });
+      }
+
+      if (updated.length === 0) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+      await input.db.insert(summaryCorrectionsTable).values({
+        workspaceId: loaded.workspace.id,
+        sourceRecordType,
+        sourceRecordId: id,
+        editedByUserId: session.userId,
+        beforeUserFacing,
+        beforeTechnical,
+        afterUserFacing: body.summaryUserFacing,
+        afterTechnical: type === "version" ? null : (body.summaryTechnical ?? null),
+        createdAt: now,
+      });
+      return reply.send({ updated: true, updatedAt: now.toISOString() });
+    },
+  );
+
+  instance.post(
+    "/api/me/workspaces/by-slug/:slug/summaries/:type/:id/regenerate",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; type?: string; id?: string };
+      const type = params.type ?? "";
+      const id = params.id ?? "";
+      if (!isSummaryType(type) || !uuidPattern.test(id)) {
+        return reply.status(400).send({ error: "invalid_summary_reference" });
+      }
+
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(loaded.team.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+
+      const repo = loaded.workspace.repoFullName?.trim();
+      if (repo === undefined || repo.length === 0) {
+        return reply.status(404).send({ error: "summary_not_found" });
+      }
+
+      let jobType: "process_pr" | "process_push" | "process_release";
+      let payload: Record<string, unknown>;
+      if (type === "pr") {
+        const rows = await input.db
+          .select({ prNumber: pullRequestsTable.prNumber })
+          .from(pullRequestsTable)
+          .where(and(eq(pullRequestsTable.id, id), eq(pullRequestsTable.repo, repo)))
+          .limit(1);
+        if (rows[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        jobType = "process_pr";
+        payload = { repo, prNumber: rows[0].prNumber, force: true };
+      } else if (type === "push") {
+        const rows = await input.db
+          .select({
+            beforeSha: pushesTable.beforeSha,
+            afterSha: pushesTable.afterSha,
+            branch: pushesTable.branch,
+            pusher: pushesTable.pusher,
+            pushedAt: pushesTable.pushedAt,
+          })
+          .from(pushesTable)
+          .where(and(eq(pushesTable.id, id), eq(pushesTable.repo, repo)))
+          .limit(1);
+        if (rows[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        jobType = "process_push";
+        payload = {
+          repo,
+          beforeSha: rows[0].beforeSha,
+          afterSha: rows[0].afterSha,
+          branch: rows[0].branch,
+          pusher: rows[0].pusher,
+          pushedAt: rows[0].pushedAt.toISOString(),
+          force: true,
+        };
+      } else {
+        const rows = await input.db
+          .select({
+            beforeSha: releasesTable.beforeSha,
+            afterSha: releasesTable.headSha,
+            branch: releasesTable.branch,
+            releasedAt: releasesTable.createdAt,
+          })
+          .from(releasesTable)
+          .where(and(eq(releasesTable.id, id), eq(releasesTable.repo, repo)))
+          .limit(1);
+        if (rows[0] === undefined) {
+          return reply.status(404).send({ error: "summary_not_found" });
+        }
+        jobType = "process_release";
+        payload = {
+          repo,
+          beforeSha: rows[0].beforeSha,
+          afterSha: rows[0].afterSha,
+          branch: rows[0].branch,
+          releasedAt: rows[0].releasedAt.toISOString(),
+          force: true,
+        };
+      }
+
+      const now = new Date();
+      await input.db.insert(jobsTable).values({
+        type: jobType,
+        payload,
+        status: "pending",
+        attempts: 0,
+        availableAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return reply.status(202).send({ queued: true, type });
     },
   );
 
@@ -1051,9 +1786,13 @@ export const handler = async (
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
+        releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
+        historyExcludedPaths: workspaceSettingsTable.historyExcludedPaths,
+        historyExcludedActors: workspaceSettingsTable.historyExcludedActors,
+        summaryLanguage: workspaceSettingsTable.summaryLanguage,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -1063,12 +1802,140 @@ export const handler = async (
       settings: {
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
         prSummaryBaseBranches: row?.prSummaryBaseBranches ?? null,
+        releaseVersionStrategy: row?.releaseVersionStrategy ?? "version_file",
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
+        historyExcludedPaths:
+          row?.historyExcludedPaths ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: row?.historyExcludedActors ?? [],
+        summaryLanguage: row?.summaryLanguage ?? "auto",
       },
     });
   });
+
+  instance.get(
+    "/api/me/workspaces/by-slug/:slug/product-areas",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string };
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+
+      const areas = await input.db
+        .select({
+          id: productAreasTable.id,
+          name: productAreasTable.name,
+          slug: productAreasTable.slug,
+          rules: productAreasTable.rules,
+          updatedAt: productAreasTable.updatedAt,
+          changeCount: count(changeAreasTable.changeId).mapWith(Number),
+        })
+        .from(productAreasTable)
+        .innerJoin(changeAreasTable, eq(changeAreasTable.areaId, productAreasTable.id))
+        .where(eq(productAreasTable.workspaceId, loaded.workspace.id))
+        .groupBy(
+          productAreasTable.id,
+          productAreasTable.name,
+          productAreasTable.slug,
+          productAreasTable.rules,
+          productAreasTable.updatedAt,
+        )
+        .orderBy(productAreasTable.name);
+
+      return reply.send({ areas });
+    },
+  );
+
+  instance.patch(
+    "/api/me/workspaces/by-slug/:slug/product-areas/:areaId",
+    async (request, reply) => {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) {
+        return reply.status(401).send({ error: "missing_or_invalid_authorization" });
+      }
+      const session = verifySessionJwt(token, input.jwtSecret);
+      if (session === null) {
+        return reply.status(401).send({ error: "invalid_session" });
+      }
+
+      const params = request.params as { slug?: string; areaId?: string };
+      const loaded = await loadWorkspaceForMember(
+        input.db,
+        session.userId,
+        readTeamIdHeader(request.headers),
+        params.slug ?? "",
+      );
+      if (loaded.kind === "invalid_team") {
+        return reply.status(400).send({ error: "invalid_team" });
+      }
+      if (loaded.kind === "not_a_member") {
+        return reply.status(403).send({ error: "not_a_team_member" });
+      }
+      if (loaded.kind === "invalid_slug") {
+        return reply.status(400).send({ error: "invalid_slug" });
+      }
+      if (loaded.kind === "not_found") {
+        return reply.status(404).send({ error: "workspace_not_found" });
+      }
+      if (!canWriteWorkspaces(loaded.team.role)) {
+        return reply.status(403).send({ error: "insufficient_role" });
+      }
+
+      const parsedAreaId = workspaceIdParamSchema.safeParse(params.areaId);
+      const parsedBody = patchProductAreaBodySchema.safeParse(request.body);
+      if (!parsedAreaId.success || !parsedBody.success) {
+        return reply.status(400).send({ error: "invalid_body" });
+      }
+
+      const rows = await input.db
+        .update(productAreasTable)
+        .set({ name: parsedBody.data.name, updatedAt: new Date() })
+        .where(
+          and(
+            eq(productAreasTable.id, parsedAreaId.data),
+            eq(productAreasTable.workspaceId, loaded.workspace.id),
+          ),
+        )
+        .returning({
+          id: productAreasTable.id,
+          name: productAreasTable.name,
+          slug: productAreasTable.slug,
+          rules: productAreasTable.rules,
+          updatedAt: productAreasTable.updatedAt,
+        });
+      const area = rows[0];
+      if (area === undefined) {
+        return reply.status(404).send({ error: "product_area_not_found" });
+      }
+
+      return reply.send({ area });
+    },
+  );
 
   instance.get("/api/me/workspaces/by-slug/:slug/diagnostics", async (request, reply) => {
     const token = readBearerToken(request.headers.authorization);
@@ -1105,6 +1972,7 @@ export const handler = async (
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
+        releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -1112,10 +1980,15 @@ export const handler = async (
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
       .limit(1);
+    const [destinationConnected, latestWebhook] = await Promise.all([
+      hasEnabledDestination(input.db, wsId),
+      findLatestWebhookForRepo(input.db, loaded.workspace.repoFullName),
+    ]);
     const diagnostics = buildWorkspaceDiagnostics({
       repoFullName: loaded.workspace.repoFullName,
       repoDefaultBranch: loaded.workspace.repoDefaultBranch,
-      hasEnabledDestination: await hasEnabledDestination(input.db, wsId),
+      hasEnabledDestination: destinationConnected,
+      latestWebhook,
       settings: rows[0],
     });
     return reply.send({ diagnostics });
@@ -1188,6 +2061,7 @@ export const handler = async (
       const settingsRows = await input.db
         .select({
           pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
+          releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
           releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
           releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
           releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
@@ -1422,12 +2296,31 @@ export const handler = async (
           ? null
           : patch.prSummaryBaseBranches.map((b) => b.trim()).filter((b) => b.length > 0);
 
+    const mapHistoryList = (
+      value: string[] | null | undefined,
+      fallback: readonly string[],
+    ): string[] | undefined => {
+      if (value === undefined) {
+        return undefined;
+      }
+      if (value === null) {
+        return [...fallback];
+      }
+      return [...new Set(value.map((entry) => entry.trim()).filter((entry) => entry.length > 0))];
+    };
+    const nextHistoryExcludedPaths = mapHistoryList(
+      patch.historyExcludedPaths,
+      DEFAULT_HISTORY_EXCLUDED_PATHS,
+    );
+    const nextHistoryExcludedActors = mapHistoryList(patch.historyExcludedActors, []);
+
     const nonBlankOrNull = (s: string | null): string | null => {
       const t = s?.trim();
       return t && t.length > 0 ? t : null;
     };
 
     let releasePatch: {
+      releaseVersionStrategy?: "version_file" | "git_tag" | "github_release";
       releaseProjectKind?: string | null;
       releaseVersionFilePath?: string | null;
       releaseInfoPlistPath?: string | null;
@@ -1436,9 +2329,24 @@ export const handler = async (
       releaseVersionBranch?: string | null;
     } = {};
 
+    if (patch.releaseVersionStrategy !== undefined) {
+      releasePatch.releaseVersionStrategy = patch.releaseVersionStrategy;
+      if (patch.releaseVersionStrategy !== "version_file") {
+        releasePatch = {
+          ...releasePatch,
+          releaseProjectKind: null,
+          releaseVersionFilePath: null,
+          releaseInfoPlistPath: null,
+          releaseProjectPbxprojPath: null,
+          releaseExpoAppConfigPath: null,
+        };
+      }
+    }
+
     if (patch.releaseProjectKind !== undefined && patch.releaseVersionFilePath !== undefined) {
       if (patch.releaseProjectKind === null && patch.releaseVersionFilePath === null) {
         releasePatch = {
+          ...releasePatch,
           releaseProjectKind: null,
           releaseVersionFilePath: null,
           releaseInfoPlistPath: null,
@@ -1451,6 +2359,7 @@ export const handler = async (
           patch.releaseVersionFilePath,
         );
         releasePatch = {
+          ...releasePatch,
           releaseProjectKind: patch.releaseProjectKind,
           releaseVersionFilePath: patch.releaseVersionFilePath.trim(),
           releaseInfoPlistPath: nonBlankOrNull(applied.releaseInfoPlistPath),
@@ -1478,6 +2387,15 @@ export const handler = async (
           ...(nextPrBaseBranches !== undefined
             ? { prSummaryBaseBranches: nextPrBaseBranches }
             : {}),
+          ...(nextHistoryExcludedPaths !== undefined
+            ? { historyExcludedPaths: nextHistoryExcludedPaths }
+            : {}),
+          ...(nextHistoryExcludedActors !== undefined
+            ? { historyExcludedActors: nextHistoryExcludedActors }
+            : {}),
+          ...(patch.summaryLanguage !== undefined
+            ? { summaryLanguage: patch.summaryLanguage }
+            : {}),
           ...releasePatch,
           updatedAt: now,
         })
@@ -1487,6 +2405,15 @@ export const handler = async (
         workspaceId: wsId,
         pushSummaryBranches: nextPushBranches === undefined ? null : nextPushBranches,
         prSummaryBaseBranches: nextPrBaseBranches === undefined ? null : nextPrBaseBranches,
+        historyExcludedPaths:
+          nextHistoryExcludedPaths === undefined
+            ? [...DEFAULT_HISTORY_EXCLUDED_PATHS]
+            : nextHistoryExcludedPaths,
+        historyExcludedActors:
+          nextHistoryExcludedActors === undefined ? [] : nextHistoryExcludedActors,
+        summaryLanguage: patch.summaryLanguage ?? "auto",
+        releaseVersionStrategy:
+          releasePatch.releaseVersionStrategy ?? "version_file",
         releaseProjectKind:
           releasePatch.releaseProjectKind === undefined ? null : releasePatch.releaseProjectKind,
         releaseVersionFilePath:
@@ -1514,9 +2441,13 @@ export const handler = async (
       .select({
         pushSummaryBranches: workspaceSettingsTable.pushSummaryBranches,
         prSummaryBaseBranches: workspaceSettingsTable.prSummaryBaseBranches,
+        releaseVersionStrategy: workspaceSettingsTable.releaseVersionStrategy,
         releaseProjectKind: workspaceSettingsTable.releaseProjectKind,
         releaseVersionFilePath: workspaceSettingsTable.releaseVersionFilePath,
         releaseVersionBranch: workspaceSettingsTable.releaseVersionBranch,
+        historyExcludedPaths: workspaceSettingsTable.historyExcludedPaths,
+        historyExcludedActors: workspaceSettingsTable.historyExcludedActors,
+        summaryLanguage: workspaceSettingsTable.summaryLanguage,
       })
       .from(workspaceSettingsTable)
       .where(eq(workspaceSettingsTable.workspaceId, wsId))
@@ -1526,9 +2457,14 @@ export const handler = async (
       settings: {
         pushSummaryBranches: row?.pushSummaryBranches ?? null,
         prSummaryBaseBranches: row?.prSummaryBaseBranches ?? null,
+        releaseVersionStrategy: row?.releaseVersionStrategy ?? "version_file",
         releaseProjectKind: row?.releaseProjectKind ?? null,
         releaseVersionFilePath: row?.releaseVersionFilePath ?? null,
         releaseVersionBranch: row?.releaseVersionBranch ?? null,
+        historyExcludedPaths:
+          row?.historyExcludedPaths ?? [...DEFAULT_HISTORY_EXCLUDED_PATHS],
+        historyExcludedActors: row?.historyExcludedActors ?? [],
+        summaryLanguage: row?.summaryLanguage ?? "auto",
       },
     });
   });
@@ -1824,25 +2760,12 @@ export const handler = async (
       return reply.status(404).send({ error: "workspace_not_found" });
     }
 
-    // Wipe the repo's summary history so a recreated workspace reprocesses from scratch.
-    // Summary tables are keyed on `repo` only (no workspace FK); `(provider, repo)` uniqueness
-    // guarantees a single workspace owns the repo, so deleting by repo name is safe today.
-    const repo = ownedRow.repoFullName?.trim();
-    if (repo !== undefined && repo.length > 0) {
-      await input.db.delete(pullRequestsTable).where(eq(pullRequestsTable.repo, repo));
-      await input.db.delete(releasesTable).where(eq(releasesTable.repo, repo));
-      await input.db.delete(pushesTable).where(eq(pushesTable.repo, repo));
-    }
-
-    // Delete the workspace last (workspace_settings cascades via FK).
-    await input.db
-      .delete(workspacesTable)
-      .where(
-        and(
-          eq(workspacesTable.id, workspaceId),
-          eq(workspacesTable.teamId, team.context.teamId),
-        ),
-      );
+    await deleteWorkspaceData({
+      db: input.db,
+      workspaceId,
+      teamId: team.context.teamId,
+      repoFullName: ownedRow.repoFullName,
+    });
 
     return reply.status(204).send();
   });

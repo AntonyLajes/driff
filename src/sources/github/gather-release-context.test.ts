@@ -1,7 +1,10 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
-import { execute, extractPrNumbersFromCommitMessages } from "@/sources/github/gather-release-context.js";
+import {
+  execute,
+  extractPrNumbersFromCommitMessages,
+} from "@/sources/github/gather-release-context.js";
 import type { OctokitLike } from "@/sources/github/github-installation.js";
 
 const plistForBuild = (build: string, short = "1.0.0"): string => {
@@ -22,7 +25,10 @@ const buildPrivateKey = (): string => {
   return privateKey.export({ format: "pem", type: "pkcs1" }).toString();
 };
 
-const buildAppOctokitMock = (installationId: number, token: string): OctokitLike => {
+const buildAppOctokitMock = (
+  installationId: number,
+  token: string,
+): OctokitLike => {
   const request = (async (route) => {
     if (route === "GET /repos/{owner}/{repo}/installation") {
       return { data: { id: installationId } as unknown };
@@ -69,7 +75,10 @@ describe("sources/github/gather-release-context execute", () => {
           data: {
             total_commits: 1,
             commits: [
-              { sha: "s1", commit: { message: "Merge pull request #5 from a/b" } },
+              {
+                sha: "s1",
+                commit: { message: "Merge pull request #5 from a/b" },
+              },
             ],
             html_url: "https://github.com/o/r/compare/before...after",
             files: [{ filename: "App/Info.plist", status: "modified" }],
@@ -211,6 +220,113 @@ describe("sources/github/gather-release-context execute", () => {
     expect(result.afterVersion).toEqual({ short: "1.2.0", build: "55" });
   });
 
+  it("should read a web release from package.json without a mobile build number", async () => {
+    const appOctokit = buildAppOctokitMock(7, "inst-token");
+    const installationRequest = (async (route, parameters) => {
+      if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+        const ref = (parameters as { ref?: string } | undefined)?.ref;
+        const text = JSON.stringify({
+          name: "web-app",
+          version: ref === "beforebbb" ? "2.0.0" : "2.1.0",
+        });
+        return {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(text, "utf8").toString("base64"),
+          },
+        };
+      }
+      if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
+        return {
+          data: {
+            total_commits: 1,
+            commits: [{ sha: "s1", commit: { message: "feat: web release" } }],
+            html_url: "https://github.com/o/r/compare/before...after",
+            files: [{ filename: "package.json", status: "modified" }],
+          },
+        };
+      }
+      throw new Error(`Unexpected installation route: ${String(route)}`);
+    }) as OctokitLike["request"];
+    const installationOctokit: OctokitLike = {
+      request: installationRequest,
+      pulls: { get: vi.fn(), listFiles: vi.fn() },
+    };
+    const octokitFactory = vi
+      .fn<(auth: string) => OctokitLike>()
+      .mockReturnValueOnce(appOctokit)
+      .mockReturnValueOnce(installationOctokit);
+
+    const result = await execute({
+      appId: "1",
+      privateKey: buildPrivateKey(),
+      repo: "o/r",
+      beforeSha: "beforebbb",
+      afterSha: "afterccc",
+      infoPlistPath: "",
+      releaseProjectKind: "node_package",
+      releaseVersionFilePath: "package.json",
+      octokitFactory,
+    });
+
+    expect(result.previousVersionKey).toBe("2.0.0");
+    expect(result.newVersionKey).toBe("2.1.0");
+    expect(result.afterVersion).toEqual({ short: "2.1.0", build: "" });
+  });
+
+  it("should read a Python release from pyproject.toml", async () => {
+    const appOctokit = buildAppOctokitMock(7, "inst-token");
+    const installationRequest = (async (route, parameters) => {
+      if (route === "GET /repos/{owner}/{repo}/contents/{path}") {
+        const ref = (parameters as { ref?: string } | undefined)?.ref;
+        const version = ref === "beforebbb" ? "1.0.0" : "1.1.0";
+        return {
+          data: {
+            type: "file",
+            encoding: "base64",
+            content: Buffer.from(`[project]\nversion = "${version}"`).toString(
+              "base64",
+            ),
+          },
+        };
+      }
+      if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
+        return {
+          data: {
+            total_commits: 1,
+            commits: [],
+            html_url: "https://github.com/o/r/compare/a...b",
+            files: [{ filename: "pyproject.toml", status: "modified" }],
+          },
+        };
+      }
+      throw new Error(String(route));
+    }) as OctokitLike["request"];
+    const octokitFactory = vi
+      .fn<(auth: string) => OctokitLike>()
+      .mockReturnValueOnce(appOctokit)
+      .mockReturnValueOnce({
+        request: installationRequest,
+        pulls: { get: vi.fn(), listFiles: vi.fn() },
+      });
+
+    const result = await execute({
+      appId: "1",
+      privateKey: buildPrivateKey(),
+      repo: "o/r",
+      beforeSha: "beforebbb",
+      afterSha: "afterccc",
+      infoPlistPath: "",
+      releaseProjectKind: "python_pyproject",
+      releaseVersionFilePath: "pyproject.toml",
+      octokitFactory,
+    });
+
+    expect(result.previousVersionKey).toBe("1.0.0");
+    expect(result.newVersionKey).toBe("1.1.0");
+  });
+
   it("should use compareBeforeSha only for GitHub compare, not for plist reads", async () => {
     const compareBefore = "w".repeat(40);
     const appOctokit = buildAppOctokitMock(7, "inst-token");
@@ -230,7 +346,8 @@ describe("sources/github/gather-release-context execute", () => {
         };
       }
       if (route === "GET /repos/{owner}/{repo}/compare/{basehead}") {
-        const basehead = (parameters as { basehead?: string } | undefined)?.basehead;
+        const basehead = (parameters as { basehead?: string } | undefined)
+          ?.basehead;
         expect(basehead).toBe(`${compareBefore}...afterccc`);
         return {
           data: {
@@ -323,7 +440,10 @@ describe("sources/github/gather-release-context execute", () => {
         infoPlistPath: "p",
         octokitFactory: vi
           .fn()
-          .mockReturnValue({ request: vi.fn(), pulls: { get: vi.fn(), listFiles: vi.fn() } }),
+          .mockReturnValue({
+            request: vi.fn(),
+            pulls: { get: vi.fn(), listFiles: vi.fn() },
+          }),
       }),
     ).rejects.toThrow(/Ref inválida/);
   });

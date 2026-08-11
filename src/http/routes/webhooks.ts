@@ -256,7 +256,10 @@ export const execute = async (
     enqueueSettings.prSummaryBaseBranches,
   );
   if (processPrJobInput) {
-    await input.enqueueProcessPrJob(processPrJobInput);
+    await input.enqueueProcessPrJob({
+      ...processPrJobInput,
+      deliveryId: parsedHeaders.deliveryId,
+    });
   } else {
     const skipReason = getProcessPrSkipReason(
       parsedHeaders.eventType,
@@ -277,7 +280,10 @@ export const execute = async (
     enqueueSettings.releaseConfig,
   );
   if (processReleaseInput) {
-    await input.enqueueProcessReleaseJob(processReleaseInput);
+    await input.enqueueProcessReleaseJob({
+      ...processReleaseInput,
+      deliveryId: parsedHeaders.deliveryId,
+    });
   } else if (parsedHeaders.eventType === "push" && enqueueSettings.releaseConfig) {
     const branch = typeof payload.ref === "string" ? payload.ref : null;
     request.log?.warn?.(
@@ -297,7 +303,10 @@ export const execute = async (
     enqueueSettings.pushConfig,
   );
   if (processPushInput) {
-    await input.enqueueProcessPushJob(processPushInput);
+    await input.enqueueProcessPushJob({
+      ...processPushInput,
+      deliveryId: parsedHeaders.deliveryId,
+    });
   } else if (parsedHeaders.eventType === "push" && enqueueSettings.pushConfig) {
     const branch = typeof payload.ref === "string" ? payload.ref : null;
     request.log?.warn?.(

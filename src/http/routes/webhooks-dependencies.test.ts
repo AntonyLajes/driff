@@ -95,4 +95,74 @@ describe("http/routes/webhooks-dependencies execute", () => {
       }),
     );
   });
+
+  it("should correlate every job type with its webhook delivery", async () => {
+    const { db, values } = buildDbMock([]);
+    const dependencies = execute({ db });
+
+    await dependencies.enqueueProcessPrJob({
+      repo: "acme/app",
+      prNumber: 7,
+      deliveryId: "delivery-pr",
+    });
+    await dependencies.enqueueProcessReleaseJob({
+      repo: "acme/app",
+      beforeSha: "a".repeat(40),
+      afterSha: "b".repeat(40),
+      branch: "main",
+      deliveryId: "delivery-release",
+    });
+    await dependencies.enqueueProcessPushJob({
+      repo: "acme/app",
+      beforeSha: "b".repeat(40),
+      afterSha: "c".repeat(40),
+      branch: "main",
+      pusher: "octocat",
+      pushedAt: "2026-08-09T12:00:00Z",
+      deliveryId: "delivery-push",
+    });
+
+    expect(values).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        payload: {
+          repo: "acme/app",
+          prNumber: 7,
+          deliveryId: "delivery-pr",
+        },
+      }),
+    );
+    expect(values).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        payload: expect.objectContaining({ deliveryId: "delivery-release" }),
+      }),
+    );
+    expect(values).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        payload: expect.objectContaining({ deliveryId: "delivery-push" }),
+      }),
+    );
+  });
+
+  it("should enqueue an uncorrelated push for backward compatibility", async () => {
+    const { db, values } = buildDbMock([]);
+    const dependencies = execute({ db });
+
+    await dependencies.enqueueProcessPushJob({
+      repo: "acme/app",
+      beforeSha: "a".repeat(40),
+      afterSha: "b".repeat(40),
+      branch: "main",
+      pusher: null,
+      pushedAt: null,
+    });
+
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.not.objectContaining({ deliveryId: expect.anything() }),
+      }),
+    );
+  });
 });

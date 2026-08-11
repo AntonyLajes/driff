@@ -23,6 +23,60 @@ const basePush = (overrides: Record<string, unknown> = {}): Record<string, unkno
 });
 
 describe("http/routes/webhook-release", () => {
+  it("queues a SemVer tag push and ignores non-version tags", () => {
+    const config = { ...relCfg, strategy: "git_tag" as const };
+    expect(
+      buildProcessReleaseJobInput(
+        "push",
+        basePush({ ref: "refs/tags/v1.4.0", before: "0".repeat(40) }),
+        config,
+      ),
+    ).toMatchObject({
+      repo: "acme/ios",
+      tagName: "v1.4.0",
+      branch: "develop",
+    });
+    expect(
+      buildProcessReleaseJobInput(
+        "push",
+        basePush({ ref: "refs/tags/latest" }),
+        config,
+      ),
+    ).toBeNull();
+  });
+
+  it("queues only published GitHub Releases with SemVer tags", () => {
+    const payload = {
+      action: "published",
+      repository: { full_name: "acme/ios" },
+      release: {
+        tag_name: "v2.0.0",
+        target_commitish: "main",
+        html_url: "https://github.com/acme/ios/releases/tag/v2.0.0",
+        draft: false,
+        published_at: "2026-08-09T18:00:00.000Z",
+        created_at: "2026-08-09T17:00:00.000Z",
+      },
+    };
+    const config = { ...relCfg, strategy: "github_release" as const };
+    expect(buildProcessReleaseJobInput("release", payload, config)).toEqual({
+      repo: "acme/ios",
+      beforeSha: "main",
+      afterSha: "v2.0.0",
+      branch: "develop",
+      tagName: "v2.0.0",
+      sourceUrl: "https://github.com/acme/ios/releases/tag/v2.0.0",
+      releasedAt: "2026-08-09T18:00:00.000Z",
+    });
+    expect(
+      buildProcessReleaseJobInput(
+        "release",
+        { ...payload, release: { ...payload.release, draft: true } },
+        config,
+      ),
+    ).toBeNull();
+  });
+
   it("refToBranch should strip refs/heads", () => {
     expect(refToBranch("refs/heads/develop")).toBe("develop");
     expect(refToBranch("refs/tags/v1")).toBeNull();

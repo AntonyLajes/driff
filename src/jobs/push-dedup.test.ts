@@ -23,21 +23,40 @@ describe("jobs/push-dedup findPushOverlap", () => {
   });
 
   it("skips when every referenced PR has a process_pr job", async () => {
-    // 1st query (release) -> none; then one query per PR -> both present.
-    const db = buildDb([[], [{ id: "pr-7" }], [{ id: "pr-8" }]]);
+    // Release job/source -> none; then one job query per PR -> both present.
+    const db = buildDb([[], [], [{ id: "pr-7" }], [{ id: "pr-8" }]]);
     const result = await findPushOverlap({ db, ...base, prNumbers: [7, 8] });
     expect(result).toEqual({ skip: true, reason: "pr_merge_push" });
   });
 
   it("does NOT skip when at least one referenced PR has no job (mixed push)", async () => {
-    const db = buildDb([[], [{ id: "pr-7" }], []]);
+    const db = buildDb([[], [], [{ id: "pr-7" }], [], []]);
     const result = await findPushOverlap({ db, ...base, prNumbers: [7, 8] });
     expect(result).toEqual({ skip: false, reason: null });
   });
 
   it("does NOT skip a plain direct push (no release job, no PR numbers)", async () => {
-    const db = buildDb([[]]);
+    const db = buildDb([[], []]);
     const result = await findPushOverlap({ db, ...base, prNumbers: [] });
     expect(result).toEqual({ skip: false, reason: null });
+  });
+
+  it("skips a release already stored by history import", async () => {
+    const db = buildDb([[], [{ id: "stored-release" }]]);
+    const result = await findPushOverlap({ db, ...base, prNumbers: [] });
+    expect(result).toEqual({ skip: true, reason: "release_push" });
+  });
+
+  it("skips PR merges already stored by history import", async () => {
+    const db = buildDb([
+      [],
+      [],
+      [],
+      [],
+      [{ id: "stored-pr-7" }],
+      [{ id: "stored-pr-8" }],
+    ]);
+    const result = await findPushOverlap({ db, ...base, prNumbers: [7, 8] });
+    expect(result).toEqual({ skip: true, reason: "pr_merge_push" });
   });
 });

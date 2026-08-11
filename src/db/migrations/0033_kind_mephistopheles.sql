@@ -1,0 +1,1 @@
+CREATE INDEX "webhook_events_repo_received_at_idx" ON "webhook_events" USING btree (("payload" -> 'repository' ->> 'full_name'),"received_at" DESC NULLS LAST);

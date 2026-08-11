@@ -1,13 +1,23 @@
+import type { PullRequestProjector } from "@/changes/project-pull-request.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
+import { and, eq } from "drizzle-orm";
 import type { Destination } from "@/destinations/destination.js";
+import { publishBestEffort } from "@/destinations/optional-destination.js";
 import type { Database } from "@/db/client.js";
 import { pullRequestsTable } from "@/db/schema.js";
 import type { Summarizer } from "@/llm/summarizer.js";
 import { recordLlmUsage } from "@/llm/usage.js";
 import type { Source } from "@/sources/source.js";
+import {
+  filterHistoryDiff,
+  isHistoryActorExcluded,
+  isHistoryPathExcluded,
+} from "@/config/history-content-filter.js";
 
 export interface ProcessPrJobPayload {
   repo: string;
   prNumber: number;
+  force: boolean;
 }
 
 export interface ExecuteInput {
@@ -15,7 +25,16 @@ export interface ExecuteInput {
   source: Source;
   summarizer: Summarizer;
   destination: Destination;
+  canonicalProjection?: {
+    projector: PullRequestProjector;
+    workspaceId: string;
+  };
+  contentFilter?: {
+    excludedPaths: readonly string[];
+    excludedActors: readonly string[];
+  };
   promptVersion: number;
+  summaryLanguage?: SummaryLanguage;
 }
 
 const parsePayload = (payload: Record<string, unknown>): ProcessPrJobPayload => {
@@ -29,38 +48,84 @@ const parsePayload = (payload: Record<string, unknown>): ProcessPrJobPayload => 
     throw new Error("Invalid process_pr payload: prNumber must be a positive integer.");
   }
 
-  return { repo, prNumber };
+  return { repo, prNumber, force: payload.force === true };
 };
 
 export const execute = (input: ExecuteInput) => {
   return {
     execute: async (payload: Record<string, unknown>): Promise<void> => {
       const jobPayload = parsePayload(payload);
-      const pullRequest = await input.source.fetchPullRequest(
+
+      const existing = await input.db
+        .select({ id: pullRequestsTable.id })
+        .from(pullRequestsTable)
+        .where(
+          and(
+            eq(pullRequestsTable.repo, jobPayload.repo),
+            eq(pullRequestsTable.prNumber, jobPayload.prNumber),
+          ),
+        )
+        .limit(1);
+      if (existing.length > 0 && !jobPayload.force) {
+        return;
+      }
+
+      const fetchedPullRequest = await input.source.fetchPullRequest(
         jobPayload.repo,
         jobPayload.prNumber,
       );
-      const summary = await input.summarizer.summarizePR({ pullRequest });
-      const publishResult = await input.destination.publishPR({
-        repo: pullRequest.repo,
-        prNumber: pullRequest.prNumber,
-        title: summary.title,
-        author: pullRequest.author,
-        mergedAt: pullRequest.mergedAt,
-        summaryUserFacing: summary.summaryUserFacing,
-        summaryTechnical: summary.summaryTechnical,
-        category: summary.category,
-        area: summary.area,
-        prUrl: `https://github.com/${pullRequest.repo}/pull/${pullRequest.prNumber}`,
+      const excludedPaths = input.contentFilter?.excludedPaths ?? [];
+      const excludedActors = input.contentFilter?.excludedActors ?? [];
+      if (isHistoryActorExcluded(fetchedPullRequest.author, excludedActors)) {
+        return;
+      }
+      const files = fetchedPullRequest.files.filter(
+        (file) => !isHistoryPathExcluded(file.path, excludedPaths),
+      );
+      if (fetchedPullRequest.files.length > 0 && files.length === 0) {
+        return;
+      }
+      const pullRequest = {
+        ...fetchedPullRequest,
+        files,
+        diff: filterHistoryDiff(fetchedPullRequest.diff, excludedPaths),
+      };
+      const summary = await input.summarizer.summarizePR({
+        pullRequest,
+        language: input.summaryLanguage ?? "auto",
       });
+      const publishResult = await publishBestEffort("publishPR", () =>
+        input.destination.publishPR({
+          repo: pullRequest.repo,
+          prNumber: pullRequest.prNumber,
+          title: summary.title,
+          author: pullRequest.author,
+          mergedAt: pullRequest.mergedAt,
+          summaryUserFacing: summary.summaryUserFacing,
+          summaryTechnical: summary.summaryTechnical,
+          category: summary.category,
+          area: summary.area,
+          prUrl: `https://github.com/${pullRequest.repo}/pull/${pullRequest.prNumber}`,
+        }),
+      );
 
-      await dbUpsertPullRequest({
+      const sourceRecordId = await dbUpsertPullRequest({
         db: input.db,
         pullRequest,
         summary,
         notionPageId: publishResult.pageId,
         promptVersion: input.promptVersion,
       });
+
+      if (input.canonicalProjection !== undefined) {
+        await input.canonicalProjection.projector.project({
+          workspaceId: input.canonicalProjection.workspaceId,
+          sourceRecordId,
+          pullRequest,
+          summary,
+          promptVersion: input.promptVersion,
+        });
+      }
 
       await recordLlmUsage({
         db: input.db,
@@ -86,7 +151,7 @@ const dbUpsertPullRequest = async ({
   summary,
   notionPageId,
   promptVersion,
-}: DbUpsertPullRequestInput): Promise<void> => {
+}: DbUpsertPullRequestInput): Promise<string> => {
   /* Diff stats aggregated from the PR files listing. */
   const additions = pullRequest.files.reduce((sum, f) => sum + f.additions, 0);
   const deletions = pullRequest.files.reduce((sum, f) => sum + f.deletions, 0);
@@ -112,11 +177,18 @@ const dbUpsertPullRequest = async ({
     updatedAt: new Date(),
   };
 
-  await db
+  const rows = await db
     .insert(pullRequestsTable)
     .values(values)
     .onConflictDoUpdate({
       target: [pullRequestsTable.repo, pullRequestsTable.prNumber],
       set: values,
-    });
+    })
+    .returning({ id: pullRequestsTable.id });
+
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error("Pull request upsert did not return a source record id.");
+  }
+  return row.id;
 };

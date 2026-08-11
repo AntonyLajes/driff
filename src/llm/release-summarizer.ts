@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { execute as loadEnv } from "@/config/env.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
 import { extractUsage, type TokenUsage } from "@/llm/usage.js";
 import type { ReleaseContext } from "@/sources/github/gather-release-context.js";
 
@@ -56,6 +57,7 @@ export interface SummarizeReleaseInput {
   branch: string;
   prContributions: PrContributionForRelease[];
   standaloneCommitHints: Array<{ sha: string; messageLine: string }>;
+  language?: SummaryLanguage;
 }
 
 const extractTextFromResponse = (response: AnthropicMessageResponse): string => {
@@ -112,6 +114,7 @@ const buildUserMessage = (input: SummarizeReleaseInput): string => {
       prContributions: input.prContributions,
       standaloneCommitHints: input.standaloneCommitHints,
       commitMessagesFallback: trimCommitMessages(context.commitMessages),
+      outputLanguage: input.language ?? "auto",
     },
     null,
     2,

@@ -18,6 +18,15 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "lab:validate": "tsx src/lab/validate-scenario.ts",
+    "lab:verify": "tsx src/lab/verify-lab.ts",
+    "lab:replay": "tsx src/lab/replay-lab.ts",
+    "lab:status": "tsx src/lab/status-lab.ts",
+    "ask:evaluate": "tsx src/ask/evaluate-golden-corpus.ts",
+    "ask:evaluate:all": "tsx src/ask/evaluate-golden-suite.ts",
+    "canonical:backfill": "tsx src/cli/backfill-workspace.ts",
+    "lineages:backfill": "tsx src/cli/backfill-lineages.ts",
+    "areas:normalize": "tsx src/cli/normalize-workspace-areas.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
@@ -42,15 +51,19 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.6.0",
     "@types/uuid": "^10.0.0",
     "@vitest/coverage-v8": "^4.1.5",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.27.7",
     "eslint": "^10.2.1",
+    "globals": "^17.8.0",
     "prettier": "^3.8.3",
     "tsc-alias": "^1.8.16",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.5"
   }
 }

@@ -1,0 +1,265 @@
+{
+  "schemaVersion": 1,
+  "id": "backend-api-cited-history",
+  "name": "Backend API cited history",
+  "workspaceId": "00000000-0000-4000-8000-000000000003",
+  "evaluatedAt": "2026-08-08T20:00:00.000Z",
+  "history": {
+    "versions": [
+      {
+        "id": "api-version-3-2-0",
+        "displayVersion": "3.2.0",
+        "normalizedVersion": "3.2.0",
+        "buildVersion": null,
+        "title": "API 3.2.0",
+        "changelog": "Adds idempotent payment creation.",
+        "sections": [],
+        "sourceUrl": "https://github.com/acme/payments-api/releases/tag/v3.2.0",
+        "previousVersionId": "api-version-3-1-1",
+        "beforeSha": "5555555555555555555555555555555555555555",
+        "headSha": "6666666666666666666666666666666666666666",
+        "releasedAt": "2026-08-06T18:00:00.000Z",
+        "changes": [
+          {
+            "id": "api-change-payment-idempotency",
+            "title": "Add idempotency keys to the payment creation endpoint",
+            "summaryExecutive": "Clients can safely retry payment creation without producing duplicate charges.",
+            "summaryTechnical": "Stores idempotency keys and replays the original response for repeated payment requests.",
+            "category": "feature",
+            "confidence": 98,
+            "firstOccurredAt": "2026-08-06T16:00:00.000Z",
+            "lastOccurredAt": "2026-08-06T16:00:00.000Z",
+            "areas": [
+              {
+                "id": "api-area-payments",
+                "name": "Payments API",
+                "slug": "payments-api",
+                "confidence": 98,
+                "source": "ai"
+              }
+            ],
+            "contributors": [
+              {
+                "externalIdentity": "github:camila-api",
+                "displayName": "Camila Rocha",
+                "role": "pr_author",
+                "sourceUrl": "https://github.com/camila-api"
+              }
+            ],
+            "evidence": [
+              {
+                "id": "api-evidence-pr-204",
+                "kind": "pull_request",
+                "sourceKey": "github:acme/payments-api:pull_request:204",
+                "externalId": "204",
+                "url": "https://github.com/acme/payments-api/pull/204",
+                "sha": "6666666666666666666666666666666666666666",
+                "path": null,
+                "occurredAt": "2026-08-06T16:00:00.000Z",
+                "metadata": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "api-version-3-1-1",
+        "displayVersion": "3.1.1",
+        "normalizedVersion": "3.1.1",
+        "buildVersion": null,
+        "title": "API 3.1.1",
+        "changelog": "Stabilizes webhook delivery retries.",
+        "sections": [],
+        "sourceUrl": "https://github.com/acme/payments-api/releases/tag/v3.1.1",
+        "previousVersionId": null,
+        "beforeSha": "7777777777777777777777777777777777777777",
+        "headSha": "5555555555555555555555555555555555555555",
+        "releasedAt": "2026-08-01T14:00:00.000Z",
+        "changes": [
+          {
+            "id": "api-change-webhook-retries",
+            "title": "Fix retry storm in the webhook delivery worker",
+            "summaryExecutive": "Webhook deliveries recover without overwhelming downstream services.",
+            "summaryTechnical": "Adds bounded exponential backoff and prevents duplicate retry scheduling.",
+            "category": "bugfix",
+            "confidence": 97,
+            "firstOccurredAt": "2026-08-01T12:00:00.000Z",
+            "lastOccurredAt": "2026-08-01T12:00:00.000Z",
+            "areas": [
+              {
+                "id": "api-area-webhooks",
+                "name": "Webhooks",
+                "slug": "webhooks",
+                "confidence": 98,
+                "source": "ai"
+              }
+            ],
+            "contributors": [
+              {
+                "externalIdentity": "github:bruno-services",
+                "displayName": "Bruno Lima",
+                "role": "pr_author",
+                "sourceUrl": "https://github.com/bruno-services"
+              }
+            ],
+            "evidence": [
+              {
+                "id": "api-evidence-pr-199",
+                "kind": "pull_request",
+                "sourceKey": "github:acme/payments-api:pull_request:199",
+                "externalId": "199",
+                "url": "https://github.com/acme/payments-api/pull/199",
+                "sha": "5555555555555555555555555555555555555555",
+                "path": null,
+                "occurredAt": "2026-08-01T12:00:00.000Z",
+                "metadata": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "inDevelopment": [
+      {
+        "id": "api-change-pool-observability",
+        "title": "Add Postgres connection pool observability",
+        "summaryExecutive": "Operators can identify database saturation before requests start failing.",
+        "summaryTechnical": "Exports pool wait time, active connections and queue depth metrics.",
+        "category": "chore",
+        "confidence": 95,
+        "firstOccurredAt": "2026-08-08T19:00:00.000Z",
+        "lastOccurredAt": "2026-08-08T19:00:00.000Z",
+        "areas": [
+          {
+            "id": "api-area-observability",
+            "name": "Observability",
+            "slug": "observability",
+            "confidence": 96,
+            "source": "ai"
+          }
+        ],
+        "contributors": [
+          {
+            "externalIdentity": "github:renata-platform",
+            "displayName": "Renata Melo",
+            "role": "pr_author",
+            "sourceUrl": "https://github.com/renata-platform"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "api-evidence-pr-211",
+            "kind": "pull_request",
+            "sourceKey": "github:acme/payments-api:pull_request:211",
+            "externalId": "211",
+            "url": "https://github.com/acme/payments-api/pull/211",
+            "sha": "8888888888888888888888888888888888888888",
+            "path": null,
+            "occurredAt": "2026-08-08T19:00:00.000Z",
+            "metadata": null
+          }
+        ]
+      }
+    ]
+  },
+  "questions": [
+    {
+      "id": "api-version-320",
+      "question": "O que mudou na versão 3.2.0?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "3.2.0",
+        "changeIds": ["api-change-payment-idempotency"],
+        "evidenceUrls": ["https://github.com/acme/payments-api/pull/204"],
+        "contributors": ["Camila Rocha"]
+      }
+    },
+    {
+      "id": "api-payment-idempotency-pt",
+      "question": "Quem implementou idempotency keys no endpoint de pagamentos?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["api-change-payment-idempotency"],
+        "evidenceUrls": ["https://github.com/acme/payments-api/pull/204"],
+        "contributors": ["Camila Rocha"]
+      }
+    },
+    {
+      "id": "api-webhook-retry-fix",
+      "question": "Who fixed the webhook retry storm?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["api-change-webhook-retries"],
+        "evidenceUrls": ["https://github.com/acme/payments-api/pull/199"],
+        "contributors": ["Bruno Lima"]
+      }
+    },
+    {
+      "id": "api-latest-feature-pt",
+      "question": "Qual foi a feature mais recente da API?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["api-change-payment-idempotency"],
+        "contributors": ["Camila Rocha"]
+      }
+    },
+    {
+      "id": "api-latest-fix",
+      "question": "What was the latest bugfix?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["api-change-webhook-retries"],
+        "contributors": ["Bruno Lima"]
+      }
+    },
+    {
+      "id": "api-latest-maintenance-pt",
+      "question": "Qual foi a manutenção mais recente?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": ["api-change-pool-observability"],
+        "contributors": ["Renata Melo"]
+      }
+    },
+    {
+      "id": "api-unknown-dark-mode",
+      "question": "Who added dark mode to the dashboard?",
+      "expected": { "status": "no_evidence", "mode": "change" }
+    },
+    {
+      "id": "api-team-this-week-pt",
+      "question": "O que a equipe fez esta semana?",
+      "expected": {
+        "status": "answered",
+        "mode": "change",
+        "changeIds": [
+          "api-change-pool-observability",
+          "api-change-payment-idempotency"
+        ],
+        "contributors": ["Renata Melo", "Camila Rocha"]
+      }
+    },
+    {
+      "id": "api-contributor-version-pt",
+      "question": "O que Camila fez na versão 3.2.0?",
+      "expected": {
+        "status": "answered",
+        "mode": "version",
+        "version": "3.2.0",
+        "changeIds": ["api-change-payment-idempotency"],
+        "contributors": ["Camila Rocha"]
+      }
+    }
+  ],
+  "thresholds": {
+    "passRate": 1,
+    "citationPrecision": 1,
+    "refusalAccuracy": 1
+  }
+}

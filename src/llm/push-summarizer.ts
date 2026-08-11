@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import { execute as loadEnv } from "@/config/env.js";
+import type { SummaryLanguage } from "@/config/summary-language.js";
 import { extractUsage, type TokenUsage } from "@/llm/usage.js";
 import type { PushContext } from "@/sources/github/gather-push-context.js";
 
@@ -55,6 +56,7 @@ export interface SummarizePushInput {
   context: PushContext;
   repo: string;
   branch: string;
+  language?: SummaryLanguage;
 }
 
 export interface PushSummarizer {
@@ -122,6 +124,7 @@ const buildUserMessage = (input: SummarizePushInput): string => {
       fileChangeSummary: context.fileChangeSummary,
       commits: buildCommitLines(context),
       diff: context.diff,
+      outputLanguage: input.language ?? "auto",
     },
     null,
     2,

@@ -172,6 +172,7 @@ describe("http/routes/webhooks handler", () => {
     expect(enqueueProcessPrJob).toHaveBeenCalledWith({
       repo: "acme/mobile-app",
       prNumber: 42,
+      deliveryId: "delivery-merged",
     });
   });
 
@@ -315,6 +316,7 @@ describe("http/routes/webhooks handler", () => {
     expect(enqueueProcessPrJobForFilter).toHaveBeenCalledWith({
       repo: "acme/mobile-app",
       prNumber: 100,
+      deliveryId: "delivery-develop",
     });
   });
 
@@ -370,6 +372,7 @@ describe("http/routes/webhooks handler", () => {
       beforeSha: "a".repeat(40),
       afterSha: "b".repeat(40),
       branch: "develop",
+      deliveryId: "delivery-push-rel",
     });
   });
 
@@ -428,6 +431,7 @@ describe("http/routes/webhooks handler", () => {
       branch: "main",
       pusher: "octocat",
       pushedAt: "2026-05-29T12:00:00Z",
+      deliveryId: "delivery-push-direct",
     });
   });
 

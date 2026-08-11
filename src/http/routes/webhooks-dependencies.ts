@@ -16,6 +16,7 @@ export interface WebhookEventInput {
 export interface ProcessPrJobInput {
   repo: string;
   prNumber: number;
+  deliveryId?: string;
 }
 
 export interface ProcessReleaseJobInput {
@@ -23,6 +24,10 @@ export interface ProcessReleaseJobInput {
   beforeSha: string;
   afterSha: string;
   branch: string;
+  tagName?: string;
+  sourceUrl?: string;
+  releasedAt?: string;
+  deliveryId?: string;
 }
 
 export interface ProcessPushJobInput {
@@ -32,6 +37,7 @@ export interface ProcessPushJobInput {
   branch: string;
   pusher: string | null;
   pushedAt: string | null;
+  deliveryId?: string;
 }
 
 export interface WebhookDependencies {
@@ -60,24 +66,58 @@ export const execute = ({ db }: ExecuteInput): WebhookDependencies => {
         payload,
       });
     },
-    enqueueProcessPrJob: async ({ repo, prNumber }) => {
+    enqueueProcessPrJob: async ({ repo, prNumber, deliveryId }) => {
       await db.insert(jobsTable).values({
         type: "process_pr",
-        payload: { repo, prNumber },
+        payload: { repo, prNumber, ...(deliveryId ? { deliveryId } : {}) },
         status: "pending",
       });
     },
-    enqueueProcessReleaseJob: async ({ repo, beforeSha, afterSha, branch }) => {
+    enqueueProcessReleaseJob: async ({
+      repo,
+      beforeSha,
+      afterSha,
+      branch,
+      tagName,
+      sourceUrl,
+      releasedAt,
+      deliveryId,
+    }) => {
       await db.insert(jobsTable).values({
         type: "process_release",
-        payload: { repo, beforeSha, afterSha, branch },
+        payload: {
+          repo,
+          beforeSha,
+          afterSha,
+          branch,
+          ...(tagName ? { tagName } : {}),
+          ...(sourceUrl ? { sourceUrl } : {}),
+          ...(releasedAt ? { releasedAt } : {}),
+          ...(deliveryId ? { deliveryId } : {}),
+        },
         status: "pending",
       });
     },
-    enqueueProcessPushJob: async ({ repo, beforeSha, afterSha, branch, pusher, pushedAt }) => {
+    enqueueProcessPushJob: async ({
+      repo,
+      beforeSha,
+      afterSha,
+      branch,
+      pusher,
+      pushedAt,
+      deliveryId,
+    }) => {
       await db.insert(jobsTable).values({
         type: "process_push",
-        payload: { repo, beforeSha, afterSha, branch, pusher, pushedAt },
+        payload: {
+          repo,
+          beforeSha,
+          afterSha,
+          branch,
+          pusher,
+          pushedAt,
+          ...(deliveryId ? { deliveryId } : {}),
+        },
         status: "pending",
       });
     },
