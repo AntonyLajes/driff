@@ -305,6 +305,7 @@ const buildRuntimeDependencies = async (
       timelineMe,
       historyImportsMe,
       askMe,
+      askConversationsMe: workspacesMe,
       meStats: workspacesMe,
       aiUsageMe: workspacesMe,
       productFunnelMe: workspacesMe,

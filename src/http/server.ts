@@ -13,6 +13,10 @@ import {
   type AskMeRegistrationInput,
 } from "@/http/routes/ask-me.js";
 import {
+  handler as registerAskConversationsMeRoute,
+  type AskConversationsMeRegistrationInput,
+} from "@/http/routes/ask-conversations-me.js";
+import {
   handler as registerAuthGoogleRoute,
   type GoogleOAuthRegistrationInput,
 } from "@/http/routes/auth-google.js";
@@ -97,6 +101,8 @@ export interface ExecuteInput {
   historyImportsMe?: HistoryImportsMeRegistrationInput;
   /** When set, registers cited canonical-history questions (Bearer session JWT). */
   askMe?: AskMeRegistrationInput;
+  /** When set, registers private per-user Ask conversation persistence. */
+  askConversationsMe?: AskConversationsMeRegistrationInput;
   /** When set, registers `/api/me/github/*` (GitHub user OAuth + repo helpers). */
   githubMe?: GithubMeRegistrationInput;
   /** When set, registers `/api/me/.../destinations/*` (Notion OAuth + destination config). */
@@ -151,6 +157,9 @@ export const execute = (input: ExecuteInput = {}): FastifyInstance => {
     }
     if (input.askMe !== undefined) {
       await registerAskMeRoute(instance, input.askMe);
+    }
+    if (input.askConversationsMe !== undefined) {
+      await registerAskConversationsMeRoute(instance, input.askConversationsMe);
     }
     if (input.githubMe !== undefined) {
       await registerGithubMeRoute(instance, input.githubMe);
